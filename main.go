@@ -68,7 +68,7 @@ func main() {
 
 	r.GET("/login/github", func(c *gin.Context) {
 		url := oauthConf.AuthCodeURL("state", oauth2.AccessTypeOffline)
-		c.Redirect(http.TemporaryRedirect, url)
+		c.Redirect(http.StatusTemporaryRedirect, url)
 	})
 
 	r.GET("/auth/callback", func(c *gin.Context) {
