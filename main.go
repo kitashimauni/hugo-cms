@@ -190,6 +190,25 @@ func main() {
 				c.JSON(200, gin.H{"status": "saved"})
 			})
 
+			// 7. Config取得
+			api.GET("/config", func(c *gin.Context) {
+				configPath := filepath.Join(RepoPath, "static/admin/config.yml")
+				content, err := os.ReadFile(configPath)
+				if err != nil {
+					// static/adminになければ public/admin も探す等のフォールバックがあってもよいが
+					// ここでは簡易的にエラーを返す
+					c.JSON(404, gin.H{"error": "Config not found"})
+					return
+				}
+				
+				var config map[string]interface{}
+				if err := yaml.Unmarshal(content, &config); err != nil {
+					c.JSON(500, gin.H{"error": "Failed to parse config"})
+					return
+				}
+				c.JSON(http.StatusOK, config)
+			})
+
 			api.POST("/sync", handleSync)
 			api.POST("/publish", handlePublish)
 		}
