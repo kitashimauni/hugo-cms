@@ -216,8 +216,39 @@
             label.textContent = field.label || field.name;
             div.appendChild(label);
 
-            const input = createInputForWidget(field, value);
-            div.appendChild(input);
+            if (field.widget === 'datetime') {
+                const wrapper = document.createElement('div');
+                wrapper.style.display = 'flex';
+                wrapper.style.gap = '5px';
+
+                const input = createInputForWidget(field, value);
+                input.style.flex = '1';
+                
+                const nowBtn = document.createElement('button');
+                nowBtn.textContent = 'Now';
+                nowBtn.className = 'action-btn'; // Use existing class or style
+                nowBtn.style.background = '#444';
+                nowBtn.style.padding = '4px 8px';
+                nowBtn.style.fontSize = '12px';
+                nowBtn.onclick = () => {
+                    const d = new Date();
+                    const pad = (n) => n < 10 ? '0'+n : n;
+                    const localIso = d.getFullYear() + '-' + 
+                                   pad(d.getMonth()+1) + '-' + 
+                                   pad(d.getDate()) + 'T' + 
+                                   pad(d.getHours()) + ':' + 
+                                   pad(d.getMinutes());
+                    input.value = localIso;
+                };
+
+                wrapper.appendChild(input);
+                wrapper.appendChild(nowBtn);
+                div.appendChild(wrapper);
+            } else {
+                const input = createInputForWidget(field, value);
+                div.appendChild(input);
+            }
+            
             container.appendChild(div);
         }
 
