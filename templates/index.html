@@ -327,7 +327,7 @@
                     if (val === "") {
                          fm[key] = [];
                     } else {
-                         fm[key] = val.split(',').map(s => s.trim());
+                         fm[key] = val.split(',').map(s => s.trim()).filter(s => s !== "");
                     }
                 } else if (widget === 'datetime') {
                     if (input.value) {
