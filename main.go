@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -16,8 +18,10 @@ import (
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
+	"gopkg.in/yaml.v3"
 )
 
 // 設定
@@ -31,9 +35,12 @@ var oauthConf *oauth2.Config
 
 // 記事構造体
 type Article struct {
-	Path    string `json:"path"`
-	Title   string `json:"title"`
-	Content string `json:"content,omitempty"`
+	Path        string                 `json:"path"`
+	Title       string                 `json:"title"`
+	Content     string                 `json:"content,omitempty"` // Raw content (backward compatibility)
+	FrontMatter map[string]interface{} `json:"frontmatter,omitempty"`
+	Body        string                 `json:"body,omitempty"`
+	Format      string                 `json:"format,omitempty"` // yaml, toml, json
 }
 
 func main() {
@@ -122,7 +129,7 @@ func main() {
 					}
 					if !d.IsDir() && strings.HasSuffix(d.Name(), ".md") {
 						relPath, _ := filepath.Rel(contentDir, path)
-						articles = append(articles, Article{Path: relPath, Title: relPath})
+							articles = append(articles, Article{Path: relPath, Title: relPath})
 					}
 					return nil
 				})
@@ -137,7 +144,21 @@ func main() {
 					c.JSON(404, gin.H{"error": "File not found"})
 					return
 				}
-				c.JSON(http.StatusOK, gin.H{"content": string(content)})
+
+				// フロントマター分離とパース
+				fm, body, format, err := parseFrontMatter(content)
+				if err != nil {
+					// パース失敗時はそのままテキストとして返す
+					c.JSON(http.StatusOK, gin.H{"content": string(content)})
+					return
+				}
+
+				c.JSON(http.StatusOK, Article{
+					Path:        targetPath,
+					FrontMatter: fm,
+					Body:        body,
+					Format:      format,
+				})
 			})
 
 			api.POST("/article", func(c *gin.Context) {
@@ -146,8 +167,23 @@ func main() {
 					c.JSON(400, gin.H{"error": "Invalid JSON"})
 					return
 				}
+
 				fullPath := safeJoin(RepoPath, "content", art.Path)
-				if err := os.WriteFile(fullPath, []byte(art.Content), 0644); err != nil {
+				var finalContent []byte
+				var err error
+
+				// FrontMatterがある場合は構築、なければContentをそのまま使用
+				if art.FrontMatter != nil {
+					finalContent, err = constructFileContent(art.FrontMatter, art.Body, art.Format)
+					if err != nil {
+						c.JSON(500, gin.H{"error": "Failed to construct file content: " + err.Error()})
+						return
+					}
+				} else {
+					finalContent = []byte(art.Content)
+				}
+
+				if err := os.WriteFile(fullPath, finalContent, 0644); err != nil {
 					c.JSON(500, gin.H{"error": "Save failed"})
 					return
 				}
@@ -168,7 +204,6 @@ func authRequired(c *gin.Context) {
 	session := sessions.Default(c)
 	token := session.Get("access_token")
 	if token == nil {
-		// APIリクエストの場合は401、ブラウザならリダイレクト
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		} else {
@@ -203,9 +238,6 @@ func handleBuild(c *gin.Context) {
 func handleSync(c *gin.Context) {
 	session := sessions.Default(c)
 	token := session.Get("access_token").(string)
-
-	// git pull origin main
-	// トークンを含めたURLでpullするのではなく、HTTPヘッダーにトークンを仕込む方式で実行
 	err, log := executeGitWithToken(RepoPath, token, "pull", "origin", "main")
 	if err != nil {
 		c.JSON(500, gin.H{"status": "error", "log": log})
@@ -217,23 +249,16 @@ func handleSync(c *gin.Context) {
 func handlePublish(c *gin.Context) {
 	session := sessions.Default(c)
 	token := session.Get("access_token").(string)
-
-	// 1. git add
 	addCmd := exec.Command("git", "add", ".")
 	addCmd.Dir = RepoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		c.JSON(500, gin.H{"error": "git add failed", "details": string(out)})
 		return
 	}
-
-	// 2. git commit
 	msg := fmt.Sprintf("Update via HomeCMS: %s", time.Now().Format("2006-01-02 15:04:05"))
 	commitCmd := exec.Command("git", "commit", "-m", msg)
 	commitCmd.Dir = RepoPath
-	// Commitは変更がないとエラーになるが、続行してよい
 	commitCmd.Run()
-
-	// 3. git push
 	err, log := executeGitWithToken(RepoPath, token, "push", "origin", "main")
 	if err != nil {
 		c.JSON(500, gin.H{"status": "error", "log": log})
@@ -242,11 +267,7 @@ func handlePublish(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok", "log": log})
 }
 
-// Gitコマンドを認証付きで実行するヘルパー
-// リモートURLにトークンを埋め込むとログに残るリスクがあるため、
-// 現在のリモートURLを取得し、そこに認証情報を付加して一時的に使用するアプローチをとる
 func executeGitWithToken(dir, token string, args ...string) (error, string) {
-	// 1. リモートURLの取得 (origin)
 	cmdGetUrl := exec.Command("git", "remote", "get-url", "origin")
 	cmdGetUrl.Dir = dir
 	outUrl, err := cmdGetUrl.Output()
@@ -254,19 +275,12 @@ func executeGitWithToken(dir, token string, args ...string) (error, string) {
 		return err, "Failed to get remote url"
 	}
 	remoteUrl := strings.TrimSpace(string(outUrl))
-
-	// 2. URLの解析とトークンの注入
 	u, err := url.Parse(remoteUrl)
 	if err != nil {
 		return err, "Invalid remote url"
 	}
-	// https://github.com/user/repo.git -> https://oauth2:TOKEN@github.com/user/repo.git
 	u.User = url.UserPassword("oauth2", token)
 	authenticatedUrl := u.String()
-
-	// 3. 引数の書き換え
-	// argsの中に "origin" があれば、認証付きURLに置き換える
-	// 例: "pull", "origin", "main" -> "pull", "https://...", "main"
 	newArgs := make([]string, len(args))
 	copy(newArgs, args)
 	for i, v := range newArgs {
@@ -274,16 +288,11 @@ func executeGitWithToken(dir, token string, args ...string) (error, string) {
 			newArgs[i] = authenticatedUrl
 		}
 	}
-
-	// 4. 実行
 	cmd := exec.Command("git", newArgs...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
-
-	// 5. ログのサニタイズ (トークンを隠す)
 	safeLog := strings.ReplaceAll(string(output), token, "***")
-	safeLog = strings.ReplaceAll(safeLog, authenticatedUrl, remoteUrl) // URL全体も元のものに戻して表示
-
+	safeLog = strings.ReplaceAll(safeLog, authenticatedUrl, remoteUrl)
 	return err, safeLog
 }
 
@@ -293,4 +302,87 @@ func safeJoin(root, sub, target string) string {
 		return ""
 	}
 	return filepath.Join(root, sub, cleanTarget)
+}
+
+// --- Front Matter Logic ---
+
+func parseFrontMatter(content []byte) (map[string]interface{}, string, string, error) {
+	str := string(content)
+	// Check for YAML (---)
+	if strings.HasPrefix(str, "---") || strings.HasPrefix(str, "---") {
+		parts := strings.SplitN(str, "---", 3) // "", FM, Body
+		if len(parts) == 3 {
+			var fm map[string]interface{}
+			if err := yaml.Unmarshal([]byte(parts[1]), &fm); err == nil {
+				return fm, strings.TrimSpace(parts[2]), "yaml", nil
+			}
+		}
+	}
+	// Check for TOML (+++)
+	if strings.HasPrefix(str, "+++") || strings.HasPrefix(str, "+++") {
+		parts := strings.SplitN(str, "+++", 3)
+		if len(parts) == 3 {
+			var fm map[string]interface{}
+			if err := toml.Unmarshal([]byte(parts[1]), &fm); err == nil {
+				return fm, strings.TrimSpace(parts[2]), "toml", nil
+			}
+		}
+	}
+	// Check for JSON ({)
+	if strings.HasPrefix(strings.TrimSpace(str), "{") {
+		// JSONの場合、FrontMatterとBodyの境界が曖昧だが、HugoはJSON FrontMatterをサポートしている
+		// しかし、通常は外部ファイルか、特定のデリミタが必要。
+		// ここでは簡易的に「最初の行が { で始まるならJSON」とし、
+		// 閉じカッコを探してパースを試みる...というのは難しいので、
+		// HugoのJSON FrontMatter仕様（通常は全体がJSON、または特殊な記述）に準拠するのは一旦保留し、
+		// YAML/TOMLメインで実装する。
+		// ただし、単純なJSONファイルとしてパースできるならそうする。
+		var fm map[string]interface{}
+		if err := json.Unmarshal(content, &fm); err == nil {
+			// 全体がJSONとみなす（Bodyなし）
+			return fm, "", "json", nil
+		}
+	}
+
+	return nil, "", "", fmt.Errorf("unknown format")
+}
+
+func constructFileContent(fm map[string]interface{}, body string, format string) ([]byte, error) {
+	var buf bytes.Buffer
+	sswitch format {
+	case "yaml":
+		buf.WriteString("---")
+		enc := yaml.NewEncoder(&buf)
+		enc.SetIndent(2)
+		if err := enc.Encode(fm); err != nil {
+			return nil, err
+		}
+		buf.WriteString("---")
+	case "toml":
+		buf.WriteString("+++")
+		enc := toml.NewEncoder(&buf)
+		if err := enc.Encode(fm); err != nil {
+			return nil, err
+		}
+		buf.WriteString("+++")
+	case "json":
+		enc := json.NewEncoder(&buf)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(fm); err != nil {
+			return nil, err
+		}
+		// JSONの場合はBodyを含めるのが難しい（HugoはMarkdown内のJSON FMを公式にはあまり推奨していない/一般的ではない）
+		// ここでは単にJSONを出力して終了とする
+		return buf.Bytes(), nil
+	default:
+		return nil, fmt.Errorf("unsupported format: %s", format)
+	}
+
+	if body != "" {
+		buf.WriteString("\n")
+		buf.WriteString(body)
+		buf.WriteString("\n")
+	}
+
+	return buf.Bytes(), nil
 }

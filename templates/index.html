@@ -18,7 +18,17 @@
         .file-item:hover { background: #333; }
 
         /* Editor Styles */
+        #edit-container { display: flex; flex-direction: column; height: 100%; }
+        #fm-container { background: #252526; padding: 10px; border-bottom: 1px solid #333; max-height: 40%; overflow-y: auto; }
+        #editor-wrapper { flex: 1; position: relative; }
         textarea { width: 100%; height: 100%; background: #1e1e1e; color: #f8f8f2; border: none; padding: 10px; font-family: monospace; font-size: 16px; box-sizing: border-box; resize: none; outline: none; }
+
+        /* Form Styles */
+        .fm-field { margin-bottom: 10px; }
+        .fm-label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; }
+        .fm-input { width: 100%; background: #333; color: white; border: 1px solid #444; padding: 6px; border-radius: 4px; box-sizing: border-box; }
+        .fm-input:focus { border-color: #007acc; outline: none; }
+        .fm-checkbox { margin-right: 5px; }
 
         /* Preview Styles */
         iframe { width: 100%; height: 100%; border: none; background: white; }
@@ -55,7 +65,12 @@
         </div>
 
         <div id="tab-edit" class="tab-content">
-            <textarea id="editor" placeholder="Select a file to edit..."></textarea>
+            <div id="edit-container">
+                <div id="fm-container" style="display:none;"></div>
+                <div id="editor-wrapper">
+                    <textarea id="editor" placeholder="Select a file to edit..."></textarea>
+                </div>
+            </div>
         </div>
 
         <div id="tab-preview" class="tab-content">
@@ -71,6 +86,7 @@
 
     <script>
         let currentPath = "";
+        let currentData = null; // Store current loaded data for FM structure
 
         // 初期化: 記事一覧を取得
         fetchFiles();
@@ -112,29 +128,143 @@
             
             const res = await fetch(`/api/article?path=${path}`);
             const data = await res.json();
+            currentData = data;
             
-            document.getElementById('editor').value = data.content;
+            const fmContainer = document.getElementById('fm-container');
+            const editor = document.getElementById('editor');
+
+            if (data.frontmatter) {
+                // Structured mode
+                renderFrontMatterForm(data.frontmatter);
+                fmContainer.style.display = 'block';
+                editor.value = data.body;
+            } else {
+                // Raw mode
+                fmContainer.style.display = 'none';
+                fmContainer.innerHTML = '';
+                editor.value = data.content;
+            }
             
             // エディタタブへ自動移動
             switchTab('edit', document.querySelectorAll('nav button')[1]);
         }
 
+        function renderFrontMatterForm(fm) {
+            const container = document.getElementById('fm-container');
+            container.innerHTML = '<div style="color:#aaa; font-weight:bold; margin-bottom:10px;">Front Matter</div>';
+            
+            for (const [key, value] of Object.entries(fm)) {
+                const div = document.createElement('div');
+                div.className = 'fm-field';
+                
+                const label = document.createElement('label');
+                label.className = 'fm-label';
+                label.textContent = key;
+                div.appendChild(label);
+
+                if (typeof value === 'boolean') {
+                    const input = document.createElement('input');
+                    input.type = 'checkbox';
+                    input.className = 'fm-checkbox';
+                    input.checked = value;
+                    input.dataset.key = key;
+                    input.dataset.type = 'boolean';
+                    
+                    // Checkbox label wrap
+                    const wrapper = document.createElement('label');
+                    wrapper.style.display = 'flex';
+                    wrapper.style.alignItems = 'center';
+                    wrapper.appendChild(input);
+                    wrapper.appendChild(document.createTextNode(value ? ' True' : ' False'));
+                    
+                    // Toggle label text on change
+                    input.onchange = (e) => {
+                         wrapper.lastChild.textContent = e.target.checked ? ' True' : ' False';
+                    };
+
+                    div.appendChild(wrapper);
+
+                } else if (Array.isArray(value)) {
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'fm-input';
+                    input.value = value.join(', '); // Simple CSV for now
+                    input.dataset.key = key;
+                    input.dataset.type = 'array';
+                    div.appendChild(input);
+                } else {
+                    // String, Number, etc.
+                    const input = document.createElement('input');
+                    input.type = 'text'; // Default to text
+                    input.className = 'fm-input';
+                    input.value = value === null ? '' : value;
+                    input.dataset.key = key;
+                    input.dataset.type = typeof value; // string or number
+                    div.appendChild(input);
+                }
+                
+                container.appendChild(div);
+            }
+        }
+
+        function collectFrontMatter() {
+            if (!currentData || !currentData.frontmatter) return null;
+            
+            const fm = {};
+            const inputs = document.querySelectorAll('#fm-container input');
+            
+            inputs.forEach(input => {
+                const key = input.dataset.key;
+                const type = input.dataset.type;
+                
+                if (type === 'boolean') {
+                    fm[key] = input.checked;
+                } else if (type === 'array') {
+                    // Split by comma and trim
+                    const val = input.value.trim();
+                    if (val === "") {
+                         fm[key] = [];
+                    } else {
+                         fm[key] = val.split(',').map(s => s.trim());
+                    }
+                } else if (type === 'number') {
+                    const num = Number(input.value);
+                    fm[key] = isNaN(num) ? input.value : num;
+                } else {
+                    fm[key] = input.value;
+                }
+            });
+            return fm;
+        }
+
         async function saveFile() {
             if(!currentPath) return alert("No file selected");
             
-            const content = document.getElementById('editor').value;
             const btn = document.querySelector('button[onclick="saveFile()"]');
             const originalText = btn.textContent;
             btn.textContent = "Saving...";
 
+            const payload = {
+                path: currentPath,
+            };
+
+            const fm = collectFrontMatter();
+            if (fm) {
+                payload.frontmatter = fm;
+                payload.body = document.getElementById('editor').value;
+                payload.format = currentData.format || 'yaml';
+            } else {
+                payload.content = document.getElementById('editor').value;
+            }
+
             await fetch('/api/article', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ path: currentPath, content: content })
+                body: JSON.stringify(payload)
             });
             
             btn.textContent = originalText;
-            // alert("Saved!"); // 邪魔なのでコメントアウト（好みに応じて）
+            // alert("Saved!"); 
         }
 
         async function runBuild() {
