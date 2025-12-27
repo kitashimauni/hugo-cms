@@ -331,9 +331,21 @@
                     }
                 } else if (widget === 'datetime') {
                     if (input.value) {
-                        // Append seconds and timezone if possible, or just ISO
-                        // Decap CMS often uses full ISO string
-                        fm[key] = new Date(input.value).toISOString();
+                        const d = new Date(input.value);
+                        // Convert to ISO string with local timezone offset
+                        const pad = (n) => (n < 10 ? '0' : '') + n;
+                        const tzo = -d.getTimezoneOffset();
+                        const dif = tzo >= 0 ? '+' : '-';
+                        const offH = pad(Math.floor(Math.abs(tzo) / 60));
+                        const offM = pad(Math.abs(tzo) % 60);
+                        
+                        fm[key] = d.getFullYear() + '-' + 
+                                  pad(d.getMonth() + 1) + '-' + 
+                                  pad(d.getDate()) + 'T' + 
+                                  pad(d.getHours()) + ':' + 
+                                  pad(d.getMinutes()) + ':' + 
+                                  pad(d.getSeconds()) + 
+                                  dif + offH + ':' + offM;
                     } else {
                         fm[key] = null;
                     }
