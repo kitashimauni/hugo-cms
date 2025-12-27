@@ -18,7 +18,18 @@
         .file-item:hover { background: #333; }
 
         /* Editor Styles */
+        #edit-container { display: flex; flex-direction: column; height: 100%; }
+        #fm-container { background: #252526; padding: 10px; border-bottom: 1px solid #333; max-height: 40%; overflow-y: auto; }
+        #editor-wrapper { flex: 1; position: relative; }
         textarea { width: 100%; height: 100%; background: #1e1e1e; color: #f8f8f2; border: none; padding: 10px; font-family: monospace; font-size: 16px; box-sizing: border-box; resize: none; outline: none; }
+
+        /* Form Styles */
+        .fm-field { margin-bottom: 10px; }
+        .fm-label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; }
+        .fm-input { width: 100%; background: #333; color: white; border: 1px solid #444; padding: 6px; border-radius: 4px; box-sizing: border-box; }
+        .fm-input:focus { border-color: #007acc; outline: none; }
+        .fm-checkbox { margin-right: 5px; }
+        .fm-help { font-size: 11px; color: #666; margin-top: 2px; }
 
         /* Preview Styles */
         iframe { width: 100%; height: 100%; border: none; background: white; }
@@ -55,7 +66,12 @@
         </div>
 
         <div id="tab-edit" class="tab-content">
-            <textarea id="editor" placeholder="Select a file to edit..."></textarea>
+            <div id="edit-container">
+                <div id="fm-container" style="display:none;"></div>
+                <div id="editor-wrapper">
+                    <textarea id="editor" placeholder="Select a file to edit..."></textarea>
+                </div>
+            </div>
         </div>
 
         <div id="tab-preview" class="tab-content">
@@ -71,16 +87,33 @@
 
     <script>
         let currentPath = "";
+        let currentData = null; 
+        let cmsConfig = null;
 
-        // 初期化: 記事一覧を取得
-        fetchFiles();
+        // 初期化
+        init();
+
+        async function init() {
+            await fetchConfig();
+            await fetchFiles();
+        }
+
+        async function fetchConfig() {
+            try {
+                const res = await fetch('/api/config');
+                if (res.ok) {
+                    cmsConfig = await res.json();
+                } else {
+                    console.warn("Config not found or invalid");
+                }
+            } catch(e) {
+                console.error("Failed to fetch config", e);
+            }
+        }
 
         function switchTab(tabName, btn) {
-            // タブ切り替え表示
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.getElementById('tab-' + tabName).classList.add('active');
-            
-            // ボタンのアクティブ化
             if(btn) {
                 document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
                 btn.classList.add('active');
@@ -100,7 +133,7 @@
             files.forEach(f => {
                 const div = document.createElement('div');
                 div.className = 'file-item';
-                div.textContent = f.path; // + " (" + f.title + ")";
+                div.textContent = f.path; 
                 div.onclick = () => loadFile(f.path);
                 list.appendChild(div);
             });
@@ -112,29 +145,244 @@
             
             const res = await fetch(`/api/article?path=${path}`);
             const data = await res.json();
+            currentData = data;
             
-            document.getElementById('editor').value = data.content;
+            const fmContainer = document.getElementById('fm-container');
+            const editor = document.getElementById('editor');
+
+            if (data.frontmatter) {
+                renderFrontMatterForm(data.frontmatter, path);
+                fmContainer.style.display = 'block';
+                editor.value = data.body;
+            } else {
+                fmContainer.style.display = 'none';
+                fmContainer.innerHTML = '';
+                editor.value = data.content;
+            }
             
-            // エディタタブへ自動移動
             switchTab('edit', document.querySelectorAll('nav button')[1]);
+        }
+
+        function getCollectionForPath(path) {
+            if (!cmsConfig || !cmsConfig.collections) return null;
+            // 簡易マッチング: path (e.g. "posts/abc.md") が collection.folder (e.g. "content/posts") を含むか
+            // APIから返ってくる path は "posts/abc.md" (content/ からの相対)
+            // configの folder は "content/posts" なので、 "content/" を除去して比較
+            for (const col of cmsConfig.collections) {
+                const colFolder = col.folder.replace(/^content\//, '');
+                if (path.startsWith(colFolder + "/")) {
+                    return col;
+                }
+            }
+            return null;
+        }
+
+        function renderFrontMatterForm(fm, path) {
+            const container = document.getElementById('fm-container');
+            container.innerHTML = '<div style="color:#aaa; font-weight:bold; margin-bottom:10px;">Front Matter</div>';
+            
+            const collection = getCollectionForPath(path);
+            const definedFields = collection ? collection.fields : [];
+            const processedKeys = new Set();
+
+            // 1. Defined Fields
+            definedFields.forEach(field => {
+                if (field.name === 'body') return; // Skip body, handled by editor
+                
+                const val = fm[field.name];
+                renderField(container, field, val);
+                processedKeys.add(field.name);
+            });
+
+            // 2. Undefined Fields (preserve them)
+            for (const [key, value] of Object.entries(fm)) {
+                if (!processedKeys.has(key)) {
+                    // Infer type
+                    let widget = 'string';
+                    if (typeof value === 'boolean') widget = 'boolean';
+                    else if (Array.isArray(value)) widget = 'list';
+                    
+                    renderField(container, { name: key, label: key + " (Extra)", widget: widget }, value);
+                }
+            }
+        }
+
+        function renderField(container, field, value) {
+            const div = document.createElement('div');
+            div.className = 'fm-field';
+            
+            const label = document.createElement('label');
+            label.className = 'fm-label';
+            label.textContent = field.label || field.name;
+            div.appendChild(label);
+
+            if (field.widget === 'datetime') {
+                const wrapper = document.createElement('div');
+                wrapper.style.display = 'flex';
+                wrapper.style.gap = '5px';
+
+                const input = createInputForWidget(field, value);
+                input.style.flex = '1';
+                
+                const nowBtn = document.createElement('button');
+                nowBtn.textContent = 'Now';
+                nowBtn.className = 'action-btn'; // Use existing class or style
+                nowBtn.style.background = '#444';
+                nowBtn.style.padding = '4px 8px';
+                nowBtn.style.fontSize = '12px';
+                nowBtn.onclick = () => {
+                    const d = new Date();
+                    const pad = (n) => n < 10 ? '0'+n : n;
+                    const localIso = d.getFullYear() + '-' + 
+                                   pad(d.getMonth()+1) + '-' + 
+                                   pad(d.getDate()) + 'T' + 
+                                   pad(d.getHours()) + ':' + 
+                                   pad(d.getMinutes());
+                    input.value = localIso;
+                };
+
+                wrapper.appendChild(input);
+                wrapper.appendChild(nowBtn);
+                div.appendChild(wrapper);
+            } else {
+                const input = createInputForWidget(field, value);
+                div.appendChild(input);
+            }
+            
+            container.appendChild(div);
+        }
+
+        function createInputForWidget(field, value) {
+            let input;
+
+            if (field.widget === 'boolean') {
+                input = document.createElement('input');
+                input.type = 'checkbox';
+                input.className = 'fm-checkbox';
+                input.checked = value === true; // Handle null/undefined as false
+                input.dataset.key = field.name;
+                input.dataset.widget = 'boolean';
+                
+            } else if (field.widget === 'datetime') {
+                input = document.createElement('input');
+                input.type = 'datetime-local';
+                input.className = 'fm-input';
+                // Value format: YYYY-MM-DDTHH:mm
+                if (value) {
+                    try {
+                        const d = new Date(value);
+                        // Local ISO string hack
+                        const pad = (n) => n < 10 ? '0'+n : n;
+                        const localIso = d.getFullYear() + '-' + 
+                                       pad(d.getMonth()+1) + '-' + 
+                                       pad(d.getDate()) + 'T' + 
+                                       pad(d.getHours()) + ':' + 
+                                       pad(d.getMinutes());
+                        input.value = localIso;
+                    } catch(e) {
+                        input.value = value;
+                    }
+                }
+                input.dataset.key = field.name;
+                input.dataset.widget = 'datetime';
+
+            } else if (field.widget === 'list') {
+                input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'fm-input';
+                input.placeholder = "Comma separated values";
+                if (Array.isArray(value)) {
+                    input.value = value.join(', ');
+                } else if (value) {
+                    input.value = String(value);
+                }
+                input.dataset.key = field.name;
+                input.dataset.widget = 'list';
+
+            } else { // Default string
+                input = document.createElement('input');
+                input.type = 'text';
+                input.className = 'fm-input';
+                input.value = (value === null || value === undefined) ? (field.default || '') : value;
+                input.dataset.key = field.name;
+                input.dataset.widget = 'string';
+            }
+            return input;
+        }
+
+        function collectFrontMatter() {
+            if (!currentData || !currentData.frontmatter) return null;
+            
+            const fm = {};
+            const inputs = document.querySelectorAll('#fm-container input');
+            
+            inputs.forEach(input => {
+                const key = input.dataset.key;
+                const widget = input.dataset.widget;
+                
+                if (widget === 'boolean') {
+                    fm[key] = input.checked;
+                } else if (widget === 'list') {
+                    const val = input.value.trim();
+                    if (val === "") {
+                         fm[key] = [];
+                    } else {
+                         fm[key] = val.split(',').map(s => s.trim()).filter(s => s !== "");
+                    }
+                } else if (widget === 'datetime') {
+                    if (input.value) {
+                        const d = new Date(input.value);
+                        // Convert to ISO string with local timezone offset
+                        const pad = (n) => (n < 10 ? '0' : '') + n;
+                        const tzo = -d.getTimezoneOffset();
+                        const dif = tzo >= 0 ? '+' : '-';
+                        const offH = pad(Math.floor(Math.abs(tzo) / 60));
+                        const offM = pad(Math.abs(tzo) % 60);
+                        
+                        fm[key] = d.getFullYear() + '-' + 
+                                  pad(d.getMonth() + 1) + '-' + 
+                                  pad(d.getDate()) + 'T' + 
+                                  pad(d.getHours()) + ':' + 
+                                  pad(d.getMinutes()) + ':' + 
+                                  pad(d.getSeconds()) + 
+                                  dif + offH + ':' + offM;
+                    } else {
+                        fm[key] = null;
+                    }
+                } else { // String/Number logic could be refined
+                    fm[key] = input.value;
+                }
+            });
+            return fm;
         }
 
         async function saveFile() {
             if(!currentPath) return alert("No file selected");
             
-            const content = document.getElementById('editor').value;
             const btn = document.querySelector('button[onclick="saveFile()"]');
             const originalText = btn.textContent;
             btn.textContent = "Saving...";
 
+            const payload = {
+                path: currentPath,
+            };
+
+            const fm = collectFrontMatter();
+            if (fm) {
+                payload.frontmatter = fm;
+                payload.body = document.getElementById('editor').value;
+                payload.format = currentData.format || 'yaml';
+            } else {
+                payload.content = document.getElementById('editor').value;
+            }
+
             await fetch('/api/article', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ path: currentPath, content: content })
+                body: JSON.stringify(payload)
             });
             
             btn.textContent = originalText;
-            // alert("Saved!"); // 邪魔なのでコメントアウト（好みに応じて）
         }
 
         async function runBuild() {
@@ -147,9 +395,7 @@
                 const data = await res.json();
                 
                 if (data.status === 'ok') {
-                    // プレビュータブへ移動してリロード
                     const frame = document.getElementById('preview-frame');
-                    // キャッシュバスターをつけてリロード
                     frame.src = "/preview/index.html?t=" + Date.now();
                     switchTab('preview', document.querySelectorAll('nav button')[2]);
                 } else {
@@ -175,7 +421,7 @@
                 const data = await res.json();
                 if(data.status === 'ok') {
                     alert("Sync Complete!\n" + data.log);
-                    fetchFiles(); // リスト更新
+                    fetchFiles(); 
                 } else {
                     alert("Sync Error:\n" + data.log);
                 }
