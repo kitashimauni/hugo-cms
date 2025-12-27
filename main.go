@@ -48,7 +48,7 @@ func main() {
 		ClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
 		Scopes:       []string{"repo"}, // リポジトリ操作権限が必要
 		Endpoint:     github.Endpoint,
-		RedirectURL:  "http://cms.n-island.dev:8080/auth/callback",
+		RedirectURL:  "https://cms.n-island.dev/auth/callback",
 	}
 
 	r := gin.Default()
@@ -174,7 +174,7 @@ func handleBuild(c *gin.Context) {
 	cmd := exec.Command("hugo",
 		"--source", RepoPath,
 		"--destination", "public",
-		"--baseURL", "http://cms.n-island.dev:8080"+PreviewURL,
+		"--baseURL", "https://cms.n-island.dev"+PreviewURL,
 		"--cleanDestinationDir",
 	)
 	output, err := cmd.CombinedOutput()
