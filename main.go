@@ -43,12 +43,22 @@ func main() {
 	}
 
 	// OAuth設定
+	appURL := os.Getenv("APP_URL")
+	if appURL == "" {
+		appURL = "http://localhost:8080"
+	}
+
+	redirectURL := os.Getenv("GITHUB_REDIRECT_URL")
+	if redirectURL == "" {
+		redirectURL = appURL + "/auth/callback"
+	}
+
 	oauthConf = &oauth2.Config{
 		ClientID:     os.Getenv("GITHUB_CLIENT_ID"),
 		ClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
 		Scopes:       []string{"repo"}, // リポジトリ操作権限が必要
 		Endpoint:     github.Endpoint,
-		RedirectURL:  "https://cms.n-island.dev/auth/callback",
+		RedirectURL:  redirectURL,
 	}
 
 	r := gin.Default()
@@ -171,10 +181,15 @@ func authRequired(c *gin.Context) {
 }
 
 func handleBuild(c *gin.Context) {
+	appURL := os.Getenv("APP_URL")
+	if appURL == "" {
+		appURL = "http://localhost:8080"
+	}
+
 	cmd := exec.Command("hugo",
 		"--source", RepoPath,
 		"--destination", "public",
-		"--baseURL", "https://cms.n-island.dev"+PreviewURL,
+		"--baseURL", appURL+PreviewURL,
 		"--cleanDestinationDir",
 	)
 	output, err := cmd.CombinedOutput()
@@ -264,7 +279,7 @@ func executeGitWithToken(dir, token string, args ...string) (error, string) {
 	cmd := exec.Command("git", newArgs...)
 	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
-	
+
 	// 5. ログのサニタイズ (トークンを隠す)
 	safeLog := strings.ReplaceAll(string(output), token, "***")
 	safeLog = strings.ReplaceAll(safeLog, authenticatedUrl, remoteUrl) // URL全体も元のものに戻して表示
