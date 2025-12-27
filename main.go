@@ -309,7 +309,7 @@ func safeJoin(root, sub, target string) string {
 func parseFrontMatter(content []byte) (map[string]interface{}, string, string, error) {
 	str := string(content)
 	// Check for YAML (---)
-	if strings.HasPrefix(str, "---") || strings.HasPrefix(str, "---") {
+	if strings.HasPrefix(str, "---\n") || strings.HasPrefix(str, "---\r\n") {
 		parts := strings.SplitN(str, "---", 3) // "", FM, Body
 		if len(parts) == 3 {
 			var fm map[string]interface{}
@@ -319,7 +319,7 @@ func parseFrontMatter(content []byte) (map[string]interface{}, string, string, e
 		}
 	}
 	// Check for TOML (+++)
-	if strings.HasPrefix(str, "+++") || strings.HasPrefix(str, "+++") {
+	if strings.HasPrefix(str, "+++\n") || strings.HasPrefix(str, "+++\r\n") {
 		parts := strings.SplitN(str, "+++", 3)
 		if len(parts) == 3 {
 			var fm map[string]interface{}
@@ -349,22 +349,22 @@ func parseFrontMatter(content []byte) (map[string]interface{}, string, string, e
 
 func constructFileContent(fm map[string]interface{}, body string, format string) ([]byte, error) {
 	var buf bytes.Buffer
-	sswitch format {
+	switch format {
 	case "yaml":
-		buf.WriteString("---")
+		buf.WriteString("---\n")
 		enc := yaml.NewEncoder(&buf)
 		enc.SetIndent(2)
 		if err := enc.Encode(fm); err != nil {
 			return nil, err
 		}
-		buf.WriteString("---")
+		buf.WriteString("---\n")
 	case "toml":
-		buf.WriteString("+++")
+		buf.WriteString("+++\n")
 		enc := toml.NewEncoder(&buf)
 		if err := enc.Encode(fm); err != nil {
 			return nil, err
 		}
-		buf.WriteString("+++")
+		buf.WriteString("+++\n")
 	case "json":
 		enc := json.NewEncoder(&buf)
 		enc.SetIndent("", "  ")
