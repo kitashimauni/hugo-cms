@@ -1,0 +1,16 @@
+# Env
+.env
+
+# Data directory (managed as a separate git repo)
+repo/
+
+# Binaries
+main
+main.exe
+
+# OS Specific
+.DS_Store
+Thumbs.db
+
+# Agent temp
+.gemini/
