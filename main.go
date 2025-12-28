@@ -233,6 +233,60 @@ func main() {
 				c.JSON(200, gin.H{"status": "created", "log": string(output)})
 			})
 
+			api.POST("/diff", func(c *gin.Context) {
+				var art Article
+				if err := c.BindJSON(&art); err != nil {
+					c.JSON(400, gin.H{"error": "Invalid JSON"})
+					return
+				}
+
+				fullPath := safeJoin(RepoPath, "content", art.Path)
+				
+				// 1. Get current content
+				currentContent, err := os.ReadFile(fullPath)
+				if err != nil {
+					// If new file, current is empty
+					currentContent = []byte("")
+				}
+
+				// 2. Construct new content
+				var newContent []byte
+				if art.FrontMatter != nil {
+					newContent, err = constructFileContent(art.FrontMatter, art.Body, art.Format)
+					if err != nil {
+						c.JSON(500, gin.H{"error": "Construction failed"})
+						return
+					}
+				} else {
+					newContent = []byte(art.Content)
+				}
+
+				// 3. Create temp files
+				tmpDir := os.TempDir()
+				f1, _ := os.CreateTemp(tmpDir, "diff_old_*")
+				f2, _ := os.CreateTemp(tmpDir, "diff_new_*")
+				defer os.Remove(f1.Name())
+				defer os.Remove(f2.Name())
+
+				f1.Write(currentContent)
+				f2.Write(newContent)
+				f1.Close()
+				f2.Close()
+
+				// 4. Run git diff
+				cmd := exec.Command("git", "diff", "--no-index", f1.Name(), f2.Name())
+				// git diff returns exit code 1 if differences found, 0 if none.
+				output, _ := cmd.CombinedOutput()
+				
+				// Output contains filenames like /tmp/diff_old_... which looks ugly
+				// We can clean it up or just return as is
+				diffStr := string(output)
+				diffStr = strings.ReplaceAll(diffStr, f1.Name(), "Current")
+				diffStr = strings.ReplaceAll(diffStr, f2.Name(), "New")
+
+				c.JSON(200, gin.H{"diff": diffStr})
+			})
+
 			// 7. Config取得
 			api.GET("/config", func(c *gin.Context) {
 				configPath := filepath.Join(RepoPath, "static/admin/config.yml")
