@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/models"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -19,12 +21,17 @@ var (
 )
 
 func GetArticlesCache() ([]models.Article, error) {
+	start := time.Now()
 	cacheMutex.Lock()
 	defer cacheMutex.Unlock()
 
 	if cacheLoaded {
 		return articleCache, nil
 	}
+	
+	defer func() {
+		fmt.Printf("[Cache] Rebuild All Duration: %v, Count: %d\n", time.Since(start), len(articleCache))
+	}()
 
 	contentDir := filepath.Join(config.RepoPath, "content")
 	dirtyFiles, _ := getGitDirtyFiles(config.RepoPath)
@@ -133,6 +140,11 @@ func InvalidateCache() {
 }
 
 func UpdateCache(relPath string) {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("[Cache] Update Single: %s, Duration: %v\n", relPath, time.Since(start))
+	}()
+
 	cacheMutex.Lock()
 	defer cacheMutex.Unlock()
 
