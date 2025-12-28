@@ -26,12 +26,9 @@ func CreateContent(path string) (error, string) {
 		return os.ErrExist, "File already exists"
 	}
 
-	cmd := exec.Command("hugo", "new", "content", path)
-	cmd.Dir = config.RepoPath
-	output, err := cmd.CombinedOutput()
-
-	if err == nil {
-		InvalidateCache()
+		cmd := exec.Command("hugo", "new", "content", path)
+		cmd.Dir = config.RepoPath
+		output, err := cmd.CombinedOutput()
+		
+		return err, string(output)
 	}
-	return err, string(output)
-}

@@ -131,3 +131,62 @@ func InvalidateCache() {
 	cacheLoaded = false
 	articleCache = nil
 }
+
+func UpdateCache(relPath string) {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	if !cacheLoaded {
+		return // Next Get will rebuild
+	}
+
+	fullPath := filepath.Join(config.RepoPath, "content", relPath)
+	
+	// Check if file exists (might be deleted?)
+	// For now assuming update/create means it exists or we handle error
+	content, err := readHead(fullPath, 4096)
+	if err != nil {
+		return // Ignore error, maybe remove from cache if not found?
+	}
+
+	title := relPath
+	fm, _, _, err := ParseFrontMatter(content)
+	if err == nil {
+		if t, ok := fm["title"].(string); ok {
+			title = t
+		}
+	}
+
+	isDirty, _ := getGitFileStatus(relPath)
+
+	newArt := models.Article{
+		Path:    relPath,
+		Title:   title,
+		IsDirty: isDirty,
+	}
+
+	found := false
+	for i, art := range articleCache {
+		if art.Path == relPath {
+			articleCache[i] = newArt
+			found = true
+			break
+		}
+	}
+	if !found {
+		articleCache = append(articleCache, newArt)
+	}
+}
+
+func getGitFileStatus(relPath string) (bool, error) {
+	// git status --porcelain content/posts/xxx.md
+	// Note: relPath is relative to content/, but git needs relative to RepoPath
+	target := filepath.Join("content", relPath)
+	cmd := exec.Command("git", "status", "--porcelain", target)
+	cmd.Dir = config.RepoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+	return len(strings.TrimSpace(string(out))) > 0, nil
+}
