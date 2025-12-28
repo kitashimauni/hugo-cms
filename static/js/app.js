@@ -13,6 +13,10 @@ function getTabButton(tabName) {
     return document.querySelectorAll('nav button')[index] || null;
 }
 
+function waitForNextPaint() {
+    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
 function showEditorLoadingState(path) {
     currentPath = path;
     document.getElementById('filename-display').textContent = path;
@@ -166,6 +170,8 @@ async function loadFile(path) {
     const editor = document.getElementById('editor');
 
     const fetchPromise = fetch(`/api/article?path=${encodeURIComponent(path)}`, { signal: controller.signal });
+
+    await waitForNextPaint();
 
     try {
         const res = await fetchPromise;
