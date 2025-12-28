@@ -131,25 +131,36 @@ function renderCollectionGroup(container, label, files) {
 async function loadFile(path) {
     currentPath = path;
     document.getElementById('filename-display').textContent = path;
-    
-    const res = await fetch(`/api/article?path=${path}`);
-    const data = await res.json();
-    currentData = data;
-    
+
+    // Immediate feedback
+    switchTab('edit', document.querySelectorAll('nav button')[1]);
     const fmContainer = document.getElementById('fm-container');
     const editor = document.getElementById('editor');
-
-    if (data.frontmatter) {
-        renderFrontMatterForm(data.frontmatter, path);
-        fmContainer.style.display = 'block';
-        editor.value = data.body;
-    } else {
-        fmContainer.style.display = 'none';
-        fmContainer.innerHTML = '';
-        editor.value = data.content;
-    }
     
-    switchTab('edit', document.querySelectorAll('nav button')[1]);
+    fmContainer.style.display = 'none';
+    editor.value = "Loading...";
+    editor.disabled = true;
+    
+    try {
+        const res = await fetch(`/api/article?path=${path}`);
+        const data = await res.json();
+        currentData = data;
+        
+        editor.disabled = false;
+
+        if (data.frontmatter) {
+            renderFrontMatterForm(data.frontmatter, path);
+            fmContainer.style.display = 'block';
+            editor.value = data.body;
+        } else {
+            fmContainer.style.display = 'none';
+            fmContainer.innerHTML = '';
+            editor.value = data.content;
+        }
+    } catch(e) {
+        editor.value = "Error loading file: " + e;
+        editor.disabled = false;
+    }
 }
 
 function getCollectionForPath(path) {
@@ -167,6 +178,7 @@ function renderFrontMatterForm(fm, path) {
     const container = document.getElementById('fm-container');
     container.innerHTML = '<div style="color:#aaa; font-weight:bold; margin-bottom:10px;">Front Matter</div>';
     
+    const fragment = document.createDocumentFragment();
     const collection = getCollectionForPath(path);
     const definedFields = collection ? collection.fields : [];
     const processedKeys = new Set();
@@ -175,7 +187,7 @@ function renderFrontMatterForm(fm, path) {
         if (field.name === 'body') return;
         
         const val = fm[field.name];
-        renderField(container, field, val);
+        renderField(fragment, field, val);
         processedKeys.add(field.name);
     });
 
@@ -185,9 +197,10 @@ function renderFrontMatterForm(fm, path) {
             if (typeof value === 'boolean') widget = 'boolean';
             else if (Array.isArray(value)) widget = 'list';
             
-            renderField(container, { name: key, label: key + " (Extra)", widget: widget }, value);
+            renderField(fragment, { name: key, label: key + " (Extra)", widget: widget }, value);
         }
     }
+    container.appendChild(fragment);
 }
 
 function renderField(container, field, value) {
