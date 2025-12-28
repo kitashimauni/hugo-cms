@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -31,7 +32,12 @@ const (
 	PreviewURL = "/preview/"
 )
 
-var oauthConf *oauth2.Config
+var (
+	oauthConf    *oauth2.Config
+	articleCache []Article
+	cacheMutex   sync.Mutex
+	cacheLoaded  bool
+)
 
 // 記事構造体
 type Article struct {
@@ -41,6 +47,7 @@ type Article struct {
 	FrontMatter map[string]interface{} `json:"frontmatter,omitempty"`
 	Body        string                 `json:"body,omitempty"`
 	Format      string                 `json:"format,omitempty"` // yaml, toml, json
+	IsDirty     bool                   `json:"is_dirty"`
 }
 
 func main() {
@@ -121,18 +128,11 @@ func main() {
 			api.POST("/build", handleBuild)
 
 			api.GET("/articles", func(c *gin.Context) {
-				var articles []Article
-				contentDir := filepath.Join(RepoPath, "content")
-				filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
-					if err != nil {
-						return err
-					}
-					if !d.IsDir() && strings.HasSuffix(d.Name(), ".md") {
-						relPath, _ := filepath.Rel(contentDir, path)
-							articles = append(articles, Article{Path: relPath, Title: relPath})
-					}
-					return nil
-				})
+				articles, err := getArticlesCache()
+				if err != nil {
+					c.JSON(500, gin.H{"error": "Failed to fetch articles"})
+					return
+				}
 				c.JSON(http.StatusOK, articles)
 			})
 
@@ -187,16 +187,136 @@ func main() {
 					c.JSON(500, gin.H{"error": "Save failed"})
 					return
 				}
+				
+				invalidateCache() // Cache invalidation
 				c.JSON(200, gin.H{"status": "saved"})
 			})
 
+			api.POST("/create", func(c *gin.Context) {
+				var req struct {
+					Path    string `json:"path"`
+					Content string `json:"content"` // Content is ignored when using hugo new
+				}
+				if err := c.BindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"error": "Invalid JSON"})
+					return
+				}
+
+				// Basic validation
+				if req.Path == "" || strings.Contains(req.Path, "..") {
+					c.JSON(400, gin.H{"error": "Invalid path"})
+					return
+				}
+
+				// Check if file already exists (Hugo might overwrite or fail, safer to check)
+				fullPath := safeJoin(RepoPath, "content", req.Path)
+				if _, err := os.Stat(fullPath); err == nil {
+					c.JSON(409, gin.H{"error": "File already exists"})
+					return
+				}
+
+				// Run hugo new content
+				cmd := exec.Command("hugo", "new", "content", req.Path)
+				cmd.Dir = RepoPath
+				output, err := cmd.CombinedOutput()
+				
+				if err != nil {
+					c.JSON(500, gin.H{"error": "Hugo new failed", "log": string(output)})
+					return
+				}
+
+				invalidateCache()
+				c.JSON(200, gin.H{"status": "created", "log": string(output)})
+			})
+
+						api.POST("/diff", func(c *gin.Context) {
+							var art Article
+							if err := c.BindJSON(&art); err != nil {
+								c.JSON(400, gin.H{"error": "Invalid JSON"})
+								return
+							}
+			
+							fullPath := safeJoin(RepoPath, "content", art.Path)
+							
+							// 1. Get current content from file
+							currentContent, err := os.ReadFile(fullPath)
+							if err != nil {
+								currentContent = []byte("")
+							}
+			
+							// Normalize current content to avoid formatting noise
+							// (Parse -> Construct)
+							if len(currentContent) > 0 {
+								fm, body, format, err := parseFrontMatter(currentContent)
+								if err == nil {
+									normalized, err := constructFileContent(fm, body, format)
+									if err == nil {
+										currentContent = normalized
+									}
+								}
+							}
+			
+							// 2. Construct new content from editor
+							var newContent []byte
+							if art.FrontMatter != nil {
+								newContent, err = constructFileContent(art.FrontMatter, art.Body, art.Format)
+								if err != nil {
+									c.JSON(500, gin.H{"error": "Construction failed"})
+									return
+								}
+							} else {
+								newContent = []byte(art.Content)
+							}
+			
+							// 3. Create temp files for comparison
+							tmpDir := os.TempDir()
+							f1, _ := os.CreateTemp(tmpDir, "diff_old_*")
+							f2, _ := os.CreateTemp(tmpDir, "diff_new_*")
+							defer os.Remove(f1.Name())
+							defer os.Remove(f2.Name())
+			
+							f1.Write(currentContent)
+							f2.Write(newContent)
+							f1.Close()
+							f2.Close()
+			
+							// 4. Check Unsaved Diff (Editor vs Saved-Normalized)
+							cmd := exec.Command("git", "diff", "--no-index", f1.Name(), f2.Name())
+							output, err := cmd.CombinedOutput()
+							
+							// Exit code 1 means diff found
+							if err != nil && cmd.ProcessState.ExitCode() == 1 {
+								diffStr := string(output)
+								diffStr = strings.ReplaceAll(diffStr, f1.Name(), "Saved (Normalized)")
+								diffStr = strings.ReplaceAll(diffStr, f2.Name(), "Editor")
+								c.JSON(200, gin.H{"diff": diffStr, "type": "unsaved"})
+								return
+							}
+			
+							// 5. Check Git Diff (Saved vs HEAD)
+							// Note: This still compares Raw Saved vs HEAD, which is correct for checking "what will be committed"
+							// But user asked to "reset" formatting diffs.
+							// If we normalize comparison above, "Diff" button will show No Diff.
+							// But "Reset" just reloads raw file.
+							// If user Saves, the file WILL change (normalized).
+							// This is acceptable behavior for a CMS.
+							
+							relPath := filepath.Join("content", art.Path)
+							cmdGit := exec.Command("git", "diff", "HEAD", "--", relPath)
+							cmdGit.Dir = RepoPath
+							outGit, _ := cmdGit.CombinedOutput()
+							
+							if len(outGit) > 0 {
+								c.JSON(200, gin.H{"diff": string(outGit), "type": "git"})
+							} else {
+								c.JSON(200, gin.H{"diff": "", "type": "none"})
+							}
+						})
 			// 7. Config取得
 			api.GET("/config", func(c *gin.Context) {
 				configPath := filepath.Join(RepoPath, "static/admin/config.yml")
 				content, err := os.ReadFile(configPath)
 				if err != nil {
-					// static/adminになければ public/admin も探す等のフォールバックがあってもよいが
-					// ここでは簡易的にエラーを返す
 					c.JSON(404, gin.H{"error": "Config not found"})
 					return
 				}
@@ -258,6 +378,11 @@ func handleSync(c *gin.Context) {
 	session := sessions.Default(c)
 	token := session.Get("access_token").(string)
 	err, log := executeGitWithToken(RepoPath, token, "pull", "origin", "main")
+	
+	if err == nil {
+		invalidateCache() // Cache invalidation on sync
+	}
+
 	if err != nil {
 		c.JSON(500, gin.H{"status": "error", "log": log})
 		return
@@ -323,6 +448,90 @@ func safeJoin(root, sub, target string) string {
 	return filepath.Join(root, sub, cleanTarget)
 }
 
+// --- Cache Logic ---
+
+func getArticlesCache() ([]Article, error) {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	if cacheLoaded {
+		return articleCache, nil
+	}
+
+	var articles []Article
+	contentDir := filepath.Join(RepoPath, "content")
+	
+dirtyFiles, _ := getGitDirtyFiles(RepoPath)
+
+	err := filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(d.Name(), ".md") {
+			relPath, _ := filepath.Rel(contentDir, path)
+			
+			repoRelPath, _ := filepath.Rel(RepoPath, path)
+			repoRelPath = filepath.ToSlash(repoRelPath)
+			isDirty := dirtyFiles[repoRelPath]
+
+			// Read file to get title
+			content, err := os.ReadFile(path)
+			title := relPath // Default to path
+			if err == nil {
+				fm, _, _, err := parseFrontMatter(content)
+				if err == nil {
+					if t, ok := fm["title"].(string); ok {
+						title = t
+					}
+				}
+			}
+
+			articles = append(articles, Article{
+				Path:    relPath,
+				Title:   title,
+				IsDirty: isDirty,
+			})
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	articleCache = articles
+	cacheLoaded = true
+	return articleCache, nil
+}
+
+func getGitDirtyFiles(dir string) (map[string]bool, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	dirty := make(map[string]bool)
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		if len(line) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		path = strings.Trim(path, "\"")
+		dirty[path] = true
+	}
+	return dirty, nil
+}
+
+func invalidateCache() {
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+	cacheLoaded = false
+	articleCache = nil
+}
+
 // --- Front Matter Logic ---
 
 func parseFrontMatter(content []byte) (map[string]interface{}, string, string, error) {
@@ -349,16 +558,8 @@ func parseFrontMatter(content []byte) (map[string]interface{}, string, string, e
 	}
 	// Check for JSON ({)
 	if strings.HasPrefix(strings.TrimSpace(str), "{") {
-		// JSONの場合、FrontMatterとBodyの境界が曖昧だが、HugoはJSON FrontMatterをサポートしている
-		// しかし、通常は外部ファイルか、特定のデリミタが必要。
-		// ここでは簡易的に「最初の行が { で始まるならJSON」とし、
-		// 閉じカッコを探してパースを試みる...というのは難しいので、
-		// HugoのJSON FrontMatter仕様（通常は全体がJSON、または特殊な記述）に準拠するのは一旦保留し、
-		// YAML/TOMLメインで実装する。
-		// ただし、単純なJSONファイルとしてパースできるならそうする。
 		var fm map[string]interface{}
 		if err := json.Unmarshal(content, &fm); err == nil {
-			// 全体がJSONとみなす（Bodyなし）
 			return fm, "", "json", nil
 		}
 	}
@@ -390,8 +591,6 @@ func constructFileContent(fm map[string]interface{}, body string, format string)
 		if err := enc.Encode(fm); err != nil {
 			return nil, err
 		}
-		// JSONの場合はBodyを含めるのが難しい（HugoはMarkdown内のJSON FMを公式にはあまり推奨していない/一般的ではない）
-		// ここでは単にJSONを出力して終了とする
 		return buf.Bytes(), nil
 	default:
 		return nil, fmt.Errorf("unsupported format: %s", format)
