@@ -120,22 +120,34 @@ func main() {
 		{
 			api.POST("/build", handleBuild)
 
-			api.GET("/articles", func(c *gin.Context) {
-				var articles []Article
-				contentDir := filepath.Join(RepoPath, "content")
-				filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
-					if err != nil {
-						return err
-					}
-					if !d.IsDir() && strings.HasSuffix(d.Name(), ".md") {
-						relPath, _ := filepath.Rel(contentDir, path)
-							articles = append(articles, Article{Path: relPath, Title: relPath})
-					}
-					return nil
-				})
-				c.JSON(http.StatusOK, articles)
-			})
-
+						api.GET("/articles", func(c *gin.Context) {
+							var articles []Article
+							contentDir := filepath.Join(RepoPath, "content")
+							filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
+								if err != nil {
+									return err
+								}
+								if !d.IsDir() && strings.HasSuffix(d.Name(), ".md") {
+									relPath, _ := filepath.Rel(contentDir, path)
+									
+									// Read file to get title
+									content, err := os.ReadFile(path)
+									title := relPath // Default to path
+									if err == nil {
+										fm, _, _, err := parseFrontMatter(content)
+										if err == nil {
+											if t, ok := fm["title"].(string); ok {
+												title = t
+											}
+										}
+									}
+			
+									articles = append(articles, Article{Path: relPath, Title: title})
+								}
+								return nil
+							})
+							c.JSON(http.StatusOK, articles)
+						})
 			api.GET("/article", func(c *gin.Context) {
 				targetPath := c.Query("path")
 				fullPath := safeJoin(RepoPath, "content", targetPath)
