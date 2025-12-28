@@ -141,6 +141,10 @@ async function loadFile(path) {
     editor.value = "Loading...";
     editor.disabled = true;
     
+    // Ensure the browser renders the "Loading..." state before proceeding
+    // Double requestAnimationFrame ensures the paint has occurred
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
     try {
         const res = await fetch(`/api/article?path=${path}`);
         const data = await res.json();
@@ -499,7 +503,7 @@ async function createNewFile() {
         if(!confirm("Filename does not end with .md. Continue?")) return;
     }
 
-    const content = "---\ntitle: New Post\ndraft: true\n---";
+    const content = "---\ntitle: New Post\ndraft: true\n---\n";
 
     try {
         const res = await fetch('/api/create', {
