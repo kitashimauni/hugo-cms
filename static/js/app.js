@@ -13,10 +13,6 @@ function getTabButton(tabName) {
     return document.querySelectorAll('nav button')[index] || null;
 }
 
-function waitForNextPaint() {
-    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-}
-
 function showEditorLoadingState(path) {
     currentPath = path;
     document.getElementById('filename-display').textContent = path;
@@ -169,10 +165,10 @@ async function loadFile(path) {
     const fmContainer = document.getElementById('fm-container');
     const editor = document.getElementById('editor');
 
-    await waitForNextPaint();
+    const fetchPromise = fetch(`/api/article?path=${encodeURIComponent(path)}`, { signal: controller.signal });
 
     try {
-        const res = await fetch(`/api/article?path=${encodeURIComponent(path)}`, { signal: controller.signal });
+        const res = await fetchPromise;
         if (!res.ok) {
             throw new Error(`Failed to load article (${res.status})`);
         }
@@ -184,6 +180,7 @@ async function loadFile(path) {
 
         currentData = data;
         editor.disabled = false;
+        switchTab('edit', getTabButton('edit'));
 
         if (data.frontmatter) {
             renderFrontMatterForm(data.frontmatter, path);
