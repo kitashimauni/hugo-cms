@@ -340,7 +340,7 @@ func getArticlesCache() ([]Article, error) {
 	var articles []Article
 	contentDir := filepath.Join(RepoPath, "content")
 	
-	err = filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
