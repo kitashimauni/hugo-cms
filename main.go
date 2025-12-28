@@ -47,6 +47,7 @@ type Article struct {
 	FrontMatter map[string]interface{} `json:"frontmatter,omitempty"`
 	Body        string                 `json:"body,omitempty"`
 	Format      string                 `json:"format,omitempty"` // yaml, toml, json
+	IsDirty     bool                   `json:"is_dirty"`
 }
 
 func main() {
@@ -215,16 +216,11 @@ func main() {
 				}
 
 				// Run hugo new content
-				// "hugo new content <path>" (v0.115+) or "hugo new <path>"
-				// Using "new content" is more explicit for content creation
 				cmd := exec.Command("hugo", "new", "content", req.Path)
 				cmd.Dir = RepoPath
 				output, err := cmd.CombinedOutput()
 				
 				if err != nil {
-					// Fallback for older hugo versions or if 'content' subcommand fails: try "hugo new"
-					// But usually 'hugo new posts/foo.md' works.
-					// Let's assume modern hugo. If error, return log.
 					c.JSON(500, gin.H{"error": "Hugo new failed", "log": string(output)})
 					return
 				}
@@ -279,7 +275,6 @@ func main() {
 				output, _ := cmd.CombinedOutput()
 				
 				// Output contains filenames like /tmp/diff_old_... which looks ugly
-				// We can clean it up or just return as is
 				diffStr := string(output)
 				diffStr = strings.ReplaceAll(diffStr, f1.Name(), "Current")
 				diffStr = strings.ReplaceAll(diffStr, f2.Name(), "New")
@@ -436,6 +431,8 @@ func getArticlesCache() ([]Article, error) {
 	var articles []Article
 	contentDir := filepath.Join(RepoPath, "content")
 	
+	dirtyFiles, _ := getGitDirtyFiles(RepoPath)
+
 	err := filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -443,6 +440,10 @@ func getArticlesCache() ([]Article, error) {
 		if !d.IsDir() && strings.HasSuffix(d.Name(), ".md") {
 			relPath, _ := filepath.Rel(contentDir, path)
 			
+			repoRelPath, _ := filepath.Rel(RepoPath, path)
+			repoRelPath = filepath.ToSlash(repoRelPath)
+			isDirty := dirtyFiles[repoRelPath]
+
 			// Read file to get title
 			content, err := os.ReadFile(path)
 			title := relPath // Default to path
@@ -455,7 +456,11 @@ func getArticlesCache() ([]Article, error) {
 				}
 			}
 
-			articles = append(articles, Article{Path: relPath, Title: title})
+			articles = append(articles, Article{
+				Path:    relPath,
+				Title:   title,
+				IsDirty: isDirty,
+			})
 		}
 		return nil
 	})
@@ -467,6 +472,27 @@ func getArticlesCache() ([]Article, error) {
 	articleCache = articles
 	cacheLoaded = true
 	return articleCache, nil
+}
+
+func getGitDirtyFiles(dir string) (map[string]bool, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	dirty := make(map[string]bool)
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		if len(line) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		path = strings.Trim(path, "\"")
+		dirty[path] = true
+	}
+	return dirty, nil
 }
 
 func invalidateCache() {

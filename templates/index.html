@@ -215,7 +215,13 @@
                 
                 const titleDiv = document.createElement('div');
                 titleDiv.style.fontWeight = 'bold';
-                titleDiv.textContent = f.title || f.path;
+                
+                let titleText = f.title || f.path;
+                if (f.is_dirty) {
+                    titleText = "✎ " + titleText;
+                    titleDiv.style.color = "#e2c08d"; // Modified color
+                }
+                titleDiv.textContent = titleText;
                 
                 const pathDiv = document.createElement('div');
                 pathDiv.style.fontSize = '12px';
