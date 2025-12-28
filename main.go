@@ -229,74 +229,89 @@ func main() {
 				c.JSON(200, gin.H{"status": "created", "log": string(output)})
 			})
 
-			api.POST("/diff", func(c *gin.Context) {
-				var art Article
-				if err := c.BindJSON(&art); err != nil {
-					c.JSON(400, gin.H{"error": "Invalid JSON"})
-					return
-				}
-
-				fullPath := safeJoin(RepoPath, "content", art.Path)
-				
-				// 1. Get current content from file
-				currentContent, err := os.ReadFile(fullPath)
-				if err != nil {
-					currentContent = []byte("")
-				}
-
-				// 2. Construct new content from editor
-				var newContent []byte
-				if art.FrontMatter != nil {
-					newContent, err = constructFileContent(art.FrontMatter, art.Body, art.Format)
-					if err != nil {
-						c.JSON(500, gin.H{"error": "Construction failed"})
-						return
-					}
-				} else {
-					newContent = []byte(art.Content)
-				}
-
-				// 3. Create temp files for comparison
-				tmpDir := os.TempDir()
-				f1, _ := os.CreateTemp(tmpDir, "diff_old_*")
-				f2, _ := os.CreateTemp(tmpDir, "diff_new_*")
-				defer os.Remove(f1.Name())
-				defer os.Remove(f2.Name())
-
-				f1.Write(currentContent)
-				f2.Write(newContent)
-				f1.Close()
-				f2.Close()
-
-				// 4. Check Unsaved Diff (Editor vs Saved)
-				cmd := exec.Command("git", "diff", "--no-index", f1.Name(), f2.Name())
-				output, err := cmd.CombinedOutput()
-				
-				// Exit code 1 means diff found
-				if err != nil && cmd.ProcessState.ExitCode() == 1 {
-					diffStr := string(output)
-					diffStr = strings.ReplaceAll(diffStr, f1.Name(), "Saved")
-				diffStr = strings.ReplaceAll(diffStr, f2.Name(), "Editor")
-				c.JSON(200, gin.H{"diff": diffStr, "type": "unsaved"})
-				return
-				}
-
-				// 5. Check Git Diff (Saved vs HEAD)
-				// path needs to be relative to repo root for git diff
-				// art.Path is relative to 'content/', so prepend 'content/'
-				relPath := filepath.Join("content", art.Path)
-				
-				cmdGit := exec.Command("git", "diff", "HEAD", "--", relPath)
-				cmdGit.Dir = RepoPath
-				outGit, _ := cmdGit.CombinedOutput()
-				
-				if len(outGit) > 0 {
-					c.JSON(200, gin.H{"diff": string(outGit), "type": "git"})
-				} else {
-					c.JSON(200, gin.H{"diff": "", "type": "none"})
-				}
-			})
-
+						api.POST("/diff", func(c *gin.Context) {
+							var art Article
+							if err := c.BindJSON(&art); err != nil {
+								c.JSON(400, gin.H{"error": "Invalid JSON"})
+								return
+							}
+			
+							fullPath := safeJoin(RepoPath, "content", art.Path)
+							
+							// 1. Get current content from file
+							currentContent, err := os.ReadFile(fullPath)
+							if err != nil {
+								currentContent = []byte("")
+							}
+			
+							// Normalize current content to avoid formatting noise
+							// (Parse -> Construct)
+							if len(currentContent) > 0 {
+								fm, body, format, err := parseFrontMatter(currentContent)
+								if err == nil {
+									normalized, err := constructFileContent(fm, body, format)
+									if err == nil {
+										currentContent = normalized
+									}
+								}
+							}
+			
+							// 2. Construct new content from editor
+							var newContent []byte
+							if art.FrontMatter != nil {
+								newContent, err = constructFileContent(art.FrontMatter, art.Body, art.Format)
+								if err != nil {
+									c.JSON(500, gin.H{"error": "Construction failed"})
+									return
+								}
+							} else {
+								newContent = []byte(art.Content)
+							}
+			
+							// 3. Create temp files for comparison
+							tmpDir := os.TempDir()
+							f1, _ := os.CreateTemp(tmpDir, "diff_old_*")
+							f2, _ := os.CreateTemp(tmpDir, "diff_new_*")
+							defer os.Remove(f1.Name())
+							defer os.Remove(f2.Name())
+			
+							f1.Write(currentContent)
+							f2.Write(newContent)
+							f1.Close()
+							f2.Close()
+			
+							// 4. Check Unsaved Diff (Editor vs Saved-Normalized)
+							cmd := exec.Command("git", "diff", "--no-index", f1.Name(), f2.Name())
+							output, err := cmd.CombinedOutput()
+							
+							// Exit code 1 means diff found
+							if err != nil && cmd.ProcessState.ExitCode() == 1 {
+								diffStr := string(output)
+								diffStr = strings.ReplaceAll(diffStr, f1.Name(), "Saved (Normalized)")
+								diffStr = strings.ReplaceAll(diffStr, f2.Name(), "Editor")
+								c.JSON(200, gin.H{"diff": diffStr, "type": "unsaved"})
+								return
+							}
+			
+							// 5. Check Git Diff (Saved vs HEAD)
+							// Note: This still compares Raw Saved vs HEAD, which is correct for checking "what will be committed"
+							// But user asked to "reset" formatting diffs.
+							// If we normalize comparison above, "Diff" button will show No Diff.
+							// But "Reset" just reloads raw file.
+							// If user Saves, the file WILL change (normalized).
+							// This is acceptable behavior for a CMS.
+							
+							relPath := filepath.Join("content", art.Path)
+							cmdGit := exec.Command("git", "diff", "HEAD", "--", relPath)
+							cmdGit.Dir = RepoPath
+							outGit, _ := cmdGit.CombinedOutput()
+							
+							if len(outGit) > 0 {
+								c.JSON(200, gin.H{"diff": string(outGit), "type": "git"})
+							} else {
+								c.JSON(200, gin.H{"diff": "", "type": "none"})
+							}
+						})
 			// 7. Config取得
 			api.GET("/config", func(c *gin.Context) {
 				configPath := filepath.Join(RepoPath, "static/admin/config.yml")
