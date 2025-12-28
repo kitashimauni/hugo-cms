@@ -10,6 +10,11 @@ import (
 )
 
 func ExecuteGitWithToken(dir, token string, args ...string) (error, string) {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("[Git] Cmd: %v, Duration: %v\n", args, time.Since(start))
+	}()
+
 	cmdGetUrl := exec.Command("git", "remote", "get-url", "origin")
 	cmdGetUrl.Dir = dir
 	outUrl, err := cmdGetUrl.Output()

@@ -103,7 +103,7 @@ func SaveArticle(c *gin.Context) {
 		return
 	}
 
-	services.InvalidateCache()
+	services.UpdateCache(art.Path)
 	c.JSON(200, gin.H{"status": "saved"})
 }
 
@@ -132,6 +132,7 @@ func CreateArticle(c *gin.Context) {
 		return
 	}
 
+	services.UpdateCache(req.Path)
 	c.JSON(200, gin.H{"status": "created", "log": log})
 }
 

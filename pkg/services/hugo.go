@@ -1,12 +1,19 @@
 package services
 
 import (
+	"fmt"
 	"hugo-cms/pkg/config"
 	"os"
 	"os/exec"
+	"time"
 )
 
 func BuildSite() (error, string) {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("[Hugo] Build Duration: %v\n", time.Since(start))
+	}()
+
 	cmd := exec.Command("hugo",
 		"--source", config.RepoPath,
 		"--destination", "public",
@@ -20,6 +27,11 @@ func BuildSite() (error, string) {
 }
 
 func CreateContent(path string) (error, string) {
+	start := time.Now()
+	defer func() {
+		fmt.Printf("[Hugo] New Content: %s, Duration: %v\n", path, time.Since(start))
+	}()
+
 	// Check if file already exists
 	fullPath := SafeJoin(config.RepoPath, "content", path)
 	if _, err := os.Stat(fullPath); err == nil {
@@ -29,9 +41,6 @@ func CreateContent(path string) (error, string) {
 	cmd := exec.Command("hugo", "new", "content", path)
 	cmd.Dir = config.RepoPath
 	output, err := cmd.CombinedOutput()
-
-	if err == nil {
-		InvalidateCache()
-	}
+	
 	return err, string(output)
 }

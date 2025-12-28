@@ -32,7 +32,7 @@
             <div id="edit-container">
                 <div id="fm-container" style="display:none;"></div>
                 <div id="editor-wrapper">
-                    <textarea id="editor" placeholder="Select a file to edit..."></textarea>
+                    <textarea id="editor" spellcheck="false" placeholder="Select a file to edit..."></textarea>
                 </div>
             </div>
         </div>
@@ -43,9 +43,9 @@
     </div>
 
     <nav>
-        <button onclick="switchTab('files', this)" class="active">Files</button>
-        <button onclick="switchTab('edit', this)">Edit</button>
-        <button onclick="switchTab('preview', this)">Preview</button>
+        <button data-tab="files" onclick="switchTab('files', this)" class="active">Files</button>
+        <button data-tab="edit" onclick="switchTab('edit', this)">Edit</button>
+        <button data-tab="preview" onclick="switchTab('preview', this)">Preview</button>
     </nav>
 
     <!-- Modal -->
@@ -59,6 +59,6 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

@@ -1,3 +1,6 @@
+import * as API from './api.js';
+import * as UI from './ui.js';
+
 let currentPath = "";
 let currentData = null; 
 let cmsConfig = null;
@@ -6,339 +9,53 @@ let cmsConfig = null;
 init();
 
 async function init() {
-    await fetchConfig();
-    await fetchFiles();
-}
-
-async function fetchConfig() {
     try {
-        const res = await fetch('/api/config');
-        if (res.ok) {
-            cmsConfig = await res.json();
-        } else {
-            console.warn("Config not found or invalid");
-        }
+        cmsConfig = await API.fetchConfig();
     } catch(e) {
-        console.error("Failed to fetch config", e);
+        console.error("Config fetch failed", e);
     }
-}
-
-function switchTab(tabName, btn) {
-    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-    document.getElementById('tab-' + tabName).classList.add('active');
-    if(btn) {
-        document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
-        btn.classList.add('active');
-    }
-}
-
-async function fetchFiles() {
-    const res = await fetch('/api/articles');
-    if (res.status === 401) {
-        window.location.href = "/login";
-        return;
-    }
-    const files = await res.json();
-    const list = document.getElementById('file-list');
-    list.innerHTML = "";
-
-    const grouped = {};
-    const others = [];
-
-    if (cmsConfig && cmsConfig.collections) {
-        cmsConfig.collections.forEach(col => {
-            grouped[col.name] = { label: col.label, files: [] };
-        });
-    }
-
-    files.forEach(f => {
-        let matched = false;
-        if (cmsConfig && cmsConfig.collections) {
-            for (const col of cmsConfig.collections) {
-                const colFolder = col.folder.replace(/^content\//, '');
-                if (f.path.startsWith(colFolder + "/") || f.path === colFolder) {
-                    grouped[col.name].files.push(f);
-                    matched = true;
-                    break;
-                }
-            }
-        }
-        if (!matched) {
-            others.push(f);
-        }
-    });
-
-    if (cmsConfig && cmsConfig.collections) {
-        cmsConfig.collections.forEach(col => {
-            const group = grouped[col.name];
-            if (group.files.length > 0) {
-                renderCollectionGroup(list, group.label, group.files);
-            }
-        });
-    }
-
-    if (others.length > 0) {
-        renderCollectionGroup(list, "Others", others);
-    }
-}
-
-function renderCollectionGroup(container, label, files) {
-    const details = document.createElement('details');
-    details.open = true;
-    details.style.marginBottom = '10px';
+    await refreshFileList();
     
-    const summary = document.createElement('summary');
-    summary.textContent = label;
-    summary.style.cursor = 'pointer';
-    summary.style.padding = '10px';
-    summary.style.background = '#333';
-    summary.style.color = '#fff';
-    summary.style.fontWeight = 'bold';
-    summary.style.borderBottom = '1px solid #444';
+    // UI Event Listeners (Global Functions)
+    window.switchTab = UI.switchTab;
+    window.closeModal = UI.closeModal;
     
-    details.appendChild(summary);
+    // Core Functions
+    window.loadFile = loadFile;
+    window.saveFile = saveFile;
+    window.createNewFile = createNewFile;
+    window.runSync = runSync;
+    window.runBuild = runBuild;
+    window.runPublish = runPublish;
+    window.resetChanges = resetChanges;
+    window.showDiff = showDiff;
+}
 
-    files.forEach(f => {
-        const div = document.createElement('div');
-        div.className = 'file-item';
-        div.style.paddingLeft = '20px'; 
-        
-        const titleDiv = document.createElement('div');
-        titleDiv.style.fontWeight = 'bold';
-        
-        let titleText = f.title || f.path;
-        if (f.is_dirty) {
-            titleText = "✎ " + titleText;
-            titleDiv.style.color = "#e2c08d"; // Modified color
-        }
-        titleDiv.textContent = titleText;
-        
-        const pathDiv = document.createElement('div');
-        pathDiv.style.fontSize = '12px';
-        pathDiv.style.color = '#888';
-        pathDiv.textContent = f.path;
-
-        div.appendChild(titleDiv);
-        div.appendChild(pathDiv);
-        
-        div.onclick = () => loadFile(f.path);
-        details.appendChild(div);
-    });
-
-    container.appendChild(details);
+async function refreshFileList() {
+    const files = await API.fetchArticles();
+    if (files) {
+        UI.renderFileList(files, cmsConfig);
+    }
 }
 
 async function loadFile(path) {
     currentPath = path;
     document.getElementById('filename-display').textContent = path;
-    
-    const res = await fetch(`/api/article?path=${path}`);
-    const data = await res.json();
-    currentData = data;
-    
-    const fmContainer = document.getElementById('fm-container');
-    const editor = document.getElementById('editor');
 
-    if (data.frontmatter) {
-        renderFrontMatterForm(data.frontmatter, path);
-        fmContainer.style.display = 'block';
-        editor.value = data.body;
-    } else {
-        fmContainer.style.display = 'none';
-        fmContainer.innerHTML = '';
-        editor.value = data.content;
+    await UI.showLoadingEditor();
+
+    try {
+        const data = await API.fetchArticle(path);
+        currentData = data;
+        UI.updateEditorContent(data, path, cmsConfig);
+    } catch(e) {
+        UI.showEditorError(e);
     }
-    
-    switchTab('edit', document.querySelectorAll('nav button')[1]);
-}
-
-function getCollectionForPath(path) {
-    if (!cmsConfig || !cmsConfig.collections) return null;
-    for (const col of cmsConfig.collections) {
-        const colFolder = col.folder.replace(/^content\//, '');
-        if (path.startsWith(colFolder + "/")) {
-            return col;
-        }
-    }
-    return null;
-}
-
-function renderFrontMatterForm(fm, path) {
-    const container = document.getElementById('fm-container');
-    container.innerHTML = '<div style="color:#aaa; font-weight:bold; margin-bottom:10px;">Front Matter</div>';
-    
-    const collection = getCollectionForPath(path);
-    const definedFields = collection ? collection.fields : [];
-    const processedKeys = new Set();
-
-    definedFields.forEach(field => {
-        if (field.name === 'body') return;
-        
-        const val = fm[field.name];
-        renderField(container, field, val);
-        processedKeys.add(field.name);
-    });
-
-    for (const [key, value] of Object.entries(fm)) {
-        if (!processedKeys.has(key)) {
-            let widget = 'string';
-            if (typeof value === 'boolean') widget = 'boolean';
-            else if (Array.isArray(value)) widget = 'list';
-            
-            renderField(container, { name: key, label: key + " (Extra)", widget: widget }, value);
-        }
-    }
-}
-
-function renderField(container, field, value) {
-    const div = document.createElement('div');
-    div.className = 'fm-field';
-    
-    const label = document.createElement('label');
-    label.className = 'fm-label';
-    label.textContent = field.label || field.name;
-    div.appendChild(label);
-
-    if (field.widget === 'datetime') {
-        const wrapper = document.createElement('div');
-        wrapper.style.display = 'flex';
-        wrapper.style.gap = '5px';
-
-        const input = createInputForWidget(field, value);
-        input.style.flex = '1';
-        
-        const nowBtn = document.createElement('button');
-        nowBtn.textContent = 'Now';
-        nowBtn.className = 'action-btn'; 
-        nowBtn.style.background = '#444';
-        nowBtn.style.padding = '4px 8px';
-        nowBtn.style.fontSize = '12px';
-        nowBtn.onclick = () => {
-            const d = new Date();
-            const pad = (n) => n < 10 ? '0'+n : n;
-            const localIso = d.getFullYear() + '-' + 
-                           pad(d.getMonth()+1) + '-' + 
-                           pad(d.getDate()) + 'T' + 
-                           pad(d.getHours()) + ':' + 
-                           pad(d.getMinutes());
-            input.value = localIso;
-        };
-
-        wrapper.appendChild(input);
-        wrapper.appendChild(nowBtn);
-        div.appendChild(wrapper);
-    } else {
-        const input = createInputForWidget(field, value);
-        div.appendChild(input);
-    }
-    
-    container.appendChild(div);
-}
-
-function createInputForWidget(field, value) {
-    let input;
-
-    if (field.widget === 'boolean') {
-        input = document.createElement('input');
-        input.type = 'checkbox';
-        input.className = 'fm-checkbox';
-        input.checked = value === true;
-        input.dataset.key = field.name;
-        input.dataset.widget = 'boolean';
-        
-    } else if (field.widget === 'datetime') {
-        input = document.createElement('input');
-        input.type = 'datetime-local';
-        input.className = 'fm-input';
-        if (value) {
-            try {
-                const d = new Date(value);
-                const pad = (n) => n < 10 ? '0'+n : n;
-                const localIso = d.getFullYear() + '-' + 
-                               pad(d.getMonth()+1) + '-' + 
-                               pad(d.getDate()) + 'T' + 
-                               pad(d.getHours()) + ':' + 
-                               pad(d.getMinutes());
-                input.value = localIso;
-            } catch(e) {
-                input.value = value;
-            }
-        }
-        input.dataset.key = field.name;
-        input.dataset.widget = 'datetime';
-
-    } else if (field.widget === 'list') {
-        input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'fm-input';
-        input.placeholder = "Comma separated values";
-        if (Array.isArray(value)) {
-            input.value = value.join(', ');
-        } else if (value) {
-            input.value = String(value);
-        }
-        input.dataset.key = field.name;
-        input.dataset.widget = 'list';
-
-    } else {
-        input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'fm-input';
-        input.value = (value === null || value === undefined) ? (field.default || '') : value;
-        input.dataset.key = field.name;
-        input.dataset.widget = 'string';
-    }
-    return input;
-}
-
-function collectFrontMatter() {
-    if (!currentData || !currentData.frontmatter) return null;
-    
-    const fm = {};
-    const inputs = document.querySelectorAll('#fm-container input');
-    
-    inputs.forEach(input => {
-        const key = input.dataset.key;
-        const widget = input.dataset.widget;
-        
-        if (widget === 'boolean') {
-            fm[key] = input.checked;
-        } else if (widget === 'list') {
-            const val = input.value.trim();
-            if (val === "") {
-                 fm[key] = [];
-            } else {
-                 fm[key] = val.split(',').map(s => s.trim()).filter(s => s !== "");
-            }
-        } else if (widget === 'datetime') {
-            if (input.value) {
-                const d = new Date(input.value);
-                const pad = (n) => (n < 10 ? '0' : '') + n;
-                const tzo = -d.getTimezoneOffset();
-                const dif = tzo >= 0 ? '+' : '-';
-                const offH = pad(Math.floor(Math.abs(tzo) / 60));
-                const offM = pad(Math.abs(tzo) % 60);
-                
-                fm[key] = d.getFullYear() + '-' + 
-                          pad(d.getMonth() + 1) + '-' + 
-                          pad(d.getDate()) + 'T' + 
-                          pad(d.getHours()) + ':' + 
-                          pad(d.getMinutes()) + ':' + 
-                          pad(d.getSeconds()) + 
-                          dif + offH + ':' + offM;
-            } else {
-                fm[key] = null;
-            }
-        } else {
-            fm[key] = input.value;
-        }
-    });
-    return fm;
 }
 
 function getPayload() {
     const payload = { path: currentPath };
-    const fm = collectFrontMatter();
+    const fm = UI.collectFrontMatter();
     if (fm) {
         payload.frontmatter = fm;
         payload.body = document.getElementById('editor').value;
@@ -356,47 +73,33 @@ async function saveFile() {
     const originalText = btn.textContent;
     btn.textContent = "Saving...";
 
-    await fetch('/api/article', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(getPayload())
-    });
-    
-    btn.textContent = originalText;
+    try {
+        const payload = getPayload();
+        await API.saveArticle(payload);
+    } catch(e) {
+        alert("Error saving: " + e);
+    } finally {
+        btn.textContent = originalText;
+    }
 }
 
-async function resetChanges() {
-    if(!currentPath) return;
-    if(!confirm("Are you sure you want to discard all changes?")) return;
-    await loadFile(currentPath);
-}
+async function createNewFile() {
+    let path = prompt("Enter file path (e.g., posts/my-new-post.md):", "posts/");
+    if (!path) return;
 
-async function showDiff() {
-    if(!currentPath) return;
-    const payload = getPayload();
-    
-    const res = await fetch('/api/diff', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    
-    const body = document.getElementById('modal-body');
-    // Basic syntax highlight for diff
-    let html = data.diff.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    html = html.split('\n').map(line => {
-        if(line.startsWith('+')) return `<span class="diff-added">${line}</span>`;
-        if(line.startsWith('-')) return `<span class="diff-removed">${line}</span>`;
-        return line;
-    }).join('\n');
-    
-    body.innerHTML = html || "No differences";
-    document.getElementById('modal-overlay').style.display = 'flex';
-}
+    if (!path.endsWith(".md") && !path.endsWith(".markdown")) {
+        if(!confirm("Filename does not end with .md. Continue?")) return;
+    }
 
-function closeModal() {
-    document.getElementById('modal-overlay').style.display = 'none';
+    const content = "---\ntitle: New Post\ndraft: true\n---\n";
+
+    try {
+        await API.createArticle(path, content);
+        await refreshFileList();
+        await loadFile(path); 
+    } catch(e) {
+        alert(e.message);
+    }
 }
 
 async function runBuild() {
@@ -405,22 +108,10 @@ async function runBuild() {
     btn.disabled = true;
 
     try {
-        const res = await fetch('/api/build', { method: 'POST' });
-        const data = await res.json();
-        
+        const data = await API.runBuild();
         if (data.status === 'ok') {
-            const frame = document.getElementById('preview-frame');
-            let previewPath = currentPath.replace(/\.md$/, ""); 
-            
-            if (previewPath.endsWith("/index") || previewPath.endsWith("/_index")) {
-                previewPath = previewPath.substring(0, previewPath.lastIndexOf("/"));
-            } else if (previewPath === "index" || previewPath === "_index") {
-                previewPath = "";
-            }
-
-            const targetUrl = "/preview/" + previewPath + (previewPath ? "/" : "");
-            frame.src = targetUrl + "?t=" + Date.now();
-            switchTab('preview', document.querySelectorAll('nav button')[2]);
+            UI.setPreviewUrl(currentPath);
+            UI.switchTab('preview', document.querySelectorAll('nav button')[2]);
         } else {
             alert("Build Error:\n" + data.log);
         }
@@ -440,11 +131,10 @@ async function runSync() {
     btn.textContent = "Syncing...";
     
     try {
-        const res = await fetch('/api/sync', { method: 'POST' });
-        const data = await res.json();
+        const data = await API.runSync();
         if(data.status === 'ok') {
             alert("Sync Complete!\n" + data.log);
-            fetchFiles(); 
+            await refreshFileList();
         } else {
             alert("Sync Error:\n" + data.log);
         }
@@ -463,8 +153,7 @@ async function runPublish() {
     btn.disabled = true;
 
     try {
-        const res = await fetch('/api/publish', { method: 'POST' });
-        const data = await res.json();
+        const data = await API.runPublish();
         if(data.status === 'ok') {
             alert("Published Successfully! 🚀\nCloudflare Pages will deploy shortly.");
         } else {
@@ -478,31 +167,24 @@ async function runPublish() {
     }
 }
 
-async function createNewFile() {
-    let path = prompt("Enter file path (e.g., posts/my-new-post.md):", "posts/");
-    if (!path) return;
+async function resetChanges() {
+    if(!currentPath) return;
+    if(!confirm("Are you sure you want to discard all changes?")) return;
+    await loadFile(currentPath);
+}
 
-    if (!path.endsWith(".md") && !path.endsWith(".markdown")) {
-        if(!confirm("Filename does not end with .md. Continue?")) return;
-    }
-
-    const content = "---\ntitle: New Post\ndraft: true\n---";
-
-    try {
-        const res = await fetch('/api/create', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ path: path, content: content })
-        });
-
-        if (res.ok) {
-            await fetchFiles(); 
-            await loadFile(path); 
-        } else {
-            const data = await res.json();
-            alert("Create Failed: " + data.error);
-        }
-    } catch(e) {
-        alert("Network Error");
-    }
+async function showDiff() {
+    if(!currentPath) return;
+    const payload = getPayload();
+    
+    const data = await API.getDiff(payload);
+    
+    let html = data.diff.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    html = html.split('\n').map(line => {
+        if(line.startsWith('+')) return `<span class="diff-added">${line}</span>`;
+        if(line.startsWith('-')) return `<span class="diff-removed">${line}</span>`;
+        return line;
+    }).join('\n');
+    
+    UI.showDiffModal(html);
 }
