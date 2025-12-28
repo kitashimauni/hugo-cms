@@ -19,6 +19,8 @@ func BuildSite() (error, string) {
 		"--destination", "public",
 		"--baseURL", config.GetAppURL()+config.PreviewURL,
 		"--cleanDestinationDir",
+		"-D",
+		"-F",
 	)
 	output, err := cmd.CombinedOutput()
 	return err, string(output)
