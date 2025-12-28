@@ -169,9 +169,9 @@ async function loadFile(path) {
     const fmContainer = document.getElementById('fm-container');
     const editor = document.getElementById('editor');
 
-    const fetchPromise = fetch(`/api/article?path=${encodeURIComponent(path)}`, { signal: controller.signal });
-
     await waitForNextPaint();
+
+    const fetchPromise = fetch(`/api/article?path=${encodeURIComponent(path)}`, { signal: controller.signal });
 
     try {
         const res = await fetchPromise;
