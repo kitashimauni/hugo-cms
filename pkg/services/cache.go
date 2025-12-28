@@ -56,7 +56,7 @@ func GetArticlesCache() ([]models.Article, error) {
 			defer func() { <-sem }()
 
 			relPath, _ := filepath.Rel(contentDir, path)
-			
+
 			repoRelPath, _ := filepath.Rel(config.RepoPath, path)
 			repoRelPath = filepath.ToSlash(repoRelPath)
 			isDirty := dirtyFiles[repoRelPath]
@@ -105,7 +105,7 @@ func readHead(path string, limit int64) ([]byte, error) {
 }
 
 func getGitDirtyFiles(dir string) (map[string]bool, error) {
-	cmd := exec.Command("git", "status", "--porcelain")
+	cmd := exec.Command("git", "status", "--porcelain", "--", "content")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
