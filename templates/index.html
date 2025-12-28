@@ -129,14 +129,78 @@
             const files = await res.json();
             const list = document.getElementById('file-list');
             list.innerHTML = "";
+
+            // Group files by collection
+            const grouped = {};
+            const others = [];
+
+            if (cmsConfig && cmsConfig.collections) {
+                cmsConfig.collections.forEach(col => {
+                    grouped[col.name] = { label: col.label, files: [] };
+                });
+            }
+
+            files.forEach(f => {
+                let matched = false;
+                if (cmsConfig && cmsConfig.collections) {
+                    for (const col of cmsConfig.collections) {
+                        const colFolder = col.folder.replace(/^content\//, '');
+                        // Check if file path starts with collection folder
+                        // e.g. path: "posts/abc.md", folder: "posts"
+                        if (f.path.startsWith(colFolder + "/") || f.path === colFolder) {
+                            grouped[col.name].files.push(f);
+                            matched = true;
+                            break;
+                        }
+                    }
+                }
+                if (!matched) {
+                    others.push(f);
+                }
+            });
+
+            // Render Collections
+            if (cmsConfig && cmsConfig.collections) {
+                cmsConfig.collections.forEach(col => {
+                    const group = grouped[col.name];
+                    if (group.files.length > 0) {
+                        renderCollectionGroup(list, group.label, group.files);
+                    }
+                });
+            }
+
+            // Render Others
+            if (others.length > 0) {
+                renderCollectionGroup(list, "Others", others);
+            }
+        }
+
+        function renderCollectionGroup(container, label, files) {
+            const details = document.createElement('details');
+            details.open = true; // Open by default
+            details.style.marginBottom = '10px';
             
+            const summary = document.createElement('summary');
+            summary.textContent = label;
+            summary.style.cursor = 'pointer';
+            summary.style.padding = '10px';
+            summary.style.background = '#333';
+            summary.style.color = '#fff';
+            summary.style.fontWeight = 'bold';
+            summary.style.borderBottom = '1px solid #444';
+            
+            details.appendChild(summary);
+
             files.forEach(f => {
                 const div = document.createElement('div');
                 div.className = 'file-item';
+                div.style.paddingLeft = '20px'; // Indent
                 div.textContent = f.path; 
                 div.onclick = () => loadFile(f.path);
-                list.appendChild(div);
+                details.appendChild(div);
             });
+
+            container.appendChild(details);
         }
 
         async function loadFile(path) {
