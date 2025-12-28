@@ -472,7 +472,26 @@
                 
                 if (data.status === 'ok') {
                     const frame = document.getElementById('preview-frame');
-                    frame.src = "/preview/index.html?t=" + Date.now();
+                    
+                    // Predict URL from currentPath
+                    // currentPath e.g. "posts/my-article.md" (relative to content/)
+                    // or "posts/2024/index.md"
+                    
+                    let previewPath = currentPath.replace(/\.md$/, ""); // remove extension
+                    
+                    // Handle index/ _index
+                    if (previewPath.endsWith("/index") || previewPath.endsWith("/_index")) {
+                        previewPath = previewPath.substring(0, previewPath.lastIndexOf("/"));
+                    } else if (previewPath === "index" || previewPath === "_index") {
+                        previewPath = "";
+                    }
+
+                    // Construct full preview URL
+                    // /preview/ + path + /
+                    const targetUrl = "/preview/" + previewPath + (previewPath ? "/" : "");
+
+                    // Add cache buster
+                    frame.src = targetUrl + "?t=" + Date.now();
                     switchTab('preview', document.querySelectorAll('nav button')[2]);
                 } else {
                     alert("Build Error:\n" + data.log);
