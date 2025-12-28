@@ -12,6 +12,7 @@ func BuildSite() (error, string) {
 		"--destination", "public",
 		"--baseURL", config.GetAppURL()+config.PreviewURL,
 		"--cleanDestinationDir",
+		"-D",
 	)
 	output, err := cmd.CombinedOutput()
 	return err, string(output)
@@ -27,7 +28,7 @@ func CreateContent(path string) (error, string) {
 	cmd := exec.Command("hugo", "new", "content", path)
 	cmd.Dir = config.RepoPath
 	output, err := cmd.CombinedOutput()
-	
+
 	if err == nil {
 		InvalidateCache()
 	}
