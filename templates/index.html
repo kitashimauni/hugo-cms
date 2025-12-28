@@ -59,7 +59,8 @@
 
     <div id="main-container">
         <div id="tab-files" class="tab-content active">
-            <div style="padding:10px; border-bottom:1px solid #444; text-align:right;">
+            <div style="padding:10px; border-bottom:1px solid #444; display:flex; justify-content:flex-end; gap:10px;">
+                <button class="action-btn" style="background:#2da44e;" onclick="createNewFile()">+ New File</button>
                 <button class="action-btn" style="background:#666;" onclick="runSync()">🔄 Sync form GitHub</button>
             </div>
             <div id="file-list">Loading...</div>
@@ -547,6 +548,38 @@
             } finally {
                 btn.textContent = "Publish";
                 btn.disabled = false;
+            }
+        }
+        async function createNewFile() {
+            let path = prompt("Enter file path (e.g., posts/my-new-post.md):", "posts/");
+            if (!path) return;
+
+            // Simple validation
+            if (!path.endsWith(".md") && !path.endsWith(".markdown")) {
+                if(!confirm("Filename does not end with .md. Continue?")) return;
+            }
+
+            // Create payload
+            // Ideally we should use archetypes or default frontmatter based on collection
+            // For now, create empty file or minimal FM
+            const content = "---\ntitle: New Post\ndraft: true\n---\n";
+
+            try {
+                const res = await fetch('/api/create', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ path: path, content: content })
+                });
+
+                if (res.ok) {
+                    await fetchFiles(); // Reload list
+                    await loadFile(path); // Open new file
+                } else {
+                    const data = await res.json();
+                    alert("Create Failed: " + data.error);
+                }
+            } catch(e) {
+                alert("Network Error");
             }
         }
     </script>

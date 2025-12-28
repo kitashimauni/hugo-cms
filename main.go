@@ -191,6 +191,48 @@ func main() {
 				c.JSON(200, gin.H{"status": "saved"})
 			})
 
+			api.POST("/create", func(c *gin.Context) {
+				var req struct {
+					Path    string `json:"path"`
+					Content string `json:"content"` // Content is ignored when using hugo new
+				}
+				if err := c.BindJSON(&req); err != nil {
+					c.JSON(400, gin.H{"error": "Invalid JSON"})
+					return
+				}
+
+				// Basic validation
+				if req.Path == "" || strings.Contains(req.Path, "..") {
+					c.JSON(400, gin.H{"error": "Invalid path"})
+					return
+				}
+
+				// Check if file already exists (Hugo might overwrite or fail, safer to check)
+				fullPath := safeJoin(RepoPath, "content", req.Path)
+				if _, err := os.Stat(fullPath); err == nil {
+					c.JSON(409, gin.H{"error": "File already exists"})
+					return
+				}
+
+				// Run hugo new content
+				// "hugo new content <path>" (v0.115+) or "hugo new <path>"
+				// Using "new content" is more explicit for content creation
+				cmd := exec.Command("hugo", "new", "content", req.Path)
+				cmd.Dir = RepoPath
+				output, err := cmd.CombinedOutput()
+				
+				if err != nil {
+					// Fallback for older hugo versions or if 'content' subcommand fails: try "hugo new"
+					// But usually 'hugo new posts/foo.md' works.
+					// Let's assume modern hugo. If error, return log.
+					c.JSON(500, gin.H{"error": "Hugo new failed", "log": string(output)})
+					return
+				}
+
+				invalidateCache()
+				c.JSON(200, gin.H{"status": "created", "log": string(output)})
+			})
+
 			// 7. Config取得
 			api.GET("/config", func(c *gin.Context) {
 				configPath := filepath.Join(RepoPath, "static/admin/config.yml")
