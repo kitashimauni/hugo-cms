@@ -1,6 +1,34 @@
 let currentPath = "";
-let currentData = null; 
+let currentData = null;
 let cmsConfig = null;
+let activeLoadController = null;
+let currentLoadToken = 0;
+
+const tabIndexFallback = { files: 0, edit: 1, preview: 2 };
+
+function getTabButton(tabName) {
+    const btn = document.querySelector(`nav button[data-tab="${tabName}"]`);
+    if (btn) return btn;
+    const index = tabIndexFallback[tabName] ?? 0;
+    return document.querySelectorAll('nav button')[index] || null;
+}
+
+function waitForNextPaint() {
+    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
+function showEditorLoadingState(path) {
+    currentPath = path;
+    document.getElementById('filename-display').textContent = path;
+    const fmContainer = document.getElementById('fm-container');
+    const editor = document.getElementById('editor');
+
+    switchTab('edit', getTabButton('edit'));
+    fmContainer.style.display = 'none';
+    fmContainer.innerHTML = '';
+    editor.value = "Loading...";
+    editor.disabled = true;
+}
 
 // 初期化
 init();
@@ -18,7 +46,7 @@ async function fetchConfig() {
         } else {
             console.warn("Config not found or invalid");
         }
-    } catch(e) {
+    } catch (e) {
         console.error("Failed to fetch config", e);
     }
 }
@@ -26,7 +54,7 @@ async function fetchConfig() {
 function switchTab(tabName, btn) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
     document.getElementById('tab-' + tabName).classList.add('active');
-    if(btn) {
+    if (btn) {
         document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
         btn.classList.add('active');
     }
@@ -86,7 +114,7 @@ function renderCollectionGroup(container, label, files) {
     const details = document.createElement('details');
     details.open = true;
     details.style.marginBottom = '10px';
-    
+
     const summary = document.createElement('summary');
     summary.textContent = label;
     summary.style.cursor = 'pointer';
@@ -95,24 +123,24 @@ function renderCollectionGroup(container, label, files) {
     summary.style.color = '#fff';
     summary.style.fontWeight = 'bold';
     summary.style.borderBottom = '1px solid #444';
-    
+
     details.appendChild(summary);
 
     files.forEach(f => {
         const div = document.createElement('div');
         div.className = 'file-item';
-        div.style.paddingLeft = '20px'; 
-        
+        div.style.paddingLeft = '20px';
+
         const titleDiv = document.createElement('div');
         titleDiv.style.fontWeight = 'bold';
-        
+
         let titleText = f.title || f.path;
         if (f.is_dirty) {
             titleText = "✎ " + titleText;
             titleDiv.style.color = "#e2c08d"; // Modified color
         }
         titleDiv.textContent = titleText;
-        
+
         const pathDiv = document.createElement('div');
         pathDiv.style.fontSize = '12px';
         pathDiv.style.color = '#888';
@@ -120,7 +148,7 @@ function renderCollectionGroup(container, label, files) {
 
         div.appendChild(titleDiv);
         div.appendChild(pathDiv);
-        
+
         div.onclick = () => loadFile(f.path);
         details.appendChild(div);
     });
@@ -129,41 +157,56 @@ function renderCollectionGroup(container, label, files) {
 }
 
 async function loadFile(path) {
-    currentPath = path;
-    document.getElementById('filename-display').textContent = path;
+    const loadToken = ++currentLoadToken;
 
-    // Immediate feedback
-    switchTab('edit', document.querySelectorAll('nav button')[1]);
+    if (activeLoadController) {
+        activeLoadController.abort();
+    }
+    const controller = new AbortController();
+    activeLoadController = controller;
+
+    showEditorLoadingState(path);
     const fmContainer = document.getElementById('fm-container');
     const editor = document.getElementById('editor');
-    
-    fmContainer.style.display = 'none';
-    editor.value = "Loading...";
-    editor.disabled = true;
-    
-    // Ensure the browser renders the "Loading..." state before proceeding
-    // Double requestAnimationFrame ensures the paint has occurred
-    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    await waitForNextPaint();
 
     try {
-        const res = await fetch(`/api/article?path=${path}`);
+        const res = await fetch(`/api/article?path=${encodeURIComponent(path)}`, { signal: controller.signal });
+        if (!res.ok) {
+            throw new Error(`Failed to load article (${res.status})`);
+        }
         const data = await res.json();
+
+        if (loadToken !== currentLoadToken) {
+            return; // Ignore stale response after a newer request
+        }
+
         currentData = data;
-        
         editor.disabled = false;
 
         if (data.frontmatter) {
             renderFrontMatterForm(data.frontmatter, path);
             fmContainer.style.display = 'block';
-            editor.value = data.body;
+            editor.value = data.body ?? '';
         } else {
             fmContainer.style.display = 'none';
             fmContainer.innerHTML = '';
-            editor.value = data.content;
+            editor.value = data.content ?? '';
         }
-    } catch(e) {
-        editor.value = "Error loading file: " + e;
+    } catch (e) {
+        if (e.name === 'AbortError') {
+            return;
+        }
+        if (loadToken !== currentLoadToken) {
+            return;
+        }
+        editor.value = "Error loading file: " + (e.message || e);
         editor.disabled = false;
+    } finally {
+        if (loadToken === currentLoadToken && activeLoadController === controller) {
+            activeLoadController = null;
+        }
     }
 }
 
@@ -181,7 +224,7 @@ function getCollectionForPath(path) {
 function renderFrontMatterForm(fm, path) {
     const container = document.getElementById('fm-container');
     container.innerHTML = '<div style="color:#aaa; font-weight:bold; margin-bottom:10px;">Front Matter</div>';
-    
+
     const fragment = document.createDocumentFragment();
     const collection = getCollectionForPath(path);
     const definedFields = collection ? collection.fields : [];
@@ -189,7 +232,7 @@ function renderFrontMatterForm(fm, path) {
 
     definedFields.forEach(field => {
         if (field.name === 'body') return;
-        
+
         const val = fm[field.name];
         renderField(fragment, field, val);
         processedKeys.add(field.name);
@@ -200,7 +243,7 @@ function renderFrontMatterForm(fm, path) {
             let widget = 'string';
             if (typeof value === 'boolean') widget = 'boolean';
             else if (Array.isArray(value)) widget = 'list';
-            
+
             renderField(fragment, { name: key, label: key + " (Extra)", widget: widget }, value);
         }
     }
@@ -210,7 +253,7 @@ function renderFrontMatterForm(fm, path) {
 function renderField(container, field, value) {
     const div = document.createElement('div');
     div.className = 'fm-field';
-    
+
     const label = document.createElement('label');
     label.className = 'fm-label';
     label.textContent = field.label || field.name;
@@ -223,21 +266,21 @@ function renderField(container, field, value) {
 
         const input = createInputForWidget(field, value);
         input.style.flex = '1';
-        
+
         const nowBtn = document.createElement('button');
         nowBtn.textContent = 'Now';
-        nowBtn.className = 'action-btn'; 
+        nowBtn.className = 'action-btn';
         nowBtn.style.background = '#444';
         nowBtn.style.padding = '4px 8px';
         nowBtn.style.fontSize = '12px';
         nowBtn.onclick = () => {
             const d = new Date();
-            const pad = (n) => n < 10 ? '0'+n : n;
-            const localIso = d.getFullYear() + '-' + 
-                           pad(d.getMonth()+1) + '-' + 
-                           pad(d.getDate()) + 'T' + 
-                           pad(d.getHours()) + ':' + 
-                           pad(d.getMinutes());
+            const pad = (n) => n < 10 ? '0' + n : n;
+            const localIso = d.getFullYear() + '-' +
+                pad(d.getMonth() + 1) + '-' +
+                pad(d.getDate()) + 'T' +
+                pad(d.getHours()) + ':' +
+                pad(d.getMinutes());
             input.value = localIso;
         };
 
@@ -248,7 +291,7 @@ function renderField(container, field, value) {
         const input = createInputForWidget(field, value);
         div.appendChild(input);
     }
-    
+
     container.appendChild(div);
 }
 
@@ -262,7 +305,7 @@ function createInputForWidget(field, value) {
         input.checked = value === true;
         input.dataset.key = field.name;
         input.dataset.widget = 'boolean';
-        
+
     } else if (field.widget === 'datetime') {
         input = document.createElement('input');
         input.type = 'datetime-local';
@@ -270,14 +313,14 @@ function createInputForWidget(field, value) {
         if (value) {
             try {
                 const d = new Date(value);
-                const pad = (n) => n < 10 ? '0'+n : n;
-                const localIso = d.getFullYear() + '-' + 
-                               pad(d.getMonth()+1) + '-' + 
-                               pad(d.getDate()) + 'T' + 
-                               pad(d.getHours()) + ':' + 
-                               pad(d.getMinutes());
+                const pad = (n) => n < 10 ? '0' + n : n;
+                const localIso = d.getFullYear() + '-' +
+                    pad(d.getMonth() + 1) + '-' +
+                    pad(d.getDate()) + 'T' +
+                    pad(d.getHours()) + ':' +
+                    pad(d.getMinutes());
                 input.value = localIso;
-            } catch(e) {
+            } catch (e) {
                 input.value = value;
             }
         }
@@ -310,22 +353,22 @@ function createInputForWidget(field, value) {
 
 function collectFrontMatter() {
     if (!currentData || !currentData.frontmatter) return null;
-    
+
     const fm = {};
     const inputs = document.querySelectorAll('#fm-container input');
-    
+
     inputs.forEach(input => {
         const key = input.dataset.key;
         const widget = input.dataset.widget;
-        
+
         if (widget === 'boolean') {
             fm[key] = input.checked;
         } else if (widget === 'list') {
             const val = input.value.trim();
             if (val === "") {
-                 fm[key] = [];
+                fm[key] = [];
             } else {
-                 fm[key] = val.split(',').map(s => s.trim()).filter(s => s !== "");
+                fm[key] = val.split(',').map(s => s.trim()).filter(s => s !== "");
             }
         } else if (widget === 'datetime') {
             if (input.value) {
@@ -335,14 +378,14 @@ function collectFrontMatter() {
                 const dif = tzo >= 0 ? '+' : '-';
                 const offH = pad(Math.floor(Math.abs(tzo) / 60));
                 const offM = pad(Math.abs(tzo) % 60);
-                
-                fm[key] = d.getFullYear() + '-' + 
-                          pad(d.getMonth() + 1) + '-' + 
-                          pad(d.getDate()) + 'T' + 
-                          pad(d.getHours()) + ':' + 
-                          pad(d.getMinutes()) + ':' + 
-                          pad(d.getSeconds()) + 
-                          dif + offH + ':' + offM;
+
+                fm[key] = d.getFullYear() + '-' +
+                    pad(d.getMonth() + 1) + '-' +
+                    pad(d.getDate()) + 'T' +
+                    pad(d.getHours()) + ':' +
+                    pad(d.getMinutes()) + ':' +
+                    pad(d.getSeconds()) +
+                    dif + offH + ':' + offM;
             } else {
                 fm[key] = null;
             }
@@ -367,47 +410,47 @@ function getPayload() {
 }
 
 async function saveFile() {
-    if(!currentPath) return alert("No file selected");
-    
+    if (!currentPath) return alert("No file selected");
+
     const btn = document.querySelector('button[onclick="saveFile()"]');
     const originalText = btn.textContent;
     btn.textContent = "Saving...";
 
     await fetch('/api/article', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(getPayload())
     });
-    
+
     btn.textContent = originalText;
 }
 
 async function resetChanges() {
-    if(!currentPath) return;
-    if(!confirm("Are you sure you want to discard all changes?")) return;
+    if (!currentPath) return;
+    if (!confirm("Are you sure you want to discard all changes?")) return;
     await loadFile(currentPath);
 }
 
 async function showDiff() {
-    if(!currentPath) return;
+    if (!currentPath) return;
     const payload = getPayload();
-    
+
     const res = await fetch('/api/diff', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     });
     const data = await res.json();
-    
+
     const body = document.getElementById('modal-body');
     // Basic syntax highlight for diff
     let html = data.diff.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     html = html.split('\n').map(line => {
-        if(line.startsWith('+')) return `<span class="diff-added">${line}</span>`;
-        if(line.startsWith('-')) return `<span class="diff-removed">${line}</span>`;
+        if (line.startsWith('+')) return `<span class="diff-added">${line}</span>`;
+        if (line.startsWith('-')) return `<span class="diff-removed">${line}</span>`;
         return line;
     }).join('\n');
-    
+
     body.innerHTML = html || "No differences";
     document.getElementById('modal-overlay').style.display = 'flex';
 }
@@ -424,11 +467,11 @@ async function runBuild() {
     try {
         const res = await fetch('/api/build', { method: 'POST' });
         const data = await res.json();
-        
+
         if (data.status === 'ok') {
             const frame = document.getElementById('preview-frame');
-            let previewPath = currentPath.replace(/\.md$/, ""); 
-            
+            let previewPath = currentPath.replace(/\.md$/, "");
+
             if (previewPath.endsWith("/index") || previewPath.endsWith("/_index")) {
                 previewPath = previewPath.substring(0, previewPath.lastIndexOf("/"));
             } else if (previewPath === "index" || previewPath === "_index") {
@@ -441,7 +484,7 @@ async function runBuild() {
         } else {
             alert("Build Error:\n" + data.log);
         }
-    } catch(e) {
+    } catch (e) {
         alert("Network Error");
     } finally {
         btn.textContent = "Build";
@@ -450,22 +493,22 @@ async function runBuild() {
 }
 
 async function runSync() {
-    if(!confirm("GitHubから最新の状態を取得しますか？\n（ローカルの未保存の変更は注意してください）")) return; 
-    
+    if (!confirm("GitHubから最新の状態を取得しますか？\n（ローカルの未保存の変更は注意してください）")) return;
+
     const btn = document.querySelector('button[onclick="runSync()"]');
     const originalText = btn.textContent;
     btn.textContent = "Syncing...";
-    
+
     try {
         const res = await fetch('/api/sync', { method: 'POST' });
         const data = await res.json();
-        if(data.status === 'ok') {
+        if (data.status === 'ok') {
             alert("Sync Complete!\n" + data.log);
-            fetchFiles(); 
+            fetchFiles();
         } else {
             alert("Sync Error:\n" + data.log);
         }
-    } catch(e) {
+    } catch (e) {
         alert("Network Error");
     } finally {
         btn.textContent = originalText;
@@ -473,7 +516,7 @@ async function runSync() {
 }
 
 async function runPublish() {
-    if(!confirm("この記事の変更をGitHubにPushして公開しますか？")) return;
+    if (!confirm("この記事の変更をGitHubにPushして公開しますか？")) return;
 
     const btn = document.querySelector('button[onclick="runPublish()"]');
     btn.textContent = "Pushing...";
@@ -482,12 +525,12 @@ async function runPublish() {
     try {
         const res = await fetch('/api/publish', { method: 'POST' });
         const data = await res.json();
-        if(data.status === 'ok') {
+        if (data.status === 'ok') {
             alert("Published Successfully! 🚀\nCloudflare Pages will deploy shortly.");
         } else {
             alert("Publish Error:\n" + data.log);
         }
-    } catch(e) {
+    } catch (e) {
         alert("Network Error");
     } finally {
         btn.textContent = "Publish";
@@ -500,7 +543,7 @@ async function createNewFile() {
     if (!path) return;
 
     if (!path.endsWith(".md") && !path.endsWith(".markdown")) {
-        if(!confirm("Filename does not end with .md. Continue?")) return;
+        if (!confirm("Filename does not end with .md. Continue?")) return;
     }
 
     const content = "---\ntitle: New Post\ndraft: true\n---\n";
@@ -508,18 +551,18 @@ async function createNewFile() {
     try {
         const res = await fetch('/api/create', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: path, content: content })
         });
 
         if (res.ok) {
-            await fetchFiles(); 
-            await loadFile(path); 
+            await fetchFiles();
+            await loadFile(path);
         } else {
             const data = await res.json();
             alert("Create Failed: " + data.error);
         }
-    } catch(e) {
+    } catch (e) {
         alert("Network Error");
     }
 }
