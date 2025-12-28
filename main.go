@@ -238,14 +238,13 @@ func main() {
 
 				fullPath := safeJoin(RepoPath, "content", art.Path)
 				
-				// 1. Get current content
+				// 1. Get current content from file
 				currentContent, err := os.ReadFile(fullPath)
 				if err != nil {
-					// If new file, current is empty
 					currentContent = []byte("")
 				}
 
-				// 2. Construct new content
+				// 2. Construct new content from editor
 				var newContent []byte
 				if art.FrontMatter != nil {
 					newContent, err = constructFileContent(art.FrontMatter, art.Body, art.Format)
@@ -257,7 +256,7 @@ func main() {
 					newContent = []byte(art.Content)
 				}
 
-				// 3. Create temp files
+				// 3. Create temp files for comparison
 				tmpDir := os.TempDir()
 				f1, _ := os.CreateTemp(tmpDir, "diff_old_*")
 				f2, _ := os.CreateTemp(tmpDir, "diff_new_*")
@@ -269,17 +268,33 @@ func main() {
 				f1.Close()
 				f2.Close()
 
-				// 4. Run git diff
+				// 4. Check Unsaved Diff (Editor vs Saved)
 				cmd := exec.Command("git", "diff", "--no-index", f1.Name(), f2.Name())
-				// git diff returns exit code 1 if differences found, 0 if none.
-				output, _ := cmd.CombinedOutput()
+				output, err := cmd.CombinedOutput()
 				
-				// Output contains filenames like /tmp/diff_old_... which looks ugly
-				diffStr := string(output)
-				diffStr = strings.ReplaceAll(diffStr, f1.Name(), "Current")
-				diffStr = strings.ReplaceAll(diffStr, f2.Name(), "New")
+				// Exit code 1 means diff found
+				if err != nil && cmd.ProcessState.ExitCode() == 1 {
+					diffStr := string(output)
+					diffStr = strings.ReplaceAll(diffStr, f1.Name(), "Saved")
+				diffStr = strings.ReplaceAll(diffStr, f2.Name(), "Editor")
+				c.JSON(200, gin.H{"diff": diffStr, "type": "unsaved"})
+				return
+				}
 
-				c.JSON(200, gin.H{"diff": diffStr})
+				// 5. Check Git Diff (Saved vs HEAD)
+				// path needs to be relative to repo root for git diff
+				// art.Path is relative to 'content/', so prepend 'content/'
+				relPath := filepath.Join("content", art.Path)
+				
+				cmdGit := exec.Command("git", "diff", "HEAD", "--", relPath)
+				cmdGit.Dir = RepoPath
+				outGit, _ := cmdGit.CombinedOutput()
+				
+				if len(outGit) > 0 {
+					c.JSON(200, gin.H{"diff": string(outGit), "type": "git"})
+				} else {
+					c.JSON(200, gin.H{"diff": "", "type": "none"})
+				}
 			})
 
 			// 7. Config取得
@@ -431,7 +446,7 @@ func getArticlesCache() ([]Article, error) {
 	var articles []Article
 	contentDir := filepath.Join(RepoPath, "content")
 	
-	dirtyFiles, _ := getGitDirtyFiles(RepoPath)
+dirtyFiles, _ := getGitDirtyFiles(RepoPath)
 
 	err := filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -539,7 +554,7 @@ func parseFrontMatter(content []byte) (map[string]interface{}, string, string, e
 
 func constructFileContent(fm map[string]interface{}, body string, format string) ([]byte, error) {
 	var buf bytes.Buffer
-	switch format {
+	sswitch format {
 	case "yaml":
 		buf.WriteString("---\n")
 		enc := yaml.NewEncoder(&buf)
