@@ -554,7 +554,7 @@ func parseFrontMatter(content []byte) (map[string]interface{}, string, string, e
 
 func constructFileContent(fm map[string]interface{}, body string, format string) ([]byte, error) {
 	var buf bytes.Buffer
-	sswitch format {
+	switch format {
 	case "yaml":
 		buf.WriteString("---\n")
 		enc := yaml.NewEncoder(&buf)
