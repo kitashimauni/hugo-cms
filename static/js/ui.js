@@ -38,11 +38,11 @@ export function updateEditorContent(data, path, config) {
     if (data.frontmatter) {
         renderFrontMatterForm(data.frontmatter, path, config, fmContainer);
         fmContainer.style.display = 'block';
-        editor.value = data.body;
+        editor.value = data.body || "";
     } else {
         fmContainer.style.display = 'none';
         fmContainer.innerHTML = '';
-        editor.value = data.content;
+        editor.value = data.content || "";
     }
 }
 
@@ -382,6 +382,7 @@ export function showCreationModal(config, onCreate) {
         const col = config.collections.find(c => c.name === colName);
         if (col && col.fields) {
             col.fields.forEach(field => {
+                if (field.name === "body") return;
                 // Pre-fill defaults
                 const val = field.default !== undefined ? field.default : null;
                 renderField(fieldsContainer, field, val);
