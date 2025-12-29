@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"hugo-cms/pkg/config"
+	"hugo-cms/pkg/models"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
@@ -104,4 +106,57 @@ func GetConfig() (map[string]interface{}, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func GetCMSConfig() (*models.CMSConfig, error) {
+	configPath := filepath.Join(config.RepoPath, "static/admin/config.yml")
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var cfg models.CMSConfig
+	if err := yaml.Unmarshal(content, &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func GenerateContentFromCollection(collection models.Collection) ([]byte, error) {
+	fm := make(map[string]interface{})
+	var bodyContent string
+
+	for _, field := range collection.Fields {
+		if field.Name == "body" {
+			if field.Default != nil {
+				if val, ok := field.Default.(string); ok {
+					bodyContent = val
+				}
+			}
+			continue
+		}
+
+		if field.Default != nil {
+			fm[field.Name] = field.Default
+		} else {
+			switch field.Widget {
+			case "datetime":
+				fm[field.Name] = time.Now().Format(time.RFC3339)
+			case "boolean":
+				fm[field.Name] = false
+			case "list":
+				fm[field.Name] = []string{}
+			default:
+				fm[field.Name] = ""
+			}
+		}
+	}
+	
+	// Use TOML as default for Hugo if not specified, but config says format: "toml-frontmatter"
+	// We can check collection.Format if needed, but for now let's default to TOML or YAML based on standard practice or simple heuristic.
+	// The provided config example has `format: "toml-frontmatter"`.
+	// ConstructFileContent handles this if we pass "toml" or "yaml".
+	// Let's assume toml for now as per config sample.
+	
+	return ConstructFileContent(fm, bodyContent, "toml")
 }
