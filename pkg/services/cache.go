@@ -127,7 +127,11 @@ func getGitDirtyFiles(dir string) (map[string]bool, error) {
 		}
 		path := strings.TrimSpace(line[3:])
 		path = strings.Trim(path, "\"")
-		dirty[path] = true
+		
+		// Verify if semantically dirty (ignore formatting changes)
+		if isSemanticallyDirty, _ := CheckSemanticDiff(path); isSemanticallyDirty {
+			dirty[path] = true
+		}
 	}
 	return dirty, nil
 }
@@ -211,5 +215,9 @@ func getGitFileStatus(relPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return len(strings.TrimSpace(string(out))) > 0, nil
+	if len(strings.TrimSpace(string(out))) > 0 {
+		// Verify semantically
+		return CheckSemanticDiff(target)
+	}
+	return false, nil
 }

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"net/url"
@@ -10,6 +11,26 @@ import (
 	"strings"
 	"time"
 )
+
+func CheckSemanticDiff(relPath string) (bool, error) {
+	// 1. Get HEAD Content
+	gitPath := filepath.ToSlash(relPath)
+	cmdHead := exec.Command("git", "show", "HEAD:"+gitPath)
+	cmdHead.Dir = config.RepoPath
+	headContent, _ := cmdHead.Output() // Ignore error, treat as empty for new files
+
+	// 2. Get Disk Content
+	fullPath := filepath.Join(config.RepoPath, relPath)
+	diskContent, _ := os.ReadFile(fullPath) // Ignore error, treat as empty for deleted files
+
+	// 3. Normalize
+	collection, _ := GetCollectionForPath(relPath)
+	normHead := NormalizeContent(headContent, collection)
+	normDisk := NormalizeContent(diskContent, collection)
+
+	// 4. Compare
+	return !bytes.Equal(normHead, normDisk), nil
+}
 
 func ExecuteGitWithToken(dir, token string, args ...string) (error, string) {
 	start := time.Now()
