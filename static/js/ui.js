@@ -419,7 +419,24 @@ export function showCreationModal(config, onCreate) {
                 const val = input.value.trim();
                 fields[key] = val === "" ? [] : val.split(',').map(s => s.trim());
             } else if (widget === 'datetime') {
-                 fields[key] = input.value; // Keep raw string, backend handles parsing if needed or standard format
+                if (input.value) {
+                    const d = new Date(input.value);
+                    const pad = (n) => (n < 10 ? '0' : '') + n;
+                    const tzo = -d.getTimezoneOffset();
+                    const dif = tzo >= 0 ? '+' : '-';
+                    const offH = pad(Math.floor(Math.abs(tzo) / 60));
+                    const offM = pad(Math.abs(tzo) % 60);
+                    
+                    fields[key] = d.getFullYear() + '-' + 
+                              pad(d.getMonth() + 1) + '-' + 
+                              pad(d.getDate()) + 'T' + 
+                              pad(d.getHours()) + ':' + 
+                              pad(d.getMinutes()) + ':' + 
+                              pad(d.getSeconds()) + 
+                              dif + offH + ':' + offM;
+                } else {
+                    fields[key] = null;
+                }
             } else {
                 fields[key] = input.value;
             }
