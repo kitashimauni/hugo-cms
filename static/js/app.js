@@ -51,6 +51,19 @@ function triggerAutoSave() {
     autoSaveTimer = setTimeout(execAutoSave, 3000);
 }
 
+function updateSaveStatus(msg, type) {
+    const el = document.getElementById('save-status');
+    if (!el) return;
+    el.textContent = msg;
+    if (type === 'saving') el.style.color = '#e2c08d';
+    else if (type === 'saved') {
+        el.style.color = '#81b181';
+        setTimeout(() => { if(el.textContent === msg) el.textContent = ''; }, 2000);
+    }
+    else if (type === 'error') el.style.color = '#d67a7a';
+    else el.style.color = '#888';
+}
+
 async function execAutoSave() {
     if (!currentPath) return;
     
@@ -61,18 +74,16 @@ async function execAutoSave() {
         return; // No changes
     }
 
-    const btn = document.querySelector('button[onclick="saveFile()"]');
-    const originalText = btn ? btn.textContent : "Save";
-    if (btn) btn.textContent = "Saving...";
+    updateSaveStatus("Auto Saving...", "saving");
 
     try {
         await API.saveArticle(payloadObj);
         lastSavedPayload = payloadStr;
         console.log("[AutoSave] Saved:", currentPath);
+        updateSaveStatus("Saved", "saved");
     } catch(e) {
         console.error("[AutoSave] Failed:", e);
-    } finally {
-        if (btn) btn.textContent = originalText;
+        updateSaveStatus("Save Failed", "error");
     }
 }
 
@@ -152,19 +163,16 @@ async function saveFile() {
     
     if (autoSaveTimer) clearTimeout(autoSaveTimer);
 
-    const btn = document.querySelector('button[onclick="saveFile()"]');
-    const originalText = btn.textContent;
-    btn.textContent = "Saving...";
+    updateSaveStatus("Saving...", "saving");
 
     try {
         const payload = getPayload();
         await API.saveArticle(payload);
         lastSavedPayload = JSON.stringify(payload);
-        alert("Saved!"); 
+        updateSaveStatus("Saved", "saved");
     } catch(e) {
         alert("Error saving: " + e);
-    } finally {
-        btn.textContent = originalText;
+        updateSaveStatus("Error", "error");
     }
 }
 
