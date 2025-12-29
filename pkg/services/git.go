@@ -13,23 +13,31 @@ import (
 )
 
 func CheckSemanticDiff(relPath string) (bool, error) {
-	// 1. Get HEAD Content
 	gitPath := filepath.ToSlash(relPath)
+
 	cmdHead := exec.Command("git", "show", "HEAD:"+gitPath)
 	cmdHead.Dir = config.RepoPath
-	headContent, _ := cmdHead.Output() // Ignore error, treat as empty for new files
+	headContent, _ := cmdHead.Output()
 
-	// 2. Get Disk Content
-	fullPath := filepath.Join(config.RepoPath, relPath)
-	diskContent, _ := os.ReadFile(fullPath) // Ignore error, treat as empty for deleted files
+	diskPath := filepath.Join(config.RepoPath, filepath.FromSlash(gitPath))
+	diskContent, _ := os.ReadFile(diskPath)
 
-	// 3. Normalize
-	collection, _ := GetCollectionForPath(relPath)
-	normHead := NormalizeContent(headContent, collection)
-	normDisk := NormalizeContent(diskContent, collection)
+	collection, _ := GetCollectionForPath(gitPath)
 
-	// 4. Compare
-	return !bytes.Equal(normHead, normDisk), nil
+	headFM, headBody, headErr := canonicalizeContentForDiff(headContent, collection)
+	diskFM, diskBody, diskErr := canonicalizeContentForDiff(diskContent, collection)
+
+	if headErr != nil || diskErr != nil {
+		headTrimmed := strings.TrimSpace(normalizeLineEndings(string(headContent)))
+		diskTrimmed := strings.TrimSpace(normalizeLineEndings(string(diskContent)))
+		return headTrimmed != diskTrimmed, nil
+	}
+
+	if !bytes.Equal(headFM, diskFM) {
+		return true, nil
+	}
+
+	return headBody != diskBody, nil
 }
 
 func ExecuteGitWithToken(dir, token string, args ...string) (error, string) {
@@ -91,7 +99,7 @@ func Diff(f1Path, f2Path, relPath string) (string, string) {
 	// 1. Check Unsaved Diff (Saved/Disk Normalized vs Editor Normalized)
 	cmd := exec.Command("git", "diff", "--no-index", "--", f1Path, f2Path)
 	output, err := cmd.CombinedOutput()
-	
+
 	if err != nil && cmd.ProcessState.ExitCode() == 1 {
 		diffStr := string(output)
 		// Fix labels
@@ -103,7 +111,7 @@ func Diff(f1Path, f2Path, relPath string) (string, string) {
 
 	// 2. Check Git Diff (HEAD Normalized vs Editor Normalized)
 	// We use f2Path (Editor Normalized) as the "New" content because f1==f2 here.
-	
+
 	// Get HEAD content
 	// Use filepath.ToSlash to ensure forward slashes for git
 	gitPath := filepath.ToSlash(relPath)
@@ -111,26 +119,26 @@ func Diff(f1Path, f2Path, relPath string) (string, string) {
 	cmdHead.Dir = config.RepoPath
 	outHead, _ := cmdHead.Output()
 	// err is expected for new files, we treat it as empty
-	
+
 	// Normalize HEAD content with defaults
 	collection, _ := GetCollectionForPath(relPath)
 	normalizedHead := NormalizeContent(outHead, collection)
-	
+
 	// Write to temp file
 	fHead, _ := os.CreateTemp("", "diff_head_*")
 	defer os.Remove(fHead.Name())
 	fHead.Write(normalizedHead)
 	fHead.Close()
-	
+
 	cmdGit := exec.Command("git", "diff", "--no-index", "--", fHead.Name(), f2Path)
 	outGit, err := cmdGit.CombinedOutput()
-	
+
 	if err != nil && cmdGit.ProcessState.ExitCode() == 1 {
 		diffStr := string(outGit)
 		diffStr = strings.ReplaceAll(diffStr, fHead.Name(), "HEAD (Normalized)")
 		diffStr = strings.ReplaceAll(diffStr, f2Path, "Current (Normalized)")
 		return diffStr, "git"
 	}
-	
+
 	return "", "none"
 }

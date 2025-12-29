@@ -28,7 +28,7 @@ func GetArticlesCache() ([]models.Article, error) {
 	if cacheLoaded {
 		return articleCache, nil
 	}
-	
+
 	defer func() {
 		fmt.Printf("[Cache] Rebuild All Duration: %v, Count: %d\n", time.Since(start), len(articleCache))
 	}()
@@ -127,10 +127,30 @@ func getGitDirtyFiles(dir string) (map[string]bool, error) {
 		}
 		path := strings.TrimSpace(line[3:])
 		path = strings.Trim(path, "\"")
-		
-		// Verify if semantically dirty (ignore formatting changes)
-		if isSemanticallyDirty, _ := CheckSemanticDiff(path); isSemanticallyDirty {
+		path = filepath.ToSlash(path)
+
+		diff, diffErr := CheckSemanticDiff(path)
+		if diffErr != nil || diff {
 			dirty[path] = true
+		}
+	}
+
+	cmdUntracked := exec.Command("git", "ls-files", "--others", "--exclude-standard", "--", "content")
+	cmdUntracked.Dir = dir
+	if outUntracked, errUntracked := cmdUntracked.Output(); errUntracked == nil {
+		for _, raw := range strings.Split(string(outUntracked), "\n") {
+			path := strings.TrimSpace(raw)
+			if path == "" {
+				continue
+			}
+			path = filepath.ToSlash(path)
+			if _, exists := dirty[path]; exists {
+				continue
+			}
+			diff, diffErr := CheckSemanticDiff(path)
+			if diffErr != nil || diff {
+				dirty[path] = true
+			}
 		}
 	}
 	return dirty, nil
@@ -157,7 +177,7 @@ func UpdateCache(relPath string) {
 	}
 
 	fullPath := filepath.Join(config.RepoPath, "content", relPath)
-	
+
 	// Check if file exists
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
 		// Remove from cache
@@ -209,7 +229,8 @@ func getGitFileStatus(relPath string) (bool, error) {
 	// git status --porcelain content/posts/xxx.md
 	// Note: relPath is relative to content/, but git needs relative to RepoPath
 	target := filepath.Join("content", relPath)
-	cmd := exec.Command("git", "status", "--porcelain", target)
+	targetGit := filepath.ToSlash(target)
+	cmd := exec.Command("git", "status", "--porcelain", targetGit)
 	cmd.Dir = config.RepoPath
 	out, err := cmd.Output()
 	if err != nil {
@@ -217,7 +238,7 @@ func getGitFileStatus(relPath string) (bool, error) {
 	}
 	if len(strings.TrimSpace(string(out))) > 0 {
 		// Verify semantically
-		return CheckSemanticDiff(target)
+		return CheckSemanticDiff(targetGit)
 	}
 	return false, nil
 }

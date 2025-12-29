@@ -58,27 +58,32 @@ func ParseFrontMatter(content []byte) (map[string]interface{}, string, string, e
 }
 
 func ConstructFileContent(fm map[string]interface{}, body string, format string) ([]byte, error) {
+	normalizedFM := sanitizeFrontMatter(fm)
+	if normalizedFM == nil {
+		normalizedFM = map[string]interface{}{}
+	}
+
 	var buf bytes.Buffer
 	switch format {
 	case "yaml":
 		buf.WriteString("---\n")
 		enc := yaml.NewEncoder(&buf)
 		enc.SetIndent(2)
-		if err := enc.Encode(fm); err != nil {
+		if err := enc.Encode(normalizedFM); err != nil {
 			return nil, err
 		}
 		buf.WriteString("---\n")
 	case "toml":
 		buf.WriteString("+++\n")
 		enc := toml.NewEncoder(&buf)
-		if err := enc.Encode(fm); err != nil {
+		if err := enc.Encode(normalizedFM); err != nil {
 			return nil, err
 		}
 		buf.WriteString("+++\n")
 	case "json":
 		enc := json.NewEncoder(&buf)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(fm); err != nil {
+		if err := enc.Encode(normalizedFM); err != nil {
 			return nil, err
 		}
 		return buf.Bytes(), nil
@@ -108,7 +113,7 @@ func DeleteFile(targetPath string) error {
 	// But ensure we don't remove top-level collection folders (e.g. content/posts)
 	dir := filepath.Dir(fullPath)
 	contentRoot := filepath.Join(config.RepoPath, "content")
-	
+
 	rel, err := filepath.Rel(contentRoot, dir)
 	if err != nil {
 		return nil // Should not happen if fullPath is inside contentRoot
@@ -134,7 +139,7 @@ func GetConfig() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var cfg map[string]interface{}
 	if err := yaml.Unmarshal(content, &cfg); err != nil {
 		return nil, err
@@ -197,13 +202,13 @@ func GenerateContentFromCollection(collection models.Collection, overrides map[s
 			}
 		}
 	}
-	
+
 	// Use TOML as default for Hugo if not specified, but config says format: "toml-frontmatter"
 	// We can check collection.Format if needed, but for now let's default to TOML or YAML based on standard practice or simple heuristic.
 	// The provided config example has `format: "toml-frontmatter"`.
 	// ConstructFileContent handles this if we pass "toml" or "yaml".
 	// Let's assume toml for now as per config sample.
-	
+
 	return ConstructFileContent(fm, bodyContent, "toml")
 }
 
@@ -216,7 +221,7 @@ func ResolvePath(collection models.Collection, fields map[string]interface{}) (s
 
 	// Prepare data for replacement
 	data := make(map[string]string)
-	
+
 	// Helper to safely get string
 	getString := func(key string) string {
 		if v, ok := fields[key]; ok {
@@ -234,7 +239,7 @@ func ResolvePath(collection models.Collection, fields map[string]interface{}) (s
 		t, err = time.Parse(time.RFC3339, dateStr)
 		if err != nil {
 			// Try other formats or fallback to Now
-			t = time.Now() 
+			t = time.Now()
 		}
 	} else {
 		t = time.Now()
@@ -254,7 +259,7 @@ func ResolvePath(collection models.Collection, fields map[string]interface{}) (s
 
 	// Regex to find {{...}}
 	re := regexp.MustCompile(`{{([^}]+)}}`)
-	
+
 	resolvedPath := re.ReplaceAllStringFunc(pathTmpl, func(match string) string {
 		key := strings.TrimSpace(match[2 : len(match)-2])
 		if val, ok := data[key]; ok {
@@ -271,7 +276,7 @@ func ResolvePath(collection models.Collection, fields map[string]interface{}) (s
 	if ext == "" {
 		ext = "md"
 	}
-	
+
 	// If path doesn't end with extension, append it
 	// But check if path is "folder/index" style
 	if !strings.HasSuffix(resolvedPath, "."+ext) {
@@ -286,7 +291,7 @@ func GetCollectionForPath(relPath string) (*models.Collection, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	relPath = filepath.ToSlash(relPath)
 
 	for _, col := range cfg.Collections {
@@ -307,20 +312,123 @@ func NormalizeContent(content []byte, collection *models.Collection) []byte {
 		return append(bytes.TrimSpace(content), '\n')
 	}
 
-	if collection != nil {
-		for _, field := range collection.Fields {
-			if field.Name == "body" {
-				continue
-			}
-			if _, exists := fm[field.Name]; !exists && field.Default != nil {
-				fm[field.Name] = field.Default
-			}
-		}
-	}
+	preparedFM := sanitizeFrontMatter(fm)
+	applyCollectionDefaultsInPlace(preparedFM, collection)
 
-	normalized, err := ConstructFileContent(fm, body, format)
+	normalized, err := ConstructFileContent(preparedFM, body, format)
 	if err != nil {
 		return append(bytes.TrimSpace(content), '\n')
 	}
 	return append(bytes.TrimSpace(normalized), '\n')
+}
+
+func sanitizeFrontMatter(fm map[string]interface{}) map[string]interface{} {
+	if fm == nil {
+		return nil
+	}
+	sanitized := make(map[string]interface{}, len(fm))
+	for k, v := range fm {
+		sanitized[k] = sanitizeFrontMatterValue(v)
+	}
+	return sanitized
+}
+
+func sanitizeFrontMatterValue(value interface{}) interface{} {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		return sanitizeFrontMatter(v)
+	case map[interface{}]interface{}:
+		normalized := make(map[string]interface{}, len(v))
+		for key, inner := range v {
+			normalized[fmt.Sprint(key)] = sanitizeFrontMatterValue(inner)
+		}
+		return normalized
+	case []interface{}:
+		slice := make([]interface{}, len(v))
+		for i := range v {
+			slice[i] = sanitizeFrontMatterValue(v[i])
+		}
+		return slice
+	default:
+		return v
+	}
+}
+
+func applyCollectionDefaultsInPlace(fm map[string]interface{}, collection *models.Collection) {
+	if fm == nil || collection == nil {
+		return
+	}
+	for _, field := range collection.Fields {
+		if field.Name == "body" {
+			continue
+		}
+		if _, exists := fm[field.Name]; !exists && field.Default != nil {
+			fm[field.Name] = field.Default
+		}
+	}
+}
+
+func canonicalizeFrontMatterForJSON(fm map[string]interface{}) map[string]interface{} {
+	if fm == nil {
+		return nil
+	}
+	canonical := make(map[string]interface{}, len(fm))
+	for k, v := range fm {
+		canonical[k] = canonicalizeValueForJSON(v)
+	}
+	return canonical
+}
+
+func canonicalizeValueForJSON(value interface{}) interface{} {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		canonical := make(map[string]interface{}, len(v))
+		for key, inner := range v {
+			canonical[key] = canonicalizeValueForJSON(inner)
+		}
+		return canonical
+	case map[interface{}]interface{}:
+		normalized := make(map[string]interface{}, len(v))
+		for key, inner := range v {
+			normalized[fmt.Sprint(key)] = canonicalizeValueForJSON(inner)
+		}
+		return normalized
+	case []interface{}:
+		slice := make([]interface{}, len(v))
+		for i := range v {
+			slice[i] = canonicalizeValueForJSON(v[i])
+		}
+		return slice
+	case time.Time:
+		return v.UTC().Format(time.RFC3339Nano)
+	default:
+		return v
+	}
+}
+
+func normalizeLineEndings(input string) string {
+	return strings.ReplaceAll(input, "\r\n", "\n")
+}
+
+func canonicalizeContentForDiff(content []byte, collection *models.Collection) ([]byte, string, error) {
+	trimmed := bytes.TrimSpace(content)
+	if len(trimmed) == 0 {
+		return nil, "", nil
+	}
+
+	fm, body, _, err := ParseFrontMatter(trimmed)
+	if err != nil {
+		return nil, strings.TrimSpace(normalizeLineEndings(string(trimmed))), err
+	}
+
+	sanitized := sanitizeFrontMatter(fm)
+	applyCollectionDefaultsInPlace(sanitized, collection)
+
+	canonicalFM, err := json.Marshal(canonicalizeFrontMatterForJSON(sanitized))
+	if err != nil {
+		return nil, "", err
+	}
+
+	normalizedBody := strings.TrimSpace(normalizeLineEndings(body))
+	return canonicalFM, normalizedBody, nil
 }
