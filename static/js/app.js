@@ -133,7 +133,7 @@ async function loadFile(path) {
     const display = document.getElementById('filename-display');
     if(display) display.textContent = path;
 
-    await UI.showLoadingEditor(); // This switches to 'edit' view
+    await UI.showLoadingEditor(); // This updates editor text but doesn't force switch view
 
     try {
         const data = await API.fetchArticle(path);
@@ -142,6 +142,13 @@ async function loadFile(path) {
         
         // Initialize change tracking
         lastSavedPayload = JSON.stringify(getPayload());
+
+        // Refresh preview if active
+        const isPreview = document.getElementById('btn-view-preview').classList.contains('active');
+        const isSplit = document.getElementById('btn-view-split').classList.contains('active');
+        if (isPreview || isSplit) {
+            await buildAndPreview();
+        }
         
     } catch(e) {
         UI.showEditorError(e);

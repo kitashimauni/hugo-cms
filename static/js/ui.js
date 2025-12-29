@@ -50,7 +50,7 @@ export async function showLoadingEditor() {
     const fmContainer = document.getElementById('fm-container');
     const editor = document.getElementById('editor');
     
-    switchView('edit');
+    // switchView('edit'); // Removed to preserve current view
     fmContainer.style.display = 'none';
     editor.value = "Loading...";
     editor.disabled = true;
