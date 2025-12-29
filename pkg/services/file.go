@@ -444,6 +444,50 @@ func normalizeLineEndings(input string) string {
 	return strings.ReplaceAll(input, "\r\n", "\n")
 }
 
+func pruneEmptyFields(val interface{}) interface{} {
+	switch v := val.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{})
+		for k, elem := range v {
+			pruned := pruneEmptyFields(elem)
+			// 値が nil (削除対象) でなければマップに追加
+			if pruned != nil {
+				out[k] = pruned
+			}
+		}
+		// マップ自体が空になった場合も残すかどうかは要件によりますが、
+		// フロントマター全体が消えるのを防ぐため、トップレベル呼び出しでは注意が必要。
+		// ここでは再帰的な削除としてそのまま返します。
+		return out
+
+	case []interface{}:
+		// 空のリストは削除 (nilを返すことで親マップからキーが消える)
+		if len(v) == 0 {
+			return nil
+		}
+		// 必要に応じてリストの中身も再帰的にチェック可能
+		return v
+
+	case []string:
+		// sanitizeFrontMatterを通していれば []interface{} になっているはずですが念のため
+		if len(v) == 0 {
+			return nil
+		}
+		return v
+
+	case string:
+		// 空文字は削除
+		if v == "" {
+			return nil
+		}
+		return v
+
+	default:
+		// bool (false) や数値 (0)、日付などはそのまま返す
+		return v
+	}
+}
+
 func canonicalizeContentForDiff(content []byte, collection *models.Collection) ([]byte, string, error) {
 	trimmed := bytes.TrimSpace(content)
 	if len(trimmed) == 0 {
@@ -459,7 +503,17 @@ func canonicalizeContentForDiff(content []byte, collection *models.Collection) (
 	applyCollectionDefaultsInPlace(sanitized, collection)
 	normalizeOptionalListFields(sanitized, collection)
 
-	canonicalFM, err := json.Marshal(canonicalizeFrontMatterForJSON(sanitized))
+	// ▼▼▼ 追加: 比較用に空の値を削除して構造を統一する ▼▼▼
+	prunedFM := pruneEmptyFields(sanitized)
+	// マップならキャストしてJSON化へ渡す（nilチェックを入れるとより安全です）
+	var fmMap map[string]interface{}
+	if m, ok := prunedFM.(map[string]interface{}); ok {
+		fmMap = m
+	} else {
+		fmMap = make(map[string]interface{})
+	}
+
+	canonicalFM, err := json.Marshal(canonicalizeFrontMatterForJSON(fmMap))
 	if err != nil {
 		return nil, "", err
 	}
