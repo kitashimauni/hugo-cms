@@ -287,11 +287,11 @@ func NormalizeContent(content []byte) []byte {
 	}
 	fm, body, format, err := ParseFrontMatter(content)
 	if err != nil {
-		return content
+		return append(bytes.TrimSpace(content), '\n')
 	}
 	normalized, err := ConstructFileContent(fm, body, format)
 	if err != nil {
-		return content
+		return append(bytes.TrimSpace(content), '\n')
 	}
-	return normalized
+	return append(bytes.TrimSpace(normalized), '\n')
 }
