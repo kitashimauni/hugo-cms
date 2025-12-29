@@ -44,6 +44,14 @@ export function toggleSplitView() {
 
 export function toggleSidebar() {
     document.querySelector('aside').classList.toggle('sidebar-open');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    if (backdrop) {
+        if (document.querySelector('aside').classList.contains('sidebar-open')) {
+            backdrop.style.display = 'block';
+        } else {
+            backdrop.style.display = 'none';
+        }
+    }
 }
 
 export async function showLoadingEditor() {

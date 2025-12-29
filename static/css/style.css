@@ -1,6 +1,9 @@
 /* Reset & Layout */
 body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; height: 100vh; overflow: hidden; background: #1e1e1e; color: #ddd; }
 
+/* Backdrop */
+#sidebar-backdrop { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 40; }
+
 /* Sidebar */
 aside { width: 300px; background: #252526; display: flex; flex-direction: column; border-right: 1px solid #333; transition: transform 0.3s ease; z-index: 50; }
 .sidebar-header { padding: 15px; border-bottom: 1px solid #333; font-weight: bold; background: #1e1e1e; display: flex; justify-content: space-between; align-items: center; }
@@ -8,6 +11,8 @@ aside { width: 300px; background: #252526; display: flex; flex-direction: column
 .sidebar-actions button { flex: 1; }
 #file-list { flex: 1; overflow-y: auto; }
 .sidebar-footer { padding: 10px; border-top: 1px solid #333; text-align: center; }
+
+.mobile-only { display: none; }
 
 /* File List Items */
 .file-item { padding: 8px 15px; border-bottom: 1px solid #2a2a2a; cursor: pointer; font-size: 13px; }
@@ -48,7 +53,7 @@ iframe { width: 100%; height: 100%; border: none; }
 #content-area.split-mode #preview-view { width: 50%; display: block !important; }
 
 /* Utils */
-.action-btn { background: #0e639c; color: white; border: none; padding: 6px 12px; border-radius: 3px; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.action-btn { background: #0e639c; color: white; border: none; padding: 6px 12px; border-radius: 3px; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
 .action-btn:hover { background: #1177bb; }
 .action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .action-btn.secondary { background: #3c3c3c; }
@@ -80,14 +85,18 @@ details[open] > summary::before { content: '▾ '; }
     aside { position: absolute; height: 100%; transform: translateX(-100%); }
     aside.sidebar-open { transform: translateX(0); box-shadow: 2px 0 10px rgba(0,0,0,0.5); }
     #mobile-menu-btn { display: block; }
+    .mobile-only { display: block; }
     
     /* Disable Split on Mobile */
     #content-area.split-mode #edit-view, #content-area.split-mode #preview-view { width: 100%; }
-    #content-area.split-mode #preview-view { display: none !important; } /* Force hide preview in split on mobile? Or stack? */
-    /* Let's just hide split button on mobile or make it behave like toggle */
+    #content-area.split-mode #preview-view { display: none !important; }
     #btn-view-split { display: none; }
     
-    #filename-display { max-width: 120px; }
-    .header-actions button span { display: none; } /* Hide text if we had it, but we don't have icons yet */
-    .header-actions button { padding: 6px 8px; font-size: 11px; }
+    #filename-display { max-width: 100px; font-size: 12px; }
+    
+    .header-actions button span { display: none; } /* Hide text labels */
+    .header-actions button { padding: 6px 8px; font-size: 14px; }
+    .view-toggles { margin-right: 5px; }
+    .view-toggle { padding: 4px 8px; }
+    header { padding: 0 10px; }
 }
