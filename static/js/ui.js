@@ -159,7 +159,27 @@ function getCollectionForPath(path, config) {
 }
 
 function renderFrontMatterForm(fm, path, config, container) {
-    container.innerHTML = '<div style="color:#aaa; font-weight:bold; margin-bottom:10px;">Front Matter</div>';
+    container.innerHTML = '';
+    
+    const details = document.createElement('details');
+    details.style.marginBottom = '10px';
+    
+    const summary = document.createElement('summary');
+    summary.textContent = "Article Settings";
+    summary.style.fontWeight = 'bold';
+    summary.style.cursor = 'pointer';
+    summary.style.padding = '8px';
+    summary.style.backgroundColor = '#2a2a2a';
+    summary.style.color = '#ccc';
+    summary.style.borderRadius = '4px';
+    summary.style.outline = 'none';
+    
+    details.appendChild(summary);
+    
+    const wrapper = document.createElement('div');
+    wrapper.style.padding = '10px';
+    wrapper.style.border = '1px solid #333';
+    wrapper.style.borderTop = 'none';
     
     const fragment = document.createDocumentFragment();
     const collection = getCollectionForPath(path, config);
@@ -181,7 +201,10 @@ function renderFrontMatterForm(fm, path, config, container) {
             renderField(fragment, { name: key, label: key + " (Extra)", widget: widget }, value);
         }
     }
-    container.appendChild(fragment);
+    
+    wrapper.appendChild(fragment);
+    details.appendChild(wrapper);
+    container.appendChild(details);
 }
 
 function renderField(container, field, value) {
