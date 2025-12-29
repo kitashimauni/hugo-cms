@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/handlers"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -15,10 +17,25 @@ func main() {
 	// Initialize config
 	config.Init()
 
+	appURL := config.GetAppURL()
+	fmt.Printf("Starting server...\n")
+	fmt.Printf("APP_URL: %s\n", appURL)
+	fmt.Printf("Redirect URL: %s\n", config.OauthConf.RedirectURL)
+
 	r := gin.Default()
+
+	// Determine if we are running on HTTPS
+	isSecure := strings.HasPrefix(appURL, "https://")
 
 	// Session Setup
 	store := cookie.NewStore([]byte(os.Getenv("SESSION_SECRET")))
+	store.Options(sessions.Options{
+		Path:     "/",
+		MaxAge:   86400 * 7,
+		HttpOnly: true,
+		Secure:   isSecure,
+		SameSite: http.SameSiteLaxMode,
+	})
 	r.Use(sessions.Sessions("mysession", store))
 
 	// Static Files & Templates
