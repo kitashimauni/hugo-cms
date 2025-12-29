@@ -154,7 +154,18 @@ func UpdateCache(relPath string) {
 
 	fullPath := filepath.Join(config.RepoPath, "content", relPath)
 	
-	// Check if file exists (might be deleted?)
+	// Check if file exists
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		// Remove from cache
+		for i, art := range articleCache {
+			if art.Path == relPath {
+				articleCache = append(articleCache[:i], articleCache[i+1:]...)
+				break
+			}
+		}
+		return
+	}
+
 	// For now assuming update/create means it exists or we handle error
 	content, err := readHead(fullPath, 4096)
 	if err != nil {

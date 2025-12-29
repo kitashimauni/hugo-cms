@@ -38,12 +38,13 @@ export function updateEditorContent(data, path, config) {
     if (data.frontmatter) {
         renderFrontMatterForm(data.frontmatter, path, config, fmContainer);
         fmContainer.style.display = 'block';
-        editor.value = data.body;
+        editor.value = data.body || "";
     } else {
         fmContainer.style.display = 'none';
         fmContainer.innerHTML = '';
-        editor.value = data.content;
+        editor.value = data.content || "";
     }
+    editor.placeholder = "Write content here...";
 }
 
 export function showEditorError(error) {
@@ -335,6 +336,97 @@ export function showDiffModal(diffHtml) {
     const body = document.getElementById('modal-body');
     body.innerHTML = diffHtml || "No differences";
     document.getElementById('modal-overlay').style.display = 'flex';
+}
+
+export function showCreationModal(config, onCreate) {
+    const overlay = document.getElementById('modal-overlay');
+    const header = document.getElementById('modal-header');
+    const body = document.getElementById('modal-body');
+
+    header.querySelector('span').textContent = "New Article";
+    body.innerHTML = '';
+    overlay.style.display = 'flex';
+
+    if (!config || !config.collections || config.collections.length === 0) {
+        body.innerHTML = '<p>No collections defined in config.</p>';
+        return;
+    }
+
+    // Collection Selector
+    const selWrapper = document.createElement('div');
+    selWrapper.style.marginBottom = '15px';
+    selWrapper.innerHTML = '<strong>Collection: </strong>';
+    
+    const select = document.createElement('select');
+    select.className = 'fm-input';
+    select.style.width = 'auto';
+    select.style.display = 'inline-block';
+    
+    config.collections.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.name;
+        opt.textContent = c.label || c.name;
+        select.appendChild(opt);
+    });
+    selWrapper.appendChild(select);
+    body.appendChild(selWrapper);
+
+    // Fields Container
+    const fieldsContainer = document.createElement('div');
+    fieldsContainer.id = 'creation-fields';
+    body.appendChild(fieldsContainer);
+
+    // Render fields for initial selection
+    const render = () => {
+        fieldsContainer.innerHTML = '';
+        const colName = select.value;
+        const col = config.collections.find(c => c.name === colName);
+        if (col && col.fields) {
+            col.fields.forEach(field => {
+                if (field.name === "body") return;
+                // Pre-fill defaults
+                const val = field.default !== undefined ? field.default : null;
+                renderField(fieldsContainer, field, val);
+            });
+        }
+    };
+    select.onchange = render;
+    render();
+
+    // Create Button
+    const btnDiv = document.createElement('div');
+    btnDiv.style.marginTop = '20px';
+    btnDiv.style.textAlign = 'right';
+    
+    const createBtn = document.createElement('button');
+    createBtn.className = 'action-btn';
+    createBtn.style.background = '#2da44e';
+    createBtn.textContent = 'Create';
+    createBtn.onclick = () => {
+        const colName = select.value;
+        // Collect data
+        const fields = {};
+        const inputs = fieldsContainer.querySelectorAll('input');
+        inputs.forEach(input => {
+            const key = input.dataset.key;
+            const widget = input.dataset.widget;
+             if (widget === 'boolean') {
+                fields[key] = input.checked;
+            } else if (widget === 'list') {
+                const val = input.value.trim();
+                fields[key] = val === "" ? [] : val.split(',').map(s => s.trim());
+            } else if (widget === 'datetime') {
+                 fields[key] = input.value; // Keep raw string, backend handles parsing if needed or standard format
+            } else {
+                fields[key] = input.value;
+            }
+        });
+        onCreate(colName, fields);
+        closeModal();
+    };
+
+    btnDiv.appendChild(createBtn);
+    body.appendChild(btnDiv);
 }
 
 export function closeModal() {

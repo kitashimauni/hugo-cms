@@ -24,6 +24,7 @@ async function init() {
     window.loadFile = loadFile;
     window.saveFile = saveFile;
     window.createNewFile = createNewFile;
+    window.deleteFile = deleteFile;
     window.runSync = runSync;
     window.runBuild = runBuild;
     window.runPublish = runPublish;
@@ -83,23 +84,56 @@ async function saveFile() {
     }
 }
 
-async function createNewFile() {
-    let path = prompt("Enter file path (e.g., posts/my-new-post.md):", "posts/");
-    if (!path) return;
-
-    if (!path.endsWith(".md") && !path.endsWith(".markdown")) {
-        if(!confirm("Filename does not end with .md. Continue?")) return;
-    }
-
-    const content = "---\ntitle: New Post\ndraft: true\n---\n";
+async function deleteFile() {
+    if(!currentPath) return alert("No file selected");
+    
+    if(!confirm("Are you sure you want to delete this article?\nThis action cannot be undone.")) return;
 
     try {
-        await API.createArticle(path, content);
+        await API.deleteArticle(currentPath);
+        alert("Article deleted.");
+        
+        // Reset UI
+        currentPath = "";
+        currentData = null;
+        document.getElementById('filename-display').textContent = "Select a file...";
+        document.getElementById('editor').value = "";
+        document.getElementById('editor').placeholder = "Select a file to edit...";
+        document.getElementById('fm-container').style.display = 'none';
+        
         await refreshFileList();
-        await loadFile(path); 
+        UI.switchTab('files'); // Switch back to file list
     } catch(e) {
-        alert(e.message);
+        alert("Delete failed: " + e.message);
     }
+}
+
+async function createNewFile() {
+    if (!cmsConfig) {
+        alert("Config not loaded");
+        return;
+    }
+
+    UI.showCreationModal(cmsConfig, async (colName, fields) => {
+        try {
+            const res = await API.createArticle({
+                collection: colName,
+                fields: fields
+            });
+            
+            // res.path is the relative path of the created file
+            if (res.status === 'created') {
+                await refreshFileList();
+                if (res.path) {
+                    await loadFile(res.path);
+                } else {
+                    alert("Created, but path not returned.");
+                }
+            }
+        } catch(e) {
+            alert("Create failed: " + e.message);
+        }
+    });
 }
 
 async function runBuild() {

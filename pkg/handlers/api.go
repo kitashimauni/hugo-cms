@@ -109,14 +109,104 @@ func SaveArticle(c *gin.Context) {
 
 func CreateArticle(c *gin.Context) {
 	var req struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
+		Path       string                 `json:"path"`
+		Content    string                 `json:"content"`
+		Collection string                 `json:"collection"`
+		Fields     map[string]interface{} `json:"fields"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "Invalid JSON"})
 		return
 	}
 
+	// New logic: Collection-based creation
+	if req.Collection != "" {
+		cmsConfig, err := services.GetCMSConfig()
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to load CMS config"})
+			return
+		}
+
+		var targetCollection *models.Collection
+		for _, col := range cmsConfig.Collections {
+			if col.Name == req.Collection {
+				targetCollection = &col
+				break
+			}
+		}
+
+		if targetCollection == nil {
+			c.JSON(400, gin.H{"error": "Collection not found"})
+			return
+		}
+
+		// Resolve Path
+		relPath, err := services.ResolvePath(*targetCollection, req.Fields)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to resolve path: " + err.Error()})
+			return
+		}
+		
+		// Prepend collection folder if ResolvePath returned relative path without it?
+		// ResolvePath returns path relative to collection folder? No, I implemented it to just return the filename/subpath based on pattern.
+		// Wait, `GenerateContentFromCollection` returns content.
+		// I need to join collection folder with resolved path.
+		// `ResolvePath` implementation: just replaces {{...}} in `collection.Path`.
+		// `collection.Path` in config example: `{{year}}.../index`.
+		// `collection.Folder` is `content/posts`.
+		// So full path is `content/posts/{{year}}.../index.md`.
+		
+		fullPath := services.SafeJoin(config.RepoPath, targetCollection.Folder, relPath)
+		if fullPath == "" {
+			c.JSON(400, gin.H{"error": "Invalid resolved path"})
+			return
+		}
+
+		// Check if file exists
+		if _, err := os.Stat(fullPath); err == nil {
+			c.JSON(409, gin.H{"error": "File already exists"})
+			return
+		}
+
+		// Generate Content
+		content, err := services.GenerateContentFromCollection(*targetCollection, req.Fields)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "Failed to generate content: " + err.Error()})
+			return
+		}
+
+		// Write File
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			c.JSON(500, gin.H{"error": "Failed to create directory"})
+			return
+		}
+
+		if err := os.WriteFile(fullPath, content, 0644); err != nil {
+			c.JSON(500, gin.H{"error": "Failed to write file"})
+			return
+		}
+
+		// Update Cache (we need the path relative to content dir for cache update usually? 
+		// services.UpdateCache takes "path". Existing CreateContent calls UpdateCache(req.Path).
+		// CreateContent receives path relative to `content` usually?
+		// `hugo new content path/to/file`.
+		// Here `relPath` is relative to `collection.Folder`.
+		// `collection.Folder` is e.g. `content/posts`.
+		// So cache path should be `posts/` + `relPath`?
+		// `SafeJoin` combined `config.RepoPath`, `targetCollection.Folder`, `relPath`.
+		// `targetCollection.Folder` usually includes `content/`.
+		// Let's deduce the content-relative path.
+		
+		contentRelPath, _ := filepath.Rel(filepath.Join(config.RepoPath, "content"), fullPath)
+		// normalize slashes
+		contentRelPath = filepath.ToSlash(contentRelPath)
+
+		services.UpdateCache(contentRelPath)
+		c.JSON(200, gin.H{"status": "created", "path": contentRelPath})
+		return
+	}
+
+	// Legacy/Direct path logic
 	if req.Path == "" || strings.Contains(req.Path, "..") {
 		c.JSON(400, gin.H{"error": "Invalid path"})
 		return
@@ -186,6 +276,31 @@ func GetDiff(c *gin.Context) {
 	diffStr, diffType := services.Diff(f1.Name(), f2.Name(), relPath)
 	
 	c.JSON(200, gin.H{"diff": diffStr, "type": diffType})
+}
+
+func DeleteArticle(c *gin.Context) {
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid JSON"})
+		return
+	}
+
+	if req.Path == "" || strings.Contains(req.Path, "..") {
+		c.JSON(400, gin.H{"error": "Invalid path"})
+		return
+	}
+
+	if err := services.DeleteFile(req.Path); err != nil {
+		c.JSON(500, gin.H{"error": "Delete failed: " + err.Error()})
+		return
+	}
+
+	// Re-scan or remove from cache
+	// Assuming UpdateCache handles re-scan or we'll fix it
+	services.UpdateCache(req.Path) 
+	c.JSON(200, gin.H{"status": "deleted"})
 }
 
 func GetConfig(c *gin.Context) {

@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"hugo-cms/pkg/config"
+	"hugo-cms/pkg/models"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
@@ -92,6 +95,14 @@ func ConstructFileContent(fm map[string]interface{}, body string, format string)
 	return buf.Bytes(), nil
 }
 
+func DeleteFile(targetPath string) error {
+	fullPath := SafeJoin(config.RepoPath, "content", targetPath)
+	if fullPath == "" {
+		return fmt.Errorf("invalid path")
+	}
+	return os.Remove(fullPath)
+}
+
 func GetConfig() (map[string]interface{}, error) {
 	configPath := filepath.Join(config.RepoPath, "static/admin/config.yml")
 	content, err := os.ReadFile(configPath)
@@ -104,4 +115,143 @@ func GetConfig() (map[string]interface{}, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func GetCMSConfig() (*models.CMSConfig, error) {
+	configPath := filepath.Join(config.RepoPath, "static/admin/config.yml")
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var cfg models.CMSConfig
+	if err := yaml.Unmarshal(content, &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func GenerateContentFromCollection(collection models.Collection, overrides map[string]interface{}) ([]byte, error) {
+	fm := make(map[string]interface{})
+	var bodyContent string
+
+	for _, field := range collection.Fields {
+		// Check override first
+		if val, ok := overrides[field.Name]; ok {
+			if field.Name == "body" {
+				if strVal, ok := val.(string); ok {
+					bodyContent = strVal
+				}
+				continue
+			}
+			fm[field.Name] = val
+			continue
+		}
+
+		if field.Name == "body" {
+			if field.Default != nil {
+				if val, ok := field.Default.(string); ok {
+					bodyContent = val
+				}
+			}
+			continue
+		}
+
+		if field.Default != nil {
+			fm[field.Name] = field.Default
+		} else {
+			switch field.Widget {
+			case "datetime":
+				fm[field.Name] = time.Now().Format(time.RFC3339)
+			case "boolean":
+				fm[field.Name] = false
+			case "list":
+				fm[field.Name] = []string{}
+			default:
+				fm[field.Name] = ""
+			}
+		}
+	}
+	
+	// Use TOML as default for Hugo if not specified, but config says format: "toml-frontmatter"
+	// We can check collection.Format if needed, but for now let's default to TOML or YAML based on standard practice or simple heuristic.
+	// The provided config example has `format: "toml-frontmatter"`.
+	// ConstructFileContent handles this if we pass "toml" or "yaml".
+	// Let's assume toml for now as per config sample.
+	
+	return ConstructFileContent(fm, bodyContent, "toml")
+}
+
+func ResolvePath(collection models.Collection, fields map[string]interface{}) (string, error) {
+	pathTmpl := collection.Path
+	if pathTmpl == "" {
+		// Default to {slug}.md or {title}.md
+		pathTmpl = "{{slug}}"
+	}
+
+	// Prepare data for replacement
+	data := make(map[string]string)
+	
+	// Helper to safely get string
+	getString := func(key string) string {
+		if v, ok := fields[key]; ok {
+			return fmt.Sprintf("%v", v)
+		}
+		return ""
+	}
+
+	// Date handling
+	dateStr := getString("date")
+	var t time.Time
+	var err error
+	if dateStr != "" {
+		// Try parsing ISO format
+		t, err = time.Parse(time.RFC3339, dateStr)
+		if err != nil {
+			// Try other formats or fallback to Now
+			t = time.Now() 
+		}
+	} else {
+		t = time.Now()
+	}
+
+	data["year"] = fmt.Sprintf("%04d", t.Year())
+	data["month"] = fmt.Sprintf("%02d", t.Month())
+	data["day"] = fmt.Sprintf("%02d", t.Day())
+	data["hour"] = fmt.Sprintf("%02d", t.Hour())
+	data["minute"] = fmt.Sprintf("%02d", t.Minute())
+	data["second"] = fmt.Sprintf("%02d", t.Second())
+
+	// Other fields
+	for k, v := range fields {
+		data[k] = fmt.Sprintf("%v", v)
+	}
+
+	// Regex to find {{...}}
+	re := regexp.MustCompile(`{{([^}]+)}}`)
+	
+	resolvedPath := re.ReplaceAllStringFunc(pathTmpl, func(match string) string {
+		key := strings.TrimSpace(match[2 : len(match)-2])
+		if val, ok := data[key]; ok {
+			return val
+		}
+		// Special case: if key is "slug" but not in data, maybe derive from title?
+		// For now, return empty or keep placeholder? Netlify CMS usually errors or requires it.
+		// Let's return empty if not found.
+		return ""
+	})
+
+	// Add extension
+	ext := collection.Extension
+	if ext == "" {
+		ext = "md"
+	}
+	
+	// If path doesn't end with extension, append it
+	// But check if path is "folder/index" style
+	if !strings.HasSuffix(resolvedPath, "."+ext) {
+		resolvedPath = resolvedPath + "." + ext
+	}
+
+	return resolvedPath, nil
 }
