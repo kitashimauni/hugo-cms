@@ -281,7 +281,24 @@ func ResolvePath(collection models.Collection, fields map[string]interface{}) (s
 	return resolvedPath, nil
 }
 
-func NormalizeContent(content []byte) []byte {
+func GetCollectionForPath(relPath string) (*models.Collection, error) {
+	cfg, err := GetCMSConfig()
+	if err != nil {
+		return nil, err
+	}
+	
+	relPath = filepath.ToSlash(relPath)
+
+	for _, col := range cfg.Collections {
+		colFolder := filepath.ToSlash(filepath.Clean(col.Folder))
+		if strings.HasPrefix(relPath, colFolder) {
+			return &col, nil
+		}
+	}
+	return nil, fmt.Errorf("no collection found")
+}
+
+func NormalizeContent(content []byte, collection *models.Collection) []byte {
 	if len(content) == 0 {
 		return content
 	}
@@ -289,6 +306,18 @@ func NormalizeContent(content []byte) []byte {
 	if err != nil {
 		return append(bytes.TrimSpace(content), '\n')
 	}
+
+	if collection != nil {
+		for _, field := range collection.Fields {
+			if field.Name == "body" {
+				continue
+			}
+			if _, exists := fm[field.Name]; !exists && field.Default != nil {
+				fm[field.Name] = field.Default
+			}
+		}
+	}
+
 	normalized, err := ConstructFileContent(fm, body, format)
 	if err != nil {
 		return append(bytes.TrimSpace(content), '\n')

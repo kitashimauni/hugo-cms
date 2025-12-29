@@ -91,8 +91,9 @@ func Diff(f1Path, f2Path, relPath string) (string, string) {
 	outHead, _ := cmdHead.Output()
 	// err is expected for new files, we treat it as empty
 	
-	// Normalize HEAD content
-	normalizedHead := NormalizeContent(outHead)
+	// Normalize HEAD content with defaults
+	collection, _ := GetCollectionForPath(relPath)
+	normalizedHead := NormalizeContent(outHead, collection)
 	
 	// Write to temp file
 	fHead, _ := os.CreateTemp("", "diff_head_*")

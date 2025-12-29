@@ -237,7 +237,9 @@ func GetDiff(c *gin.Context) {
 		currentContent = []byte("")
 	}
 
-	currentContent = services.NormalizeContent(currentContent)
+	// Apply defaults for normalization
+	collection, _ := services.GetCollectionForPath(filepath.Join("content", art.Path))
+	currentContent = services.NormalizeContent(currentContent, collection)
 
 	var newContent []byte
 	if art.FrontMatter != nil {
