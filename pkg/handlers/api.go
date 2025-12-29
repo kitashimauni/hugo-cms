@@ -14,12 +14,9 @@ import (
 )
 
 func HandleBuild(c *gin.Context) {
-	err, log := services.BuildSite()
-	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "log": log})
-		return
-	}
-	c.JSON(200, gin.H{"status": "ok", "log": log})
+	// With Hugo Server running, explicit build is not needed for preview.
+	// We just return OK so frontend logic continues.
+	c.JSON(200, gin.H{"status": "ok", "log": "Preview managed by Hugo Server"})
 }
 
 func HandleSync(c *gin.Context) {
@@ -146,7 +143,7 @@ func CreateArticle(c *gin.Context) {
 			c.JSON(500, gin.H{"error": "Failed to resolve path: " + err.Error()})
 			return
 		}
-		
+
 		// Prepend collection folder if ResolvePath returned relative path without it?
 		// ResolvePath returns path relative to collection folder? No, I implemented it to just return the filename/subpath based on pattern.
 		// Wait, `GenerateContentFromCollection` returns content.
@@ -155,7 +152,7 @@ func CreateArticle(c *gin.Context) {
 		// `collection.Path` in config example: `{{year}}.../index`.
 		// `collection.Folder` is `content/posts`.
 		// So full path is `content/posts/{{year}}.../index.md`.
-		
+
 		fullPath := services.SafeJoin(config.RepoPath, targetCollection.Folder, relPath)
 		if fullPath == "" {
 			c.JSON(400, gin.H{"error": "Invalid resolved path"})
@@ -186,7 +183,7 @@ func CreateArticle(c *gin.Context) {
 			return
 		}
 
-		// Update Cache (we need the path relative to content dir for cache update usually? 
+		// Update Cache (we need the path relative to content dir for cache update usually?
 		// services.UpdateCache takes "path". Existing CreateContent calls UpdateCache(req.Path).
 		// CreateContent receives path relative to `content` usually?
 		// `hugo new content path/to/file`.
@@ -196,7 +193,7 @@ func CreateArticle(c *gin.Context) {
 		// `SafeJoin` combined `config.RepoPath`, `targetCollection.Folder`, `relPath`.
 		// `targetCollection.Folder` usually includes `content/`.
 		// Let's deduce the content-relative path.
-		
+
 		contentRelPath, _ := filepath.Rel(filepath.Join(config.RepoPath, "content"), fullPath)
 		// normalize slashes
 		contentRelPath = filepath.ToSlash(contentRelPath)
@@ -234,21 +231,16 @@ func GetDiff(c *gin.Context) {
 	}
 
 	fullPath := services.SafeJoin(config.RepoPath, "content", art.Path)
-	
+
 	currentContent, err := os.ReadFile(fullPath)
 	if err != nil {
 		currentContent = []byte("")
 	}
 
-	if len(currentContent) > 0 {
-		fm, body, format, err := services.ParseFrontMatter(currentContent)
-		if err == nil {
-			normalized, err := services.ConstructFileContent(fm, body, format)
-			if err == nil {
-				currentContent = normalized
-			}
-		}
-	}
+	// Apply defaults for normalization
+	collectionPath := filepath.Join("content", art.Path)
+	collection, _ := services.GetCollectionForPath(collectionPath)
+	currentContent = services.NormalizeContent(currentContent, collection)
 
 	var newContent []byte
 	if art.FrontMatter != nil {
@@ -260,6 +252,8 @@ func GetDiff(c *gin.Context) {
 	} else {
 		newContent = []byte(art.Content)
 	}
+
+	newContent = services.NormalizeContent(newContent, collection)
 
 	tmpDir := os.TempDir()
 	f1, _ := os.CreateTemp(tmpDir, "diff_old_*")
@@ -274,7 +268,7 @@ func GetDiff(c *gin.Context) {
 
 	relPath := filepath.Join("content", art.Path)
 	diffStr, diffType := services.Diff(f1.Name(), f2.Name(), relPath)
-	
+
 	c.JSON(200, gin.H{"diff": diffStr, "type": diffType})
 }
 
@@ -299,7 +293,7 @@ func DeleteArticle(c *gin.Context) {
 
 	// Re-scan or remove from cache
 	// Assuming UpdateCache handles re-scan or we'll fix it
-	services.UpdateCache(req.Path) 
+	services.UpdateCache(req.Path)
 	c.JSON(200, gin.H{"status": "deleted"})
 }
 

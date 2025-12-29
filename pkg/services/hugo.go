@@ -10,6 +10,49 @@ import (
 	"time"
 )
 
+var hugoServerCmd *exec.Cmd
+
+func StartHugoServer() error {
+	if hugoServerCmd != nil && hugoServerCmd.Process != nil {
+		// Check if process is still alive?
+		// For simplicity assume if variable is set, it's running. 
+		// The goroutine below clears it on exit.
+		return nil 
+	}
+
+	fmt.Println("[Hugo] Starting server on :1314...")
+
+	cmd := exec.Command("hugo", "server",
+		"--source", config.RepoPath,
+		"--bind", "127.0.0.1",
+		"--port", "1314",
+		"--baseURL", config.GetAppURL()+config.PreviewURL,
+		"--appendPort=false",
+		"--disableLiveReload", // Disable WS to avoid timeouts on mobile/proxy
+		"-D", // Include drafts
+		"-F", // Include future
+	)
+	
+	// Pipe output to stdout for debugging
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start hugo server: %w", err)
+	}
+
+	hugoServerCmd = cmd
+
+	// Wait in goroutine
+	go func() {
+		state, err := cmd.Process.Wait()
+		fmt.Printf("[Hugo] Server stopped. State: %v, Err: %v\n", state, err)
+		hugoServerCmd = nil
+	}()
+
+	return nil
+}
+
 func BuildSite() (error, string) {
 	start := time.Now()
 	defer func() {

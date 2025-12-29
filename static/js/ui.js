@@ -1,19 +1,56 @@
 // ui.js - 画面描画ロジック
 
-export function switchTab(tabName) {
-    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-    document.getElementById('tab-' + tabName).classList.add('active');
+export function switchView(viewName) {
+    const contentArea = document.getElementById('content-area');
+    contentArea.classList.remove('split-mode');
+    document.getElementById('btn-view-split').classList.remove('active');
+
+    document.getElementById('edit-view').style.display = 'none';
+    document.getElementById('preview-view').style.display = 'none';
     
-    document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
-    // ボタンのハイライト切り替えは、nav内のボタンの順序に依存しないように修正
-    const buttons = {
-        'files': 0,
-        'edit': 1,
-        'preview': 2
-    };
-    const btnIndex = buttons[tabName];
-    if (btnIndex !== undefined) {
-        document.querySelectorAll('nav button')[btnIndex].classList.add('active');
+    if (viewName === 'edit') {
+        document.getElementById('edit-view').style.display = 'flex';
+    } else if (viewName === 'preview') {
+        document.getElementById('preview-view').style.display = 'block';
+    }
+
+    const toggles = document.querySelectorAll('.view-toggle');
+    toggles.forEach(btn => {
+        if (btn.id === 'btn-view-' + viewName) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+}
+
+export function toggleSplitView() {
+    const contentArea = document.getElementById('content-area');
+    const isSplit = contentArea.classList.toggle('split-mode');
+    const splitBtn = document.getElementById('btn-view-split');
+    
+    if (isSplit) {
+        splitBtn.classList.add('active');
+        document.getElementById('btn-view-edit').classList.remove('active');
+        document.getElementById('btn-view-preview').classList.remove('active');
+        
+        // Trigger build since preview is shown
+        if (window.buildAndPreview) window.buildAndPreview();
+    } else {
+        splitBtn.classList.remove('active');
+        switchView('edit');
+    }
+}
+
+export function toggleSidebar() {
+    document.querySelector('aside').classList.toggle('sidebar-open');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    if (backdrop) {
+        if (document.querySelector('aside').classList.contains('sidebar-open')) {
+            backdrop.style.display = 'block';
+        } else {
+            backdrop.style.display = 'none';
+        }
     }
 }
 
@@ -21,7 +58,7 @@ export async function showLoadingEditor() {
     const fmContainer = document.getElementById('fm-container');
     const editor = document.getElementById('editor');
     
-    switchTab('edit');
+    // switchView('edit'); // Removed to preserve current view
     fmContainer.style.display = 'none';
     editor.value = "Loading...";
     editor.disabled = true;
@@ -156,7 +193,27 @@ function getCollectionForPath(path, config) {
 }
 
 function renderFrontMatterForm(fm, path, config, container) {
-    container.innerHTML = '<div style="color:#aaa; font-weight:bold; margin-bottom:10px;">Front Matter</div>';
+    container.innerHTML = '';
+    
+    const details = document.createElement('details');
+    details.style.marginBottom = '10px';
+    
+    const summary = document.createElement('summary');
+    summary.textContent = "Article Settings";
+    summary.style.fontWeight = 'bold';
+    summary.style.cursor = 'pointer';
+    summary.style.padding = '8px';
+    summary.style.backgroundColor = '#2a2a2a';
+    summary.style.color = '#ccc';
+    summary.style.borderRadius = '4px';
+    summary.style.outline = 'none';
+    
+    details.appendChild(summary);
+    
+    const wrapper = document.createElement('div');
+    wrapper.style.padding = '10px';
+    wrapper.style.border = '1px solid #333';
+    wrapper.style.borderTop = 'none';
     
     const fragment = document.createDocumentFragment();
     const collection = getCollectionForPath(path, config);
@@ -178,7 +235,10 @@ function renderFrontMatterForm(fm, path, config, container) {
             renderField(fragment, { name: key, label: key + " (Extra)", widget: widget }, value);
         }
     }
-    container.appendChild(fragment);
+    
+    wrapper.appendChild(fragment);
+    details.appendChild(wrapper);
+    container.appendChild(details);
 }
 
 function renderField(container, field, value) {
@@ -338,6 +398,23 @@ export function showDiffModal(diffHtml) {
     document.getElementById('modal-overlay').style.display = 'flex';
 }
 
+export function toggleHeaderMenu() {
+    document.getElementById("header-menu-dropdown").classList.toggle("show");
+}
+
+// Close the dropdown if the user clicks outside of it
+window.onclick = function(event) {
+    if (!event.target.matches('.mobile-actions button') && !event.target.matches('.mobile-actions button *')) {
+        const dropdowns = document.getElementsByClassName("dropdown-content");
+        for (let i = 0; i < dropdowns.length; i++) {
+            const openDropdown = dropdowns[i];
+            if (openDropdown.classList.contains('show')) {
+                openDropdown.classList.remove('show');
+            }
+        }
+    }
+}
+
 export function showCreationModal(config, onCreate) {
     const overlay = document.getElementById('modal-overlay');
     const header = document.getElementById('modal-header');
@@ -416,7 +493,24 @@ export function showCreationModal(config, onCreate) {
                 const val = input.value.trim();
                 fields[key] = val === "" ? [] : val.split(',').map(s => s.trim());
             } else if (widget === 'datetime') {
-                 fields[key] = input.value; // Keep raw string, backend handles parsing if needed or standard format
+                if (input.value) {
+                    const d = new Date(input.value);
+                    const pad = (n) => (n < 10 ? '0' : '') + n;
+                    const tzo = -d.getTimezoneOffset();
+                    const dif = tzo >= 0 ? '+' : '-';
+                    const offH = pad(Math.floor(Math.abs(tzo) / 60));
+                    const offM = pad(Math.abs(tzo) % 60);
+                    
+                    fields[key] = d.getFullYear() + '-' + 
+                              pad(d.getMonth() + 1) + '-' + 
+                              pad(d.getDate()) + 'T' + 
+                              pad(d.getHours()) + ':' + 
+                              pad(d.getMinutes()) + ':' + 
+                              pad(d.getSeconds()) + 
+                              dif + offH + ':' + offM;
+                } else {
+                    fields[key] = null;
+                }
             } else {
                 fields[key] = input.value;
             }
