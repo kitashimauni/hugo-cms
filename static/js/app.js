@@ -4,6 +4,8 @@ import * as UI from './ui.js';
 let currentPath = "";
 let currentData = null; 
 let cmsConfig = null;
+let autoSaveTimer = null;
+let lastSavedPayload = "";
 
 // 初期化
 init();
@@ -29,6 +31,49 @@ async function init() {
     window.runPublish = runPublish;
     window.resetChanges = resetChanges;
     window.showDiff = showDiff;
+
+    // Auto Save Listeners
+    const editor = document.getElementById('editor');
+    const fmContainer = document.getElementById('fm-container');
+
+    if (editor) editor.addEventListener('input', triggerAutoSave);
+    if (fmContainer) {
+        fmContainer.addEventListener('input', triggerAutoSave);
+        fmContainer.addEventListener('change', triggerAutoSave);
+    }
+}
+
+function triggerAutoSave() {
+    if (!currentPath) return;
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    
+    // Debounce 3 seconds
+    autoSaveTimer = setTimeout(execAutoSave, 3000);
+}
+
+async function execAutoSave() {
+    if (!currentPath) return;
+    
+    const payloadObj = getPayload();
+    const payloadStr = JSON.stringify(payloadObj);
+    
+    if (payloadStr === lastSavedPayload) {
+        return; // No changes
+    }
+
+    const btn = document.querySelector('button[onclick="saveFile()"]');
+    const originalText = btn ? btn.textContent : "Save";
+    if (btn) btn.textContent = "Saving...";
+
+    try {
+        await API.saveArticle(payloadObj);
+        lastSavedPayload = payloadStr;
+        console.log("[AutoSave] Saved:", currentPath);
+    } catch(e) {
+        console.error("[AutoSave] Failed:", e);
+    } finally {
+        if (btn) btn.textContent = originalText;
+    }
 }
 
 async function refreshFileList() {
@@ -68,6 +113,8 @@ async function buildAndPreview() {
 }
 
 async function loadFile(path) {
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    
     currentPath = path;
     const display = document.getElementById('filename-display');
     if(display) display.textContent = path;
@@ -78,6 +125,10 @@ async function loadFile(path) {
         const data = await API.fetchArticle(path);
         currentData = data;
         UI.updateEditorContent(data, path, cmsConfig);
+        
+        // Initialize change tracking
+        lastSavedPayload = JSON.stringify(getPayload());
+        
     } catch(e) {
         UI.showEditorError(e);
     }
@@ -99,6 +150,8 @@ function getPayload() {
 async function saveFile() {
     if(!currentPath) return alert("No file selected");
     
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+
     const btn = document.querySelector('button[onclick="saveFile()"]');
     const originalText = btn.textContent;
     btn.textContent = "Saving...";
@@ -106,6 +159,8 @@ async function saveFile() {
     try {
         const payload = getPayload();
         await API.saveArticle(payload);
+        lastSavedPayload = JSON.stringify(payload);
+        alert("Saved!"); 
     } catch(e) {
         alert("Error saving: " + e);
     } finally {
