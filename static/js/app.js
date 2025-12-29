@@ -22,6 +22,7 @@ async function init() {
     window.switchView = switchView;
     window.toggleSplitView = UI.toggleSplitView;
     window.toggleSidebar = UI.toggleSidebar;
+    window.toggleHeaderMenu = UI.toggleHeaderMenu;
     window.closeModal = UI.closeModal;
     
     // Core Functions

@@ -41,10 +41,22 @@
                 </div>
                 
                 <div class="header-actions">
-                    <button class="action-btn secondary" onclick="resetChanges()">↺ <span>Reset</span></button>
-                    <button class="action-btn secondary" onclick="showDiff()">⚖️ <span>Diff</span></button>
-                    <button class="action-btn danger" onclick="deleteFile()">🗑️ <span>Delete</span></button>
                     <button class="action-btn" onclick="saveFile()">💾 <span>Save</span></button>
+                    
+                    <div class="desktop-actions">
+                        <button class="action-btn secondary" onclick="resetChanges()">↺ <span>Reset</span></button>
+                        <button class="action-btn secondary" onclick="showDiff()">⚖️ <span>Diff</span></button>
+                        <button class="action-btn danger" onclick="deleteFile()">🗑️ <span>Delete</span></button>
+                    </div>
+
+                    <div class="mobile-actions">
+                        <button class="action-btn secondary" onclick="toggleHeaderMenu()">⋮</button>
+                        <div id="header-menu-dropdown" class="dropdown-content">
+                            <button class="dropdown-item" onclick="resetChanges(); toggleHeaderMenu()">↺ Reset</button>
+                            <button class="dropdown-item" onclick="showDiff(); toggleHeaderMenu()">⚖️ Diff</button>
+                            <button class="dropdown-item danger-text" onclick="deleteFile(); toggleHeaderMenu()">🗑️ Delete</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </header>

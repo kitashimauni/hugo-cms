@@ -25,7 +25,16 @@ main { flex: 1; display: flex; flex-direction: column; overflow: hidden; backgro
 /* Header */
 header { height: 50px; background: #252526; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; border-bottom: 1px solid #333; }
 #filename-display { font-size: 14px; color: #ccc; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
-.header-actions { display: flex; gap: 8px; }
+.header-actions { display: flex; gap: 8px; position: relative; }
+.desktop-actions { display: flex; gap: 8px; }
+.mobile-actions { display: none; position: relative; }
+
+/* Dropdown */
+.dropdown-content { display: none; position: absolute; right: 0; top: 100%; margin-top: 5px; background-color: #252526; min-width: 150px; box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.5); z-index: 100; border: 1px solid #333; border-radius: 4px; }
+.dropdown-content.show { display: block; }
+.dropdown-item { color: #ccc; padding: 12px 16px; text-decoration: none; display: block; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font-size: 14px; }
+.dropdown-item:hover { background-color: #333; }
+.danger-text { color: #d67a7a; }
 
 /* Mobile Menu Button */
 #mobile-menu-btn { display: none; margin-right: 10px; padding: 4px 8px; font-size: 18px; line-height: 1; }
@@ -87,6 +96,10 @@ details[open] > summary::before { content: '▾ '; }
     #mobile-menu-btn { display: block; }
     .mobile-only { display: block; }
     
+    /* Actions */
+    .desktop-actions { display: none; }
+    .mobile-actions { display: block; }
+
     /* Disable Split on Mobile */
     #content-area.split-mode #edit-view, #content-area.split-mode #preview-view { width: 100%; }
     #content-area.split-mode #preview-view { display: none !important; }
@@ -94,8 +107,10 @@ details[open] > summary::before { content: '▾ '; }
     
     #filename-display { max-width: 100px; font-size: 12px; }
     
-    .header-actions button span { display: none; } /* Hide text labels */
-    .header-actions button { padding: 6px 8px; font-size: 14px; }
+    /* Keep Save button visible, hide text */
+    .header-actions > .action-btn span { display: none; }
+    .header-actions > .action-btn { padding: 6px 10px; }
+    
     .view-toggles { margin-right: 5px; }
     .view-toggle { padding: 4px 8px; }
     header { padding: 0 10px; }
