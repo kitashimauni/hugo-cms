@@ -237,15 +237,7 @@ func GetDiff(c *gin.Context) {
 		currentContent = []byte("")
 	}
 
-	if len(currentContent) > 0 {
-		fm, body, format, err := services.ParseFrontMatter(currentContent)
-		if err == nil {
-			normalized, err := services.ConstructFileContent(fm, body, format)
-			if err == nil {
-				currentContent = normalized
-			}
-		}
-	}
+	currentContent = services.NormalizeContent(currentContent)
 
 	var newContent []byte
 	if art.FrontMatter != nil {

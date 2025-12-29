@@ -100,7 +100,32 @@ func DeleteFile(targetPath string) error {
 	if fullPath == "" {
 		return fmt.Errorf("invalid path")
 	}
-	return os.Remove(fullPath)
+	if err := os.Remove(fullPath); err != nil {
+		return err
+	}
+
+	// Try to remove empty parent directories (e.g. bundle folders)
+	// But ensure we don't remove top-level collection folders (e.g. content/posts)
+	dir := filepath.Dir(fullPath)
+	contentRoot := filepath.Join(config.RepoPath, "content")
+	
+	rel, err := filepath.Rel(contentRoot, dir)
+	if err != nil {
+		return nil // Should not happen if fullPath is inside contentRoot
+	}
+
+	// If it's root or top-level folder (e.g. "posts"), don't touch
+	if rel == "." || !strings.Contains(rel, string(os.PathSeparator)) {
+		return nil
+	}
+
+	// Check if empty
+	entries, err := os.ReadDir(dir)
+	if err == nil && len(entries) == 0 {
+		os.Remove(dir)
+	}
+
+	return nil
 }
 
 func GetConfig() (map[string]interface{}, error) {
@@ -254,4 +279,19 @@ func ResolvePath(collection models.Collection, fields map[string]interface{}) (s
 	}
 
 	return resolvedPath, nil
+}
+
+func NormalizeContent(content []byte) []byte {
+	if len(content) == 0 {
+		return content
+	}
+	fm, body, format, err := ParseFrontMatter(content)
+	if err != nil {
+		return content
+	}
+	normalized, err := ConstructFileContent(fm, body, format)
+	if err != nil {
+		return content
+	}
+	return normalized
 }
