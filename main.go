@@ -62,6 +62,7 @@ func main() {
 			api.GET("/article", handlers.GetArticle)
 			api.POST("/article", handlers.SaveArticle)
 			api.POST("/create", handlers.CreateArticle)
+			api.POST("/delete", handlers.DeleteArticle)
 			api.POST("/diff", handlers.GetDiff)
 			api.GET("/config", handlers.GetConfig)
 			api.POST("/sync", handlers.HandleSync)

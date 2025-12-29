@@ -278,6 +278,31 @@ func GetDiff(c *gin.Context) {
 	c.JSON(200, gin.H{"diff": diffStr, "type": diffType})
 }
 
+func DeleteArticle(c *gin.Context) {
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid JSON"})
+		return
+	}
+
+	if req.Path == "" || strings.Contains(req.Path, "..") {
+		c.JSON(400, gin.H{"error": "Invalid path"})
+		return
+	}
+
+	if err := services.DeleteFile(req.Path); err != nil {
+		c.JSON(500, gin.H{"error": "Delete failed: " + err.Error()})
+		return
+	}
+
+	// Re-scan or remove from cache
+	// Assuming UpdateCache handles re-scan or we'll fix it
+	services.UpdateCache(req.Path) 
+	c.JSON(200, gin.H{"status": "deleted"})
+}
+
 func GetConfig(c *gin.Context) {
 	cfg, err := services.GetConfig()
 	if err != nil {

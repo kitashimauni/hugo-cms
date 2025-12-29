@@ -24,6 +24,7 @@ async function init() {
     window.loadFile = loadFile;
     window.saveFile = saveFile;
     window.createNewFile = createNewFile;
+    window.deleteFile = deleteFile;
     window.runSync = runSync;
     window.runBuild = runBuild;
     window.runPublish = runPublish;
@@ -80,6 +81,30 @@ async function saveFile() {
         alert("Error saving: " + e);
     } finally {
         btn.textContent = originalText;
+    }
+}
+
+async function deleteFile() {
+    if(!currentPath) return alert("No file selected");
+    
+    if(!confirm("Are you sure you want to delete this article?\nThis action cannot be undone.")) return;
+
+    try {
+        await API.deleteArticle(currentPath);
+        alert("Article deleted.");
+        
+        // Reset UI
+        currentPath = "";
+        currentData = null;
+        document.getElementById('filename-display').textContent = "Select a file...";
+        document.getElementById('editor').value = "";
+        document.getElementById('editor').placeholder = "Select a file to edit...";
+        document.getElementById('fm-container').style.display = 'none';
+        
+        await refreshFileList();
+        UI.switchTab('files'); // Switch back to file list
+    } catch(e) {
+        alert("Delete failed: " + e.message);
     }
 }
 

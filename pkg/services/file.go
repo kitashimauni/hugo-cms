@@ -95,6 +95,14 @@ func ConstructFileContent(fm map[string]interface{}, body string, format string)
 	return buf.Bytes(), nil
 }
 
+func DeleteFile(targetPath string) error {
+	fullPath := SafeJoin(config.RepoPath, "content", targetPath)
+	if fullPath == "" {
+		return fmt.Errorf("invalid path")
+	}
+	return os.Remove(fullPath)
+}
+
 func GetConfig() (map[string]interface{}, error) {
 	configPath := filepath.Join(config.RepoPath, "static/admin/config.yml")
 	content, err := os.ReadFile(configPath)

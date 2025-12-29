@@ -44,6 +44,7 @@ export function updateEditorContent(data, path, config) {
         fmContainer.innerHTML = '';
         editor.value = data.content || "";
     }
+    editor.placeholder = "Write content here...";
 }
 
 export function showEditorError(error) {

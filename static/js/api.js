@@ -51,6 +51,19 @@ export async function createArticle(arg1, arg2) {
     return await res.json();
 }
 
+export async function deleteArticle(path) {
+    const res = await fetch('/api/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ path })
+    });
+    if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Delete failed");
+    }
+    return await res.json();
+}
+
 export async function getDiff(payload) {
     const res = await fetch('/api/diff', {
         method: 'POST',
