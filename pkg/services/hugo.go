@@ -55,7 +55,7 @@ func CreateContent(path string) (error, string) {
 			// Check if target folder matches collection folder
 			// or if target folder is inside collection folder (for nested structures)
 			if strings.HasPrefix(targetFolder, collFolder) {
-				content, err := GenerateContentFromCollection(collection)
+				content, err := GenerateContentFromCollection(collection, nil)
 				if err == nil {
 					// Ensure directory exists
 					if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {

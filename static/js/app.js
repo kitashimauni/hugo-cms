@@ -84,22 +84,31 @@ async function saveFile() {
 }
 
 async function createNewFile() {
-    let path = prompt("Enter file path (e.g., posts/my-new-post.md):", "posts/");
-    if (!path) return;
-
-    if (!path.endsWith(".md") && !path.endsWith(".markdown")) {
-        if(!confirm("Filename does not end with .md. Continue?")) return;
+    if (!cmsConfig) {
+        alert("Config not loaded");
+        return;
     }
 
-    const content = "---\ntitle: New Post\ndraft: true\n---\n";
-
-    try {
-        await API.createArticle(path, content);
-        await refreshFileList();
-        await loadFile(path); 
-    } catch(e) {
-        alert(e.message);
-    }
+    UI.showCreationModal(cmsConfig, async (colName, fields) => {
+        try {
+            const res = await API.createArticle({
+                collection: colName,
+                fields: fields
+            });
+            
+            // res.path is the relative path of the created file
+            if (res.status === 'created') {
+                await refreshFileList();
+                if (res.path) {
+                    await loadFile(res.path);
+                } else {
+                    alert("Created, but path not returned.");
+                }
+            }
+        } catch(e) {
+            alert("Create failed: " + e.message);
+        }
+    });
 }
 
 async function runBuild() {

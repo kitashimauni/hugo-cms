@@ -31,11 +31,18 @@ export async function saveArticle(payload) {
     return await res.json();
 }
 
-export async function createArticle(path, content) {
+export async function createArticle(arg1, arg2) {
+    let body;
+    if (typeof arg1 === 'object') {
+        body = arg1;
+    } else {
+        body = { path: arg1, content: arg2 };
+    }
+
     const res = await fetch('/api/create', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ path, content })
+        body: JSON.stringify(body)
     });
     if (!res.ok) {
         const data = await res.json();
