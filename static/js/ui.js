@@ -1,6 +1,10 @@
 // ui.js - 画面描画ロジック
 
 export function switchView(viewName) {
+    const contentArea = document.getElementById('content-area');
+    contentArea.classList.remove('split-mode');
+    document.getElementById('btn-view-split').classList.remove('active');
+
     document.getElementById('edit-view').style.display = 'none';
     document.getElementById('preview-view').style.display = 'none';
     
@@ -12,12 +16,34 @@ export function switchView(viewName) {
 
     const toggles = document.querySelectorAll('.view-toggle');
     toggles.forEach(btn => {
-        if (btn.textContent.toLowerCase() === viewName) {
+        if (btn.id === 'btn-view-' + viewName) {
             btn.classList.add('active');
         } else {
             btn.classList.remove('active');
         }
     });
+}
+
+export function toggleSplitView() {
+    const contentArea = document.getElementById('content-area');
+    const isSplit = contentArea.classList.toggle('split-mode');
+    const splitBtn = document.getElementById('btn-view-split');
+    
+    if (isSplit) {
+        splitBtn.classList.add('active');
+        document.getElementById('btn-view-edit').classList.remove('active');
+        document.getElementById('btn-view-preview').classList.remove('active');
+        
+        // Trigger build since preview is shown
+        if (window.buildAndPreview) window.buildAndPreview();
+    } else {
+        splitBtn.classList.remove('active');
+        switchView('edit');
+    }
+}
+
+export function toggleSidebar() {
+    document.querySelector('aside').classList.toggle('sidebar-open');
 }
 
 export async function showLoadingEditor() {

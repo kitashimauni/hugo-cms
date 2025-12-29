@@ -24,13 +24,17 @@
 
     <main>
         <header>
-            <div id="filename-display">Select a file...</div>
-            <span id="save-status" style="margin-left: 10px; font-size: 12px; color: #888;"></span>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <button id="mobile-menu-btn" class="action-btn secondary" onclick="toggleSidebar()">☰</button>
+                <div id="filename-display">Select a file...</div>
+                <span id="save-status" style="margin-left: 10px; font-size: 12px; color: #888;"></span>
+            </div>
             
             <div style="display: flex; align-items: center;">
                 <div class="view-toggles">
-                    <button class="view-toggle active" onclick="switchView('edit')">Edit</button>
-                    <button class="view-toggle" onclick="switchView('preview')">Preview</button>
+                    <button class="view-toggle active" id="btn-view-edit" onclick="switchView('edit')">Edit</button>
+                    <button class="view-toggle" id="btn-view-preview" onclick="switchView('preview')">Preview</button>
+                    <button class="view-toggle" id="btn-view-split" onclick="toggleSplitView()">Split</button>
                 </div>
                 
                 <div class="header-actions">

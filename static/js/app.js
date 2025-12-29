@@ -20,6 +20,8 @@ async function init() {
     
     // UI Event Listeners (Global Functions)
     window.switchView = switchView;
+    window.toggleSplitView = UI.toggleSplitView;
+    window.toggleSidebar = UI.toggleSidebar;
     window.closeModal = UI.closeModal;
     
     // Core Functions
@@ -31,6 +33,7 @@ async function init() {
     window.runPublish = runPublish;
     window.resetChanges = resetChanges;
     window.showDiff = showDiff;
+    window.buildAndPreview = buildAndPreview;
 
     // Auto Save Listeners
     const editor = document.getElementById('editor');

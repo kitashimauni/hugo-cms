@@ -2,7 +2,7 @@
 body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; height: 100vh; overflow: hidden; background: #1e1e1e; color: #ddd; }
 
 /* Sidebar */
-aside { width: 300px; background: #252526; display: flex; flex-direction: column; border-right: 1px solid #333; }
+aside { width: 300px; background: #252526; display: flex; flex-direction: column; border-right: 1px solid #333; transition: transform 0.3s ease; z-index: 50; }
 .sidebar-header { padding: 15px; border-bottom: 1px solid #333; font-weight: bold; background: #1e1e1e; display: flex; justify-content: space-between; align-items: center; }
 .sidebar-actions { padding: 10px; display: flex; gap: 5px; border-bottom: 1px solid #333; flex-wrap: wrap; }
 .sidebar-actions button { flex: 1; }
@@ -15,12 +15,15 @@ aside { width: 300px; background: #252526; display: flex; flex-direction: column
 .file-item.active { background: #37373d; border-left: 3px solid #007acc; }
 
 /* Main Content */
-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #1e1e1e; }
+main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: #1e1e1e; position: relative; }
 
 /* Header */
 header { height: 50px; background: #252526; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; border-bottom: 1px solid #333; }
-#filename-display { font-size: 14px; color: #ccc; font-weight: bold; }
+#filename-display { font-size: 14px; color: #ccc; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px; }
 .header-actions { display: flex; gap: 8px; }
+
+/* Mobile Menu Button */
+#mobile-menu-btn { display: none; margin-right: 10px; padding: 4px 8px; font-size: 18px; line-height: 1; }
 
 /* Tab/View Toggle in Header */
 .view-toggles { display: flex; background: #1e1e1e; border-radius: 4px; padding: 2px; margin-right: 15px; }
@@ -28,17 +31,21 @@ header { height: 50px; background: #252526; display: flex; align-items: center; 
 .view-toggle.active { background: #333; color: white; }
 
 /* Content Area */
-#content-area { flex: 1; position: relative; overflow: hidden; }
+#content-area { flex: 1; position: relative; overflow: hidden; display: flex; }
 
 /* Editor View */
-#edit-view { display: flex; flex-direction: column; height: 100%; }
+#edit-view { display: flex; flex-direction: column; height: 100%; width: 100%; }
 #fm-container { background: #252526; padding: 15px; border-bottom: 1px solid #333; max-height: 40%; overflow-y: auto; }
 #editor-wrapper { flex: 1; position: relative; }
 textarea { width: 100%; height: 100%; background: #1e1e1e; color: #d4d4d4; border: none; padding: 20px; font-family: Consolas, "Courier New", monospace; font-size: 15px; box-sizing: border-box; resize: none; outline: none; line-height: 1.5; }
 
 /* Preview View */
-#preview-view { display: none; height: 100%; background: white; }
+#preview-view { display: none; height: 100%; width: 100%; background: white; }
 iframe { width: 100%; height: 100%; border: none; }
+
+/* Split Mode */
+#content-area.split-mode #edit-view { width: 50%; border-right: 1px solid #333; display: flex !important; }
+#content-area.split-mode #preview-view { width: 50%; display: block !important; }
 
 /* Utils */
 .action-btn { background: #0e639c; color: white; border: none; padding: 6px 12px; border-radius: 3px; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -67,3 +74,20 @@ iframe { width: 100%; height: 100%; border: none; }
 details > summary { list-style: none; padding: 8px 12px; background: #2a2a2a; cursor: pointer; font-size: 12px; font-weight: bold; color: #ccc; border-bottom: 1px solid #333; }
 details > summary::before { content: '▸ '; display: inline-block; width: 15px; }
 details[open] > summary::before { content: '▾ '; }
+
+/* Responsive Styles */
+@media (max-width: 768px) {
+    aside { position: absolute; height: 100%; transform: translateX(-100%); }
+    aside.sidebar-open { transform: translateX(0); box-shadow: 2px 0 10px rgba(0,0,0,0.5); }
+    #mobile-menu-btn { display: block; }
+    
+    /* Disable Split on Mobile */
+    #content-area.split-mode #edit-view, #content-area.split-mode #preview-view { width: 100%; }
+    #content-area.split-mode #preview-view { display: none !important; } /* Force hide preview in split on mobile? Or stack? */
+    /* Let's just hide split button on mobile or make it behave like toggle */
+    #btn-view-split { display: none; }
+    
+    #filename-display { max-width: 120px; }
+    .header-actions button span { display: none; } /* Hide text if we had it, but we don't have icons yet */
+    .header-actions button { padding: 6px 8px; font-size: 11px; }
+}
