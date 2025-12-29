@@ -17,7 +17,7 @@ async function init() {
     await refreshFileList();
     
     // UI Event Listeners (Global Functions)
-    window.switchTab = UI.switchTab;
+    window.switchView = switchView;
     window.closeModal = UI.closeModal;
     
     // Core Functions
@@ -26,7 +26,6 @@ async function init() {
     window.createNewFile = createNewFile;
     window.deleteFile = deleteFile;
     window.runSync = runSync;
-    window.runBuild = runBuild;
     window.runPublish = runPublish;
     window.resetChanges = resetChanges;
     window.showDiff = showDiff;
@@ -39,11 +38,41 @@ async function refreshFileList() {
     }
 }
 
+async function switchView(viewName) {
+    if (viewName === 'preview') {
+        if (!currentPath) {
+            alert("No file selected.");
+            return;
+        }
+        await buildAndPreview();
+    }
+    UI.switchView(viewName);
+}
+
+async function buildAndPreview() {
+    // Show some loading indicator if possible, or just wait
+    // We could add a spinner to the preview area
+    const frame = document.getElementById('preview-frame');
+    // frame.src = "about:blank"; // Optional: clear or show loader
+
+    try {
+        const data = await API.runBuild();
+        if (data.status === 'ok') {
+            UI.setPreviewUrl(currentPath);
+        } else {
+            alert("Build Error:\n" + data.log);
+        }
+    } catch(e) {
+        alert("Network Error during build");
+    }
+}
+
 async function loadFile(path) {
     currentPath = path;
-    document.getElementById('filename-display').textContent = path;
+    const display = document.getElementById('filename-display');
+    if(display) display.textContent = path;
 
-    await UI.showLoadingEditor();
+    await UI.showLoadingEditor(); // This switches to 'edit' view
 
     try {
         const data = await API.fetchArticle(path);
@@ -102,7 +131,7 @@ async function deleteFile() {
         document.getElementById('fm-container').style.display = 'none';
         
         await refreshFileList();
-        UI.switchTab('files'); // Switch back to file list
+        // Stay in edit view but empty
     } catch(e) {
         alert("Delete failed: " + e.message);
     }
@@ -121,7 +150,6 @@ async function createNewFile() {
                 fields: fields
             });
             
-            // res.path is the relative path of the created file
             if (res.status === 'created') {
                 await refreshFileList();
                 if (res.path) {
@@ -134,27 +162,6 @@ async function createNewFile() {
             alert("Create failed: " + e.message);
         }
     });
-}
-
-async function runBuild() {
-    const btn = document.querySelector('button[onclick="runBuild()"]');
-    btn.textContent = "Building...";
-    btn.disabled = true;
-
-    try {
-        const data = await API.runBuild();
-        if (data.status === 'ok') {
-            UI.setPreviewUrl(currentPath);
-            UI.switchTab('preview', document.querySelectorAll('nav button')[2]);
-        } else {
-            alert("Build Error:\n" + data.log);
-        }
-    } catch(e) {
-        alert("Network Error");
-    } finally {
-        btn.textContent = "Build";
-        btn.disabled = false;
-    }
 }
 
 async function runSync() {
@@ -183,6 +190,7 @@ async function runPublish() {
     if(!confirm("この記事の変更をGitHubにPushして公開しますか？")) return;
 
     const btn = document.querySelector('button[onclick="runPublish()"]');
+    const originalText = btn.textContent;
     btn.textContent = "Pushing...";
     btn.disabled = true;
 
@@ -196,7 +204,7 @@ async function runPublish() {
     } catch(e) {
         alert("Network Error");
     } finally {
-        btn.textContent = "Publish";
+        btn.textContent = originalText;
         btn.disabled = false;
     }
 }

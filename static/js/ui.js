@@ -1,27 +1,30 @@
 // ui.js - 画面描画ロジック
 
-export function switchTab(tabName) {
-    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-    document.getElementById('tab-' + tabName).classList.add('active');
+export function switchView(viewName) {
+    document.getElementById('edit-view').style.display = 'none';
+    document.getElementById('preview-view').style.display = 'none';
     
-    document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
-    // ボタンのハイライト切り替えは、nav内のボタンの順序に依存しないように修正
-    const buttons = {
-        'files': 0,
-        'edit': 1,
-        'preview': 2
-    };
-    const btnIndex = buttons[tabName];
-    if (btnIndex !== undefined) {
-        document.querySelectorAll('nav button')[btnIndex].classList.add('active');
+    if (viewName === 'edit') {
+        document.getElementById('edit-view').style.display = 'flex';
+    } else if (viewName === 'preview') {
+        document.getElementById('preview-view').style.display = 'block';
     }
+
+    const toggles = document.querySelectorAll('.view-toggle');
+    toggles.forEach(btn => {
+        if (btn.textContent.toLowerCase() === viewName) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
 }
 
 export async function showLoadingEditor() {
     const fmContainer = document.getElementById('fm-container');
     const editor = document.getElementById('editor');
     
-    switchTab('edit');
+    switchView('edit');
     fmContainer.style.display = 'none';
     editor.value = "Loading...";
     editor.disabled = true;

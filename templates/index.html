@@ -2,59 +2,65 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hugo Home CMS</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 
-    <header>
-        <div id="filename-display" style="flex:1;">Select a file...</div>
-        <div style="display:flex; gap:5px;">
-            <button class="action-btn" style="background:#c0392b;" onclick="deleteFile()">Delete</button>
-            <button class="action-btn" style="background:#555;" onclick="resetChanges()">Reset</button>
-            <button class="action-btn" style="background:#888;" onclick="showDiff()">Diff</button>
-            <button class="action-btn" onclick="saveFile()">Save</button>
-            <button class="action-btn" style="background:#2da44e;" onclick="runBuild()">Preview</button>
-            <button class="action-btn" style="background:#d73a49; font-weight:bold;" onclick="runPublish()">Publish</button>
+    <aside>
+        <div class="sidebar-header">
+            Hugo CMS
         </div>
-    </header>
+        <div class="sidebar-actions">
+            <button class="action-btn success" onclick="createNewFile()">+ New File</button>
+            <button class="action-btn secondary" onclick="runSync()">🔄 Sync</button>
+        </div>
+        <div id="file-list">Loading...</div>
+        <div class="sidebar-footer">
+            <button class="action-btn danger" style="width: 100%;" onclick="runPublish()">🚀 Publish</button>
+        </div>
+    </aside>
 
-    <div id="main-container">
-        <div id="tab-files" class="tab-content active">
-            <div style="padding:10px; border-bottom:1px solid #444; display:flex; justify-content:flex-end; gap:10px;">
-                <button class="action-btn" style="background:#2da44e;" onclick="createNewFile()">+ New File</button>
-                <button class="action-btn" style="background:#666;" onclick="runSync()">🔄 Sync form GitHub</button>
+    <main>
+        <header>
+            <div id="filename-display">Select a file...</div>
+            
+            <div style="display: flex; align-items: center;">
+                <div class="view-toggles">
+                    <button class="view-toggle active" onclick="switchView('edit')">Edit</button>
+                    <button class="view-toggle" onclick="switchView('preview')">Preview</button>
+                </div>
+                
+                <div class="header-actions">
+                    <button class="action-btn secondary" onclick="resetChanges()">Reset</button>
+                    <button class="action-btn secondary" onclick="showDiff()">Diff</button>
+                    <button class="action-btn danger" onclick="deleteFile()">Delete</button>
+                    <button class="action-btn" onclick="saveFile()">Save</button>
+                </div>
             </div>
-            <div id="file-list">Loading...</div>
-        </div>
+        </header>
 
-        <div id="tab-edit" class="tab-content">
-            <div id="edit-container">
+        <div id="content-area">
+            <div id="edit-view">
                 <div id="fm-container" style="display:none;"></div>
                 <div id="editor-wrapper">
                     <textarea id="editor" spellcheck="false" placeholder="Select a file to edit..."></textarea>
                 </div>
             </div>
-        </div>
 
-        <div id="tab-preview" class="tab-content">
-            <iframe id="preview-frame" src=""></iframe>
+            <div id="preview-view">
+                <iframe id="preview-frame" src=""></iframe>
+            </div>
         </div>
-    </div>
-
-    <nav>
-        <button data-tab="files" onclick="switchTab('files', this)" class="active">Files</button>
-        <button data-tab="edit" onclick="switchTab('edit', this)">Edit</button>
-        <button data-tab="preview" onclick="switchTab('preview', this)">Preview</button>
-    </nav>
+    </main>
 
     <!-- Modal -->
     <div id="modal-overlay">
         <div id="modal-box">
             <div id="modal-header">
                 <span style="font-weight:bold;">Diff</span>
-                <button class="action-btn" style="background:#444;" onclick="closeModal()">Close</button>
+                <button class="action-btn secondary" onclick="closeModal()">Close</button>
             </div>
             <div id="modal-body"></div>
         </div>
