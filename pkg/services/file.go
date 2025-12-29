@@ -368,6 +368,40 @@ func applyCollectionDefaultsInPlace(fm map[string]interface{}, collection *model
 	}
 }
 
+func normalizeOptionalListFields(fm map[string]interface{}, collection *models.Collection) {
+	if fm == nil || collection == nil {
+		return
+	}
+	for _, field := range collection.Fields {
+		if field.Widget != "list" {
+			continue
+		}
+
+		val, exists := fm[field.Name]
+		if !exists || val == nil {
+			fm[field.Name] = []interface{}{}
+			continue
+		}
+
+		switch list := val.(type) {
+		case []interface{}:
+			normalized := make([]interface{}, len(list))
+			for i := range list {
+				normalized[i] = sanitizeFrontMatterValue(list[i])
+			}
+			fm[field.Name] = normalized
+		case []string:
+			normalized := make([]interface{}, len(list))
+			for i := range list {
+				normalized[i] = list[i]
+			}
+			fm[field.Name] = normalized
+		default:
+			fm[field.Name] = []interface{}{sanitizeFrontMatterValue(list)}
+		}
+	}
+}
+
 func canonicalizeFrontMatterForJSON(fm map[string]interface{}) map[string]interface{} {
 	if fm == nil {
 		return nil
@@ -423,6 +457,7 @@ func canonicalizeContentForDiff(content []byte, collection *models.Collection) (
 
 	sanitized := sanitizeFrontMatter(fm)
 	applyCollectionDefaultsInPlace(sanitized, collection)
+	normalizeOptionalListFields(sanitized, collection)
 
 	canonicalFM, err := json.Marshal(canonicalizeFrontMatterForJSON(sanitized))
 	if err != nil {
