@@ -28,6 +28,7 @@ func StartHugoServer() error {
 		"--port", "1314",
 		"--baseURL", config.GetAppURL()+config.PreviewURL,
 		"--appendPort=false",
+		"--disableLiveReload", // Disable WS to avoid timeouts on mobile/proxy
 		"-D", // Include drafts
 		"-F", // Include future
 	)

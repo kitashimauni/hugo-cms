@@ -67,6 +67,16 @@ function updateSaveStatus(msg, type) {
     else el.style.color = '#888';
 }
 
+function reloadPreviewIfNeeded() {
+    const isPreview = document.getElementById('btn-view-preview').classList.contains('active');
+    const isSplit = document.getElementById('btn-view-split').classList.contains('active');
+    
+    if (isPreview || isSplit) {
+        // Use setPreviewUrl to refresh with timestamp
+        if (currentPath) UI.setPreviewUrl(currentPath);
+    }
+}
+
 async function execAutoSave() {
     if (!currentPath) return;
     
@@ -84,6 +94,7 @@ async function execAutoSave() {
         lastSavedPayload = payloadStr;
         console.log("[AutoSave] Saved:", currentPath);
         updateSaveStatus("Saved", "saved");
+        reloadPreviewIfNeeded();
     } catch(e) {
         console.error("[AutoSave] Failed:", e);
         updateSaveStatus("Save Failed", "error");
@@ -180,6 +191,7 @@ async function saveFile() {
         await API.saveArticle(payload);
         lastSavedPayload = JSON.stringify(payload);
         updateSaveStatus("Saved", "saved");
+        reloadPreviewIfNeeded();
     } catch(e) {
         alert("Error saving: " + e);
         updateSaveStatus("Error", "error");
