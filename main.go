@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/handlers"
+	"hugo-cms/pkg/services"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"strings"
 
@@ -40,7 +43,19 @@ func main() {
 
 	// Static Files & Templates
 	r.LoadHTMLGlob("templates/*")
-	r.Static(config.PreviewURL, config.PublicPath)
+	// Start Hugo Server
+	if err := services.StartHugoServer(); err != nil {
+		fmt.Printf("Failed to start Hugo Server: %v\n", err)
+	}
+
+	// Proxy /preview/ to Hugo Server
+	previewProxyURL, _ := url.Parse("http://127.0.0.1:1314")
+	proxy := httputil.NewSingleHostReverseProxy(previewProxyURL)
+	
+	r.Any(config.PreviewURL+"*path", func(c *gin.Context) {
+		proxy.ServeHTTP(c.Writer, c.Request)
+	})
+	
 	r.Static("/static", "./static") // Serve static assets (css/js)
 
 	// --- Auth Routes ---

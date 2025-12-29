@@ -14,12 +14,9 @@ import (
 )
 
 func HandleBuild(c *gin.Context) {
-	err, log := services.BuildSite()
-	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "log": log})
-		return
-	}
-	c.JSON(200, gin.H{"status": "ok", "log": log})
+	// With Hugo Server running, explicit build is not needed for preview.
+	// We just return OK so frontend logic continues.
+	c.JSON(200, gin.H{"status": "ok", "log": "Preview managed by Hugo Server"})
 }
 
 func HandleSync(c *gin.Context) {
