@@ -68,13 +68,8 @@ function updateSaveStatus(msg, type) {
 }
 
 function reloadPreviewIfNeeded() {
-    const isPreview = document.getElementById('btn-view-preview').classList.contains('active');
-    const isSplit = document.getElementById('btn-view-split').classList.contains('active');
-    
-    if (isPreview || isSplit) {
-        // Use setPreviewUrl to refresh with timestamp
-        if (currentPath) UI.setPreviewUrl(currentPath);
-    }
+    // Always refresh preview in background so it's ready when switched
+    if (currentPath) UI.setPreviewUrl(currentPath);
 }
 
 async function execAutoSave() {
@@ -109,32 +104,16 @@ async function refreshFileList() {
 }
 
 async function switchView(viewName) {
+    // Trigger save to ensure preview is up to date
     if (viewName === 'preview') {
-        if (!currentPath) {
-            alert("No file selected.");
-            return;
-        }
-        await buildAndPreview();
+        await execAutoSave();
     }
     UI.switchView(viewName);
 }
 
 async function buildAndPreview() {
-    // Show some loading indicator if possible, or just wait
-    // We could add a spinner to the preview area
-    const frame = document.getElementById('preview-frame');
-    // frame.src = "about:blank"; // Optional: clear or show loader
-
-    try {
-        const data = await API.runBuild();
-        if (data.status === 'ok') {
-            UI.setPreviewUrl(currentPath);
-        } else {
-            alert("Build Error:\n" + data.log);
-        }
-    } catch(e) {
-        alert("Network Error during build");
-    }
+    // Deprecated: logic moved to autoSave/background load
+    await execAutoSave();
 }
 
 async function loadFile(path) {
@@ -154,12 +133,8 @@ async function loadFile(path) {
         // Initialize change tracking
         lastSavedPayload = JSON.stringify(getPayload());
 
-        // Refresh preview if active
-        const isPreview = document.getElementById('btn-view-preview').classList.contains('active');
-        const isSplit = document.getElementById('btn-view-split').classList.contains('active');
-        if (isPreview || isSplit) {
-            await buildAndPreview();
-        }
+        // Always load preview in background
+        UI.setPreviewUrl(path);
         
     } catch(e) {
         UI.showEditorError(e);
