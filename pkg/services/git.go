@@ -83,6 +83,20 @@ func SyncRepo(token string) (error, string) {
 }
 
 func PublishChanges(token, path string) (error, string) {
+	// Ensure Git Identity
+	// We set this locally for the repo so it doesn't affect global config
+	exec.Command("git", "config", "user.email", "bot@hugo-cms.local").Run() 
+	// Make sure we run it in the repo dir if needed, but 'git config' without --global works in current dir usually.
+	// However, safer to specify Dir if we are not sure about CWD.
+	
+	cmdConfigEmail := exec.Command("git", "config", "user.email", "bot@hugo-cms.local")
+	cmdConfigEmail.Dir = config.RepoPath
+	cmdConfigEmail.Run()
+
+	cmdConfigName := exec.Command("git", "config", "user.name", "Hugo CMS Bot")
+	cmdConfigName.Dir = config.RepoPath
+	cmdConfigName.Run()
+
 	var addCmd *exec.Cmd
 	var msg string
 
