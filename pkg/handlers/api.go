@@ -34,7 +34,23 @@ func HandleSync(c *gin.Context) {
 func HandlePublish(c *gin.Context) {
 	session := sessions.Default(c)
 	token := session.Get("access_token").(string)
-	err, log := services.PublishRepo(token)
+
+	var req struct {
+		Path string `json:"path"`
+	}
+	// Try to bind JSON. If it fails (e.g. empty body), we assume full publish (Path="")
+	c.ShouldBindJSON(&req)
+
+	gitPath := ""
+	if req.Path != "" {
+		// Convert content-relative path to repo-relative path
+		// e.g. "posts/abc.md" -> "content/posts/abc.md"
+		// We use Join to be OS agnostic, but git expects forward slashes.
+		// git.go's PublishChanges might need to handle ToSlash, but let's do it here.
+		gitPath = filepath.ToSlash(filepath.Join("content", req.Path))
+	}
+
+	err, log := services.PublishChanges(token, gitPath)
 	if err != nil {
 		c.JSON(500, gin.H{"status": "error", "log": log})
 		return

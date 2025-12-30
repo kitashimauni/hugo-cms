@@ -42,6 +42,7 @@
                 
                 <div class="header-actions">
                     <button class="action-btn" onclick="saveFile()">💾 <span>Save</span></button>
+                    <button class="action-btn" style="background-color: #6f42c1;" onclick="publishFile()">🚀 <span>Publish</span></button>
                     
                     <div class="desktop-actions">
                         <button class="action-btn secondary" onclick="resetChanges()">↺ <span>Reset</span></button>
@@ -52,6 +53,7 @@
                     <div class="mobile-actions">
                         <button class="action-btn secondary" onclick="toggleHeaderMenu()">⋮</button>
                         <div id="header-menu-dropdown" class="dropdown-content">
+                            <button class="dropdown-item" onclick="publishFile(); toggleHeaderMenu()">🚀 Publish</button>
                             <button class="dropdown-item" onclick="resetChanges(); toggleHeaderMenu()">↺ Reset</button>
                             <button class="dropdown-item" onclick="showDiff(); toggleHeaderMenu()">⚖️ Diff</button>
                             <button class="dropdown-item danger-text" onclick="deleteFile(); toggleHeaderMenu()">🗑️ Delete</button>

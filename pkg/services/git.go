@@ -82,16 +82,48 @@ func SyncRepo(token string) (error, string) {
 	return err, log
 }
 
-func PublishRepo(token string) (error, string) {
-	addCmd := exec.Command("git", "add", ".")
+func PublishChanges(token, path string) (error, string) {
+	var addCmd *exec.Cmd
+	var msg string
+
+	if path != "" {
+		// Single file publish
+		// We need the full path relative to repo root.
+		// Usually path coming from frontend is like "posts/my-article.md" (content relative)
+		// But let's assume the handler passes the correct relative path for git add.
+		// Wait, Handler receives "path" which is usually relative to "content" dir for articles.
+		// git add needs path relative to repo root.
+		// So we should prepend "content/" if it's not there?
+		// Actually, let's rely on the caller to provide the correct repo-relative path,
+		// OR we handle it here.
+		// In CreateArticle, we saw logic: services.SafeJoin(config.RepoPath, "content", art.Path)
+		// So the frontend usually sends "posts/foo.md".
+		// Git add needs "content/posts/foo.md".
+		
+		// To be safe, let's just take the path as is from argument. 
+		// The Handler should ensure it is correct.
+		
+		addCmd = exec.Command("git", "add", path)
+		msg = fmt.Sprintf("Update %s via HomeCMS", path)
+	} else {
+		// Publish all
+		addCmd = exec.Command("git", "add", ".")
+		msg = fmt.Sprintf("Update via HomeCMS: %s", time.Now().Format("2006-01-02 15:04:05"))
+	}
+
 	addCmd.Dir = config.RepoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return err, string(out)
 	}
-	msg := fmt.Sprintf("Update via HomeCMS: %s", time.Now().Format("2006-01-02 15:04:05"))
+
 	commitCmd := exec.Command("git", "commit", "-m", msg)
 	commitCmd.Dir = config.RepoPath
+	// Ignore error if nothing to commit (e.g. only adding file that is already same in index?)
+	// But usually git add would stage it.
+	// If "nothing to commit", commitCmd.Run() returns exit code 1.
+	// We might want to proceed to push anyway (maybe local commits exist).
 	commitCmd.Run()
+
 	return ExecuteGitWithToken(config.RepoPath, token, "push", "origin", "main")
 }
 
