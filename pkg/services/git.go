@@ -113,18 +113,28 @@ func PublishChanges(token, path string) (error, string) {
 
 	addCmd.Dir = config.RepoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
-		return err, string(out)
+		return err, fmt.Sprintf("Git Add Failed: %s\nOutput: %s", err.Error(), string(out))
 	}
 
 	commitCmd := exec.Command("git", "commit", "-m", msg)
 	commitCmd.Dir = config.RepoPath
-	// Ignore error if nothing to commit (e.g. only adding file that is already same in index?)
-	// But usually git add would stage it.
-	// If "nothing to commit", commitCmd.Run() returns exit code 1.
-	// We might want to proceed to push anyway (maybe local commits exist).
-	commitCmd.Run()
+	commitOut, commitErr := commitCmd.CombinedOutput()
+	
+	// If commit fails, we should check if it's because there were no changes.
+	// However, for explicit publish, we usually expect changes.
+	// But let's log it regardless.
+	commitLog := string(commitOut)
+	if commitErr != nil {
+		// If "nothing to commit" is in output, it might not be a fatal error for the flow,
+		// but for a "Publish this file" action, it's suspicious if we expected a change.
+		// We'll verify this by appending to the log.
+		commitLog = fmt.Sprintf("Commit Warning/Error: %s\nOutput: %s", commitErr.Error(), commitLog)
+	}
 
-	return ExecuteGitWithToken(config.RepoPath, token, "push", "origin", "main")
+	err, pushLog := ExecuteGitWithToken(config.RepoPath, token, "push", "origin", "main")
+	
+	fullLog := fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\n%s\n\n--- Git Push ---\n%s", commitLog, pushLog)
+	return err, fullLog
 }
 
 func Diff(f1Path, f2Path, relPath string) (string, string) {
