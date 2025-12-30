@@ -274,7 +274,7 @@ async function runPublish(path = null) {
     try {
         const data = await API.runPublish(path);
         if(data.status === 'ok') {
-            alert("Published Successfully! 🚀\nCloudflare Pages will deploy shortly.");
+            alert("Published Successfully! 🚀\nCloudflare Pages will deploy shortly.\n\n" + data.log);
         } else {
             alert("Publish Error:\n" + data.log);
         }
