@@ -85,10 +85,10 @@ func SyncRepo(token string) (error, string) {
 func PublishChanges(token, path string) (error, string) {
 	// Ensure Git Identity
 	// We set this locally for the repo so it doesn't affect global config
-	exec.Command("git", "config", "user.email", "bot@hugo-cms.local").Run() 
+	exec.Command("git", "config", "user.email", "bot@hugo-cms.local").Run()
 	// Make sure we run it in the repo dir if needed, but 'git config' without --global works in current dir usually.
 	// However, safer to specify Dir if we are not sure about CWD.
-	
+
 	cmdConfigEmail := exec.Command("git", "config", "user.email", "bot@hugo-cms.local")
 	cmdConfigEmail.Dir = config.RepoPath
 	cmdConfigEmail.Run()
@@ -113,10 +113,10 @@ func PublishChanges(token, path string) (error, string) {
 		// In CreateArticle, we saw logic: services.SafeJoin(config.RepoPath, "content", art.Path)
 		// So the frontend usually sends "posts/foo.md".
 		// Git add needs "content/posts/foo.md".
-		
-		// To be safe, let's just take the path as is from argument. 
+
+		// To be safe, let's just take the path as is from argument.
 		// The Handler should ensure it is correct.
-		
+
 		addCmd = exec.Command("git", "add", path)
 		msg = fmt.Sprintf("Update %s via HomeCMS", path)
 	} else {
@@ -133,7 +133,7 @@ func PublishChanges(token, path string) (error, string) {
 	commitCmd := exec.Command("git", "commit", "-m", msg)
 	commitCmd.Dir = config.RepoPath
 	commitOut, commitErr := commitCmd.CombinedOutput()
-	
+
 	// If commit fails, we should check if it's because there were no changes.
 	// However, for explicit publish, we usually expect changes.
 	// But let's log it regardless.
@@ -146,7 +146,7 @@ func PublishChanges(token, path string) (error, string) {
 	}
 
 	err, pushLog := ExecuteGitWithToken(config.RepoPath, token, "push", "origin", "main")
-	
+
 	fullLog := fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\n%s\n\n--- Git Push ---\n%s", commitLog, pushLog)
 	return err, fullLog
 }
