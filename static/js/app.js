@@ -32,6 +32,7 @@ async function init() {
     window.deleteFile = deleteFile;
     window.runSync = runSync;
     window.runPublish = runPublish;
+    window.publishFile = publishFile;
     window.resetChanges = resetChanges;
     window.showDiff = showDiff;
     window.buildAndPreview = buildAndPreview;
@@ -247,28 +248,54 @@ async function runSync() {
     }
 }
 
-async function runPublish() {
-    if(!confirm("この記事の変更をGitHubにPushして公開しますか？")) return;
+async function runPublish(path = null) {
+    const isSingle = !!path;
+    const msg = isSingle 
+        ? "このファイルの変更をGitHubにPushして公開しますか？" 
+        : "全ての変更をGitHubにPushして公開しますか？";
+    
+    if(!confirm(msg)) return;
 
-    const btn = document.querySelector('button[onclick="runPublish()"]');
-    const originalText = btn.textContent;
-    btn.textContent = "Pushing...";
-    btn.disabled = true;
+    let btnSelector = 'button[onclick="runPublish()"]';
+    if (isSingle) {
+        // Since buttons might have different onclicks in dropdown vs header, we try to find one of them
+        btnSelector = 'button[onclick="publishFile()"], button[onclick="publishFile(); toggleHeaderMenu()"]';
+    }
+
+    // Try to find at least one button to show loading state
+    const btn = document.querySelector(btnSelector);
+    let originalText = "";
+    if (btn) {
+        originalText = btn.innerHTML;
+        btn.innerHTML = isSingle ? "🚀..." : "Pushing...";
+        btn.disabled = true;
+    }
 
     try {
-        const data = await API.runPublish();
+        const data = await API.runPublish(path);
         if(data.status === 'ok') {
-            alert("Published Successfully! 🚀\nCloudflare Pages will deploy shortly.");
+            alert("Published Successfully! 🚀\nCloudflare Pages will deploy shortly.\n\n" + data.log);
         } else {
             alert("Publish Error:\n" + data.log);
         }
     } catch(e) {
         alert("Network Error");
     } finally {
-        btn.textContent = originalText;
-        btn.disabled = false;
+        if (btn) {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
     }
 }
+
+async function publishFile() {
+    if (!currentPath) {
+        alert("No file selected");
+        return;
+    }
+    await runPublish(currentPath);
+}
+
 
 async function resetChanges() {
     if(!currentPath) return;

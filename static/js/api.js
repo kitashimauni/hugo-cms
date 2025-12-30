@@ -83,7 +83,12 @@ export async function runSync() {
     return await res.json();
 }
 
-export async function runPublish() {
-    const res = await fetch('/api/publish', { method: 'POST' });
+export async function runPublish(path = null) {
+    const options = { method: 'POST' };
+    if (path) {
+        options.headers = { 'Content-Type': 'application/json' };
+        options.body = JSON.stringify({ path });
+    }
+    const res = await fetch('/api/publish', options);
     return await res.json();
 }
