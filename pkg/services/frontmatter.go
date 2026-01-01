@@ -192,13 +192,15 @@ func sanitizeFrontMatterValue(value interface{}) interface{} {
 		return float64(v)
 	case int32:
 		return float64(v)
+	case time.Time:
+		return v.Truncate(time.Second)
 	case string:
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			return t
+			return t.Truncate(time.Second)
 		}
 		// Also try common date-only format YYYY-MM-DD
 		if t, err := time.Parse("2006-01-02", v); err == nil {
-			return t
+			return t.Truncate(time.Second)
 		}
 		return v
 	default:
