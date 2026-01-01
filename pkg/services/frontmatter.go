@@ -119,7 +119,7 @@ func GenerateContentFromCollection(collection models.Collection, overrides map[s
 		} else {
 			switch field.Widget {
 			case "datetime":
-				fm[field.Name] = time.Now().Format(time.RFC3339)
+				fm[field.Name] = time.Now()
 			case "boolean":
 				fm[field.Name] = false
 			case "list":
@@ -192,6 +192,15 @@ func sanitizeFrontMatterValue(value interface{}) interface{} {
 		return float64(v)
 	case int32:
 		return float64(v)
+	case string:
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			return t
+		}
+		// Also try common date-only format YYYY-MM-DD
+		if t, err := time.Parse("2006-01-02", v); err == nil {
+			return t
+		}
+		return v
 	default:
 		return v
 	}
