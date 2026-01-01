@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"net/http"
 	"strings"
 
@@ -31,12 +33,35 @@ func LoginPage(c *gin.Context) {
 	c.HTML(http.StatusOK, "login.html", nil)
 }
 
+func generateStateOauth() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)
+}
+
 func GithubLogin(c *gin.Context) {
-	url := config.OauthConf.AuthCodeURL("state", oauth2.AccessTypeOffline)
+	state := generateStateOauth()
+	session := sessions.Default(c)
+	session.Set("oauth_state", state)
+	session.Save()
+
+	url := config.OauthConf.AuthCodeURL(state, oauth2.AccessTypeOffline)
 	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
 func AuthCallback(c *gin.Context) {
+	session := sessions.Default(c)
+	retrievedState := session.Get("oauth_state")
+	queryState := c.Query("state")
+
+	if retrievedState != queryState {
+		c.String(http.StatusBadRequest, "Invalid OAuth State")
+		return
+	}
+
+	// Remove state from session
+	session.Delete("oauth_state")
+
 	code := c.Query("code")
 	token, err := config.OauthConf.Exchange(context.Background(), code)
 	if err != nil {
@@ -44,7 +69,6 @@ func AuthCallback(c *gin.Context) {
 		return
 	}
 
-	session := sessions.Default(c)
 	session.Set("access_token", token.AccessToken)
 	session.Save()
 
