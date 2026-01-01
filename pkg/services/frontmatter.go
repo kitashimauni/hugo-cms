@@ -54,20 +54,20 @@ func ConstructFileContent(fm map[string]interface{}, body string, format string)
 	var buf bytes.Buffer
 	switch format {
 	case "yaml":
-		buf.WriteString("---")
+		buf.WriteString("---\n")
 		enc := yaml.NewEncoder(&buf)
 		enc.SetIndent(2)
 		if err := enc.Encode(normalizedFM); err != nil {
 			return nil, err
 		}
-		buf.WriteString("---")
+		buf.WriteString("---\n")
 	case "toml":
-		buf.WriteString("+++")
+		buf.WriteString("+++\n")
 		enc := toml.NewEncoder(&buf)
 		if err := enc.Encode(normalizedFM); err != nil {
 			return nil, err
 		}
-		buf.WriteString("+++")
+		buf.WriteString("+++\n")
 	case "json":
 		enc := json.NewEncoder(&buf)
 		enc.SetIndent("", "  ")
@@ -81,7 +81,7 @@ func ConstructFileContent(fm map[string]interface{}, body string, format string)
 
 	if body != "" {
 		buf.WriteString("\n")
-		buf.WriteString(body)
+		buf.WriteString(strings.Trim(body, "\r\n"))
 		buf.WriteString("\n")
 	}
 
@@ -398,6 +398,6 @@ func canonicalizeContentForDiff(content []byte, collection *models.Collection) (
 		return nil, "", err
 	}
 
-	normalizedBody := strings.TrimSpace(normalizeLineEndings(body))
+	normalizedBody := strings.Trim(normalizeLineEndings(body), "\n")
 	return canonicalFM, normalizedBody, nil
 }
