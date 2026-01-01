@@ -147,6 +147,11 @@ func PublishChanges(token, path string) (error, string) {
 
 	err, pushLog := ExecuteGitWithToken(config.RepoPath, token, "push", "origin", "main")
 
+	// Invalidate cache after successful publish to refresh dirty status
+	if err == nil {
+		InvalidateCache()
+	}
+
 	fullLog := fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\n%s\n\n--- Git Push ---\n%s", commitLog, pushLog)
 	return err, fullLog
 }

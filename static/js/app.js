@@ -2,7 +2,7 @@ import * as API from './api.js';
 import * as UI from './ui.js';
 
 let currentPath = "";
-let currentData = null; 
+let currentData = null;
 let cmsConfig = null;
 let autoSaveTimer = null;
 let lastSavedPayload = "";
@@ -13,18 +13,18 @@ init();
 async function init() {
     try {
         cmsConfig = await API.fetchConfig();
-    } catch(e) {
+    } catch (e) {
         console.error("Config fetch failed", e);
     }
     await refreshFileList();
-    
+
     // UI Event Listeners (Global Functions)
     window.switchView = switchView;
     window.toggleSplitView = UI.toggleSplitView;
     window.toggleSidebar = UI.toggleSidebar;
     window.toggleHeaderMenu = UI.toggleHeaderMenu;
     window.closeModal = UI.closeModal;
-    
+
     // Core Functions
     window.loadFile = loadFile;
     window.saveFile = saveFile;
@@ -51,7 +51,7 @@ async function init() {
 function triggerAutoSave() {
     if (!currentPath) return;
     if (autoSaveTimer) clearTimeout(autoSaveTimer);
-    
+
     // Debounce 3 seconds
     autoSaveTimer = setTimeout(execAutoSave, 3000);
 }
@@ -63,7 +63,7 @@ function updateSaveStatus(msg, type) {
     if (type === 'saving') el.style.color = '#e2c08d';
     else if (type === 'saved') {
         el.style.color = '#81b181';
-        setTimeout(() => { if(el.textContent === msg) el.textContent = ''; }, 2000);
+        setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2000);
     }
     else if (type === 'error') el.style.color = '#d67a7a';
     else el.style.color = '#888';
@@ -76,10 +76,10 @@ function reloadPreviewIfNeeded() {
 
 async function execAutoSave() {
     if (!currentPath) return;
-    
+
     const payloadObj = getPayload();
     const payloadStr = JSON.stringify(payloadObj);
-    
+
     if (payloadStr === lastSavedPayload) {
         return; // No changes
     }
@@ -92,7 +92,7 @@ async function execAutoSave() {
         console.log("[AutoSave] Saved:", currentPath);
         updateSaveStatus("Saved", "saved");
         reloadPreviewIfNeeded();
-    } catch(e) {
+    } catch (e) {
         console.error("[AutoSave] Failed:", e);
         updateSaveStatus("Save Failed", "error");
     }
@@ -120,10 +120,10 @@ async function buildAndPreview() {
 
 async function loadFile(path) {
     if (autoSaveTimer) clearTimeout(autoSaveTimer);
-    
+
     currentPath = path;
     const display = document.getElementById('filename-display');
-    if(display) display.textContent = path;
+    if (display) display.textContent = path;
 
     await UI.showLoadingEditor(); // This updates editor text but doesn't force switch view
 
@@ -131,14 +131,14 @@ async function loadFile(path) {
         const data = await API.fetchArticle(path);
         currentData = data;
         UI.updateEditorContent(data, path, cmsConfig);
-        
+
         // Initialize change tracking
         lastSavedPayload = JSON.stringify(getPayload());
 
         // Always load preview in background
         UI.setPreviewUrl(path);
-        
-    } catch(e) {
+
+    } catch (e) {
         UI.showEditorError(e);
     }
 }
@@ -157,8 +157,8 @@ function getPayload() {
 }
 
 async function saveFile() {
-    if(!currentPath) return alert("No file selected");
-    
+    if (!currentPath) return alert("No file selected");
+
     if (autoSaveTimer) clearTimeout(autoSaveTimer);
 
     updateSaveStatus("Saving...", "saving");
@@ -169,21 +169,21 @@ async function saveFile() {
         lastSavedPayload = JSON.stringify(payload);
         updateSaveStatus("Saved", "saved");
         reloadPreviewIfNeeded();
-    } catch(e) {
+    } catch (e) {
         alert("Error saving: " + e);
         updateSaveStatus("Error", "error");
     }
 }
 
 async function deleteFile() {
-    if(!currentPath) return alert("No file selected");
-    
-    if(!confirm("Are you sure you want to delete this article?\nThis action cannot be undone.")) return;
+    if (!currentPath) return alert("No file selected");
+
+    if (!confirm("Are you sure you want to delete this article?\nThis action cannot be undone.")) return;
 
     try {
         await API.deleteArticle(currentPath);
         alert("Article deleted.");
-        
+
         // Reset UI
         currentPath = "";
         currentData = null;
@@ -191,10 +191,10 @@ async function deleteFile() {
         document.getElementById('editor').value = "";
         document.getElementById('editor').placeholder = "Select a file to edit...";
         document.getElementById('fm-container').style.display = 'none';
-        
+
         await refreshFileList();
         // Stay in edit view but empty
-    } catch(e) {
+    } catch (e) {
         alert("Delete failed: " + e.message);
     }
 }
@@ -211,7 +211,7 @@ async function createNewFile() {
                 collection: colName,
                 fields: fields
             });
-            
+
             if (res.status === 'created') {
                 await refreshFileList();
                 if (res.path) {
@@ -220,28 +220,28 @@ async function createNewFile() {
                     alert("Created, but path not returned.");
                 }
             }
-        } catch(e) {
+        } catch (e) {
             alert("Create failed: " + e.message);
         }
     });
 }
 
 async function runSync() {
-    if(!confirm("GitHubから最新の状態を取得しますか？\n（ローカルの未保存の変更は注意してください）")) return; 
-    
+    if (!confirm("GitHubから最新の状態を取得しますか？\n（ローカルの未保存の変更は注意してください）")) return;
+
     const btn = document.querySelector('button[onclick="runSync()"]');
     const originalText = btn.textContent;
     btn.textContent = "Syncing...";
-    
+
     try {
         const data = await API.runSync();
-        if(data.status === 'ok') {
+        if (data.status === 'ok') {
             alert("Sync Complete!\n" + data.log);
             await refreshFileList();
         } else {
             alert("Sync Error:\n" + data.log);
         }
-    } catch(e) {
+    } catch (e) {
         alert("Network Error");
     } finally {
         btn.textContent = originalText;
@@ -250,11 +250,11 @@ async function runSync() {
 
 async function runPublish(path = null) {
     const isSingle = !!path;
-    const msg = isSingle 
-        ? "このファイルの変更をGitHubにPushして公開しますか？" 
+    const msg = isSingle
+        ? "このファイルの変更をGitHubにPushして公開しますか？"
         : "全ての変更をGitHubにPushして公開しますか？";
-    
-    if(!confirm(msg)) return;
+
+    if (!confirm(msg)) return;
 
     let btnSelector = 'button[onclick="runPublish()"]';
     if (isSingle) {
@@ -273,12 +273,14 @@ async function runPublish(path = null) {
 
     try {
         const data = await API.runPublish(path);
-        if(data.status === 'ok') {
+        if (data.status === 'ok') {
             alert("Published Successfully! 🚀\nCloudflare Pages will deploy shortly.\n\n" + data.log);
+            // Refresh file list to update dirty flags
+            await refreshFileList();
         } else {
             alert("Publish Error:\n" + data.log);
         }
-    } catch(e) {
+    } catch (e) {
         alert("Network Error");
     } finally {
         if (btn) {
@@ -298,23 +300,23 @@ async function publishFile() {
 
 
 async function resetChanges() {
-    if(!currentPath) return;
-    if(!confirm("Are you sure you want to discard all changes?")) return;
+    if (!currentPath) return;
+    if (!confirm("Are you sure you want to discard all changes?")) return;
     await loadFile(currentPath);
 }
 
 async function showDiff() {
-    if(!currentPath) return;
+    if (!currentPath) return;
     const payload = getPayload();
-    
+
     const data = await API.getDiff(payload);
-    
+
     let html = data.diff.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     html = html.split('\n').map(line => {
-        if(line.startsWith('+')) return `<span class="diff-added">${line}</span>`;
-        if(line.startsWith('-')) return `<span class="diff-removed">${line}</span>`;
+        if (line.startsWith('+')) return `<span class="diff-added">${line}</span>`;
+        if (line.startsWith('-')) return `<span class="diff-removed">${line}</span>`;
         return line;
     }).join('\n');
-    
+
     UI.showDiffModal(html);
 }

@@ -185,6 +185,13 @@ func sanitizeFrontMatterValue(value interface{}) interface{} {
 			slice[i] = sanitizeFrontMatterValue(v[i])
 		}
 		return slice
+	case int64:
+		// Normalize int64 to float64 for consistent JSON comparison
+		return float64(v)
+	case int:
+		return float64(v)
+	case int32:
+		return float64(v)
 	default:
 		return v
 	}
@@ -249,6 +256,17 @@ func canonicalizeFrontMatterForJSON(fm map[string]interface{}) map[string]interf
 	return canonical
 }
 
+// formatTimeForComparison formats time consistently for comparison.
+// Uses RFC3339 without nanoseconds if they are zero, otherwise RFC3339Nano.
+// Hugo expects format like: 2025-12-10T00:00:00+09:00
+func formatTimeForComparison(t time.Time) string {
+	utc := t.UTC()
+	if utc.Nanosecond() == 0 {
+		return utc.Format(time.RFC3339)
+	}
+	return utc.Format(time.RFC3339Nano)
+}
+
 func canonicalizeValueForJSON(value interface{}) interface{} {
 	switch v := value.(type) {
 	case map[string]interface{}:
@@ -270,7 +288,33 @@ func canonicalizeValueForJSON(value interface{}) interface{} {
 		}
 		return slice
 	case time.Time:
-		return v.UTC().Format(time.RFC3339Nano)
+		return formatTimeForComparison(v)
+	case toml.LocalDateTime:
+		return formatTimeForComparison(v.AsTime(time.UTC))
+	case toml.LocalDate:
+		return v.AsTime(time.UTC).UTC().Format("2006-01-02")
+	case toml.LocalTime:
+		return v.String()
+	case int64:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int32:
+		return float64(v)
+	case string:
+		// Try to parse string as date/time for normalization
+		// Hugo uses RFC3339 format: 2025-12-10T00:00:00+09:00
+		if parsed, err := time.Parse(time.RFC3339, v); err == nil {
+			return formatTimeForComparison(parsed)
+		}
+		if parsed, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			return formatTimeForComparison(parsed)
+		}
+		// Also try common date-only format
+		if parsed, err := time.Parse("2006-01-02", v); err == nil {
+			return parsed.UTC().Format("2006-01-02")
+		}
+		return v
 	default:
 		return v
 	}
