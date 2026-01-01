@@ -7,6 +7,10 @@ let cmsConfig = null;
 let autoSaveTimer = null;
 let lastSavedPayload = "";
 
+export function getCurrentPath() {
+    return currentPath;
+}
+
 export function setConfig(cfg) {
     cmsConfig = cfg;
 }
