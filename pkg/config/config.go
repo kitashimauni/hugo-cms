@@ -13,6 +13,18 @@ const (
 	RepoPath   = "./repo"
 	PublicPath = "./repo/public"
 	PreviewURL = "/preview/"
+
+	// Hugo Server settings
+	HugoServerPort = "1314"
+	HugoServerBind = "127.0.0.1"
+
+	// Cache settings
+	CacheConcurrency  = 20   // Number of concurrent goroutines for cache operations
+	FileReadHeadLimit = 4096 // Bytes to read from file head for front matter parsing
+
+	// Git settings
+	GitUserEmail = "bot@hugo-cms.local"
+	GitUserName  = "Hugo CMS Bot"
 )
 
 var OauthConf *oauth2.Config
