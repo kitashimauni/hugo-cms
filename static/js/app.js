@@ -1,250 +1,88 @@
 import * as API from './api.js';
 import * as UI from './ui.js';
+import * as Editor from './editor.js';
 
-let currentPath = "";
-let currentData = null;
+// Global State
 let cmsConfig = null;
-let autoSaveTimer = null;
-let lastSavedPayload = "";
 
-// 初期化
+// Initialization
 init();
 
 async function init() {
     try {
         cmsConfig = await API.fetchConfig();
+        Editor.setConfig(cmsConfig);
     } catch (e) {
         console.error("Config fetch failed", e);
+        UI.showToast("Failed to load configuration", "error");
     }
-    await refreshFileList();
 
-    // UI Event Listeners (Global Functions)
+    await refreshFileList();
+    Editor.initAutoSave();
+
+    // --- Expose functions to Global Scope for HTML onclick handlers ---
+
+    // UI
     window.switchView = switchView;
     window.toggleSplitView = UI.toggleSplitView;
     window.toggleSidebar = UI.toggleSidebar;
     window.toggleHeaderMenu = UI.toggleHeaderMenu;
     window.closeModal = UI.closeModal;
 
-    // Core Functions
-    window.loadFile = loadFile;
-    window.saveFile = saveFile;
-    window.createNewFile = createNewFile;
-    window.deleteFile = deleteFile;
+    // Editor
+    window.loadFile = Editor.loadFile;
+    window.saveFile = Editor.saveFile;
+    window.createNewFile = () => Editor.createNewFile(refreshFileList);
+    window.deleteFile = () => Editor.deleteFile(refreshFileList);
+    window.resetChanges = Editor.resetChanges;
+    window.showDiff = Editor.showDiff;
+
+    // Actions
     window.runSync = runSync;
     window.runPublish = runPublish;
     window.publishFile = publishFile;
-    window.resetChanges = resetChanges;
-    window.showDiff = showDiff;
-    window.buildAndPreview = buildAndPreview;
 
-    // Auto Save Listeners
-    const editor = document.getElementById('editor');
-    const fmContainer = document.getElementById('fm-container');
-
-    if (editor) editor.addEventListener('input', triggerAutoSave);
-    if (fmContainer) {
-        fmContainer.addEventListener('input', triggerAutoSave);
-        fmContainer.addEventListener('change', triggerAutoSave);
-    }
-}
-
-function triggerAutoSave() {
-    if (!currentPath) return;
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
-
-    // Debounce 3 seconds
-    autoSaveTimer = setTimeout(execAutoSave, 3000);
-}
-
-function updateSaveStatus(msg, type) {
-    const el = document.getElementById('save-status');
-    if (!el) return;
-    el.textContent = msg;
-    if (type === 'saving') el.style.color = '#e2c08d';
-    else if (type === 'saved') {
-        el.style.color = '#81b181';
-        setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 2000);
-    }
-    else if (type === 'error') el.style.color = '#d67a7a';
-    else el.style.color = '#888';
-}
-
-function reloadPreviewIfNeeded() {
-    // Always refresh preview in background so it's ready when switched
-    if (currentPath) UI.setPreviewUrl(currentPath);
-}
-
-async function execAutoSave() {
-    if (!currentPath) return;
-
-    const payloadObj = getPayload();
-    const payloadStr = JSON.stringify(payloadObj);
-
-    if (payloadStr === lastSavedPayload) {
-        return; // No changes
-    }
-
-    updateSaveStatus("Auto Saving...", "saving");
-
-    try {
-        await API.saveArticle(payloadObj);
-        lastSavedPayload = payloadStr;
-        console.log("[AutoSave] Saved:", currentPath);
-        updateSaveStatus("Saved", "saved");
-        reloadPreviewIfNeeded();
-    } catch (e) {
-        console.error("[AutoSave] Failed:", e);
-        updateSaveStatus("Save Failed", "error");
-    }
+    console.log("Hugo CMS Initialized");
 }
 
 async function refreshFileList() {
-    const files = await API.fetchArticles();
-    if (files) {
-        UI.renderFileList(files, cmsConfig);
+    try {
+        const files = await API.fetchArticles();
+        if (files) {
+            UI.renderFileList(files, cmsConfig);
+        }
+    } catch (e) {
+        UI.showToast("Failed to fetch file list", "error");
     }
 }
 
 async function switchView(viewName) {
     // Trigger save to ensure preview is up to date
     if (viewName === 'preview') {
-        await execAutoSave();
+        await Editor.execAutoSave();
     }
     UI.switchView(viewName);
-}
-
-async function buildAndPreview() {
-    // Deprecated: logic moved to autoSave/background load
-    await execAutoSave();
-}
-
-async function loadFile(path) {
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
-
-    currentPath = path;
-    const display = document.getElementById('filename-display');
-    if (display) display.textContent = path;
-
-    await UI.showLoadingEditor(); // This updates editor text but doesn't force switch view
-
-    try {
-        const data = await API.fetchArticle(path);
-        currentData = data;
-        UI.updateEditorContent(data, path, cmsConfig);
-
-        // Initialize change tracking
-        lastSavedPayload = JSON.stringify(getPayload());
-
-        // Always load preview in background
-        UI.setPreviewUrl(path);
-
-    } catch (e) {
-        UI.showEditorError(e);
-    }
-}
-
-function getPayload() {
-    const payload = { path: currentPath };
-    const fm = UI.collectFrontMatter();
-    if (fm) {
-        payload.frontmatter = fm;
-        payload.body = document.getElementById('editor').value;
-        payload.format = currentData.format || 'yaml';
-    } else {
-        payload.content = document.getElementById('editor').value;
-    }
-    return payload;
-}
-
-async function saveFile() {
-    if (!currentPath) return alert("No file selected");
-
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
-
-    updateSaveStatus("Saving...", "saving");
-
-    try {
-        const payload = getPayload();
-        await API.saveArticle(payload);
-        lastSavedPayload = JSON.stringify(payload);
-        updateSaveStatus("Saved", "saved");
-        reloadPreviewIfNeeded();
-    } catch (e) {
-        alert("Error saving: " + e);
-        updateSaveStatus("Error", "error");
-    }
-}
-
-async function deleteFile() {
-    if (!currentPath) return alert("No file selected");
-
-    if (!confirm("Are you sure you want to delete this article?\nThis action cannot be undone.")) return;
-
-    try {
-        await API.deleteArticle(currentPath);
-        alert("Article deleted.");
-
-        // Reset UI
-        currentPath = "";
-        currentData = null;
-        document.getElementById('filename-display').textContent = "Select a file...";
-        document.getElementById('editor').value = "";
-        document.getElementById('editor').placeholder = "Select a file to edit...";
-        document.getElementById('fm-container').style.display = 'none';
-
-        await refreshFileList();
-        // Stay in edit view but empty
-    } catch (e) {
-        alert("Delete failed: " + e.message);
-    }
-}
-
-async function createNewFile() {
-    if (!cmsConfig) {
-        alert("Config not loaded");
-        return;
-    }
-
-    UI.showCreationModal(cmsConfig, async (colName, fields) => {
-        try {
-            const res = await API.createArticle({
-                collection: colName,
-                fields: fields
-            });
-
-            if (res.status === 'created') {
-                await refreshFileList();
-                if (res.path) {
-                    await loadFile(res.path);
-                } else {
-                    alert("Created, but path not returned.");
-                }
-            }
-        } catch (e) {
-            alert("Create failed: " + e.message);
-        }
-    });
 }
 
 async function runSync() {
     if (!confirm("GitHubから最新の状態を取得しますか？\n（ローカルの未保存の変更は注意してください）")) return;
 
     const btn = document.querySelector('button[onclick="runSync()"]');
-    const originalText = btn.textContent;
-    btn.textContent = "Syncing...";
+    const originalText = btn ? btn.textContent : "Sync";
+    if (btn) btn.textContent = "Syncing...";
 
     try {
         const data = await API.runSync();
         if (data.status === 'ok') {
-            alert("Sync Complete!\n" + data.log);
+            UI.showToast("Sync Complete", "success");
             await refreshFileList();
         } else {
-            alert("Sync Error:\n" + data.log);
+            UI.showToast("Sync Error: " + data.log, "error");
         }
     } catch (e) {
-        alert("Network Error");
+        UI.showToast("Network Error", "error");
     } finally {
-        btn.textContent = originalText;
+        if (btn) btn.textContent = originalText;
     }
 }
 
@@ -256,13 +94,12 @@ async function runPublish(path = null) {
 
     if (!confirm(msg)) return;
 
+    // UI Feedback
     let btnSelector = 'button[onclick="runPublish()"]';
     if (isSingle) {
-        // Since buttons might have different onclicks in dropdown vs header, we try to find one of them
         btnSelector = 'button[onclick="publishFile()"], button[onclick="publishFile(); toggleHeaderMenu()"]';
     }
 
-    // Try to find at least one button to show loading state
     const btn = document.querySelector(btnSelector);
     let originalText = "";
     if (btn) {
@@ -274,14 +111,14 @@ async function runPublish(path = null) {
     try {
         const data = await API.runPublish(path);
         if (data.status === 'ok') {
-            alert("Published Successfully! 🚀\nCloudflare Pages will deploy shortly.\n\n" + data.log);
+            UI.showToast("Published Successfully! 🚀", "success");
             // Refresh file list to update dirty flags
             await refreshFileList();
         } else {
-            alert("Publish Error:\n" + data.log);
+            UI.showToast("Publish Error: " + data.log, "error");
         }
     } catch (e) {
-        alert("Network Error");
+        UI.showToast("Network Error", "error");
     } finally {
         if (btn) {
             btn.innerHTML = originalText;
@@ -291,32 +128,10 @@ async function runPublish(path = null) {
 }
 
 async function publishFile() {
+    const currentPath = Editor.getCurrentPath();
     if (!currentPath) {
-        alert("No file selected");
+        UI.showToast("No file selected", "warning");
         return;
     }
     await runPublish(currentPath);
-}
-
-
-async function resetChanges() {
-    if (!currentPath) return;
-    if (!confirm("Are you sure you want to discard all changes?")) return;
-    await loadFile(currentPath);
-}
-
-async function showDiff() {
-    if (!currentPath) return;
-    const payload = getPayload();
-
-    const data = await API.getDiff(payload);
-
-    let html = data.diff.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    html = html.split('\n').map(line => {
-        if (line.startsWith('+')) return `<span class="diff-added">${line}</span>`;
-        if (line.startsWith('-')) return `<span class="diff-removed">${line}</span>`;
-        return line;
-    }).join('\n');
-
-    UI.showDiffModal(html);
 }

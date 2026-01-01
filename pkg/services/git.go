@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -46,6 +47,11 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 		fmt.Printf("[Git] Cmd: %v, Duration: %v\n", args, time.Since(start))
 	}()
 
+	// 1. Prepare secure remote URL (username only, no password)
+	// We want to use the token for auth, but via ASKPASS.
+	// We need to ensure the remote URL in the command triggers ASKPASS.
+	// Typically, https://username@host/repo... works, asking for password.
+	
 	cmdGetUrl := exec.Command("git", "remote", "get-url", "origin")
 	cmdGetUrl.Dir = dir
 	outUrl, err := cmdGetUrl.Output()
@@ -57,8 +63,12 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	if err != nil {
 		return "Invalid remote url", err
 	}
-	u.User = url.UserPassword("oauth2", token)
+	
+	// Set generic username "oauth2" and remove password to force prompt
+	u.User = url.User("oauth2")
 	authenticatedUrl := u.String()
+
+	// 2. Prepare Arguments
 	newArgs := make([]string, len(args))
 	copy(newArgs, args)
 	for i, v := range newArgs {
@@ -66,16 +76,69 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 			newArgs[i] = authenticatedUrl
 		}
 	}
+
+	// 3. Setup ASKPASS
+	scriptPath, err := createAskPassScript()
+	if err != nil {
+		return "Failed to setup auth helper", err
+	}
+	defer os.Remove(scriptPath)
+
 	cmd := exec.Command("git", newArgs...)
 	cmd.Dir = dir
+
+	// 4. Set Environment
+	env := os.Environ()
+	env = append(env,
+		"GIT_ASKPASS="+scriptPath,
+		"GIT_TOKEN="+token,
+		"GIT_TERMINAL_PROMPT=0", // Disable interactive prompt fallback
+	)
+	cmd.Env = env
+
 	output, err := cmd.CombinedOutput()
+	
+	// 5. Sanitize Log
+	// The token is not in args, but might be in verbose output if any.
 	safeLog := strings.ReplaceAll(string(output), token, "***")
+	// Also hide the URL with username just in case user considers it sensitive, though it's generic
 	safeLog = strings.ReplaceAll(safeLog, authenticatedUrl, remoteUrl)
+
 	return safeLog, err
 }
 
+func createAskPassScript() (string, error) {
+	var scriptContent string
+	var pattern string
+
+	if runtime.GOOS == "windows" {
+		scriptContent = "@echo %GIT_TOKEN%"
+		pattern = "git-askpass-*.bat"
+	} else {
+		scriptContent = "#!/bin/sh\necho \"$GIT_TOKEN\""
+		pattern = "git-askpass-*.sh"
+	}
+
+	f, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(scriptContent); err != nil {
+		return "", err
+	}
+
+	if runtime.GOOS != "windows" {
+		if err := f.Chmod(0700); err != nil {
+			return "", err
+		}
+	}
+	return f.Name(), nil
+}
+
 func SyncRepo(token string) (string, error) {
-	log, err := ExecuteGitWithToken(config.RepoPath, token, "pull", "origin", "main")
+	log, err := ExecuteGitWithToken(config.RepoPath, token, "pull", config.GitRemote, config.GitBranch)
 	if err == nil {
 		InvalidateCache()
 	}
@@ -103,21 +166,6 @@ func PublishChanges(token, path string) (string, error) {
 
 	if path != "" {
 		// Single file publish
-		// We need the full path relative to repo root.
-		// Usually path coming from frontend is like "posts/my-article.md" (content relative)
-		// But let's assume the handler passes the correct relative path for git add.
-		// Wait, Handler receives "path" which is usually relative to "content" dir for articles.
-		// git add needs path relative to repo root.
-		// So we should prepend "content/" if it's not there?
-		// Actually, let's rely on the caller to provide the correct repo-relative path,
-		// OR we handle it here.
-		// In CreateArticle, we saw logic: services.SafeJoin(config.RepoPath, "content", art.Path)
-		// So the frontend usually sends "posts/foo.md".
-		// Git add needs "content/posts/foo.md".
-
-		// To be safe, let's just take the path as is from argument.
-		// The Handler should ensure it is correct.
-
 		addCmd = exec.Command("git", "add", path)
 		msg = fmt.Sprintf("Update %s via HomeCMS", path)
 	} else {
@@ -135,18 +183,12 @@ func PublishChanges(token, path string) (string, error) {
 	commitCmd.Dir = config.RepoPath
 	commitOut, commitErr := commitCmd.CombinedOutput()
 
-	// If commit fails, we should check if it's because there were no changes.
-	// However, for explicit publish, we usually expect changes.
-	// But let's log it regardless.
 	commitLog := string(commitOut)
 	if commitErr != nil {
-		// If "nothing to commit" is in output, it might not be a fatal error for the flow,
-		// but for a "Publish this file" action, it's suspicious if we expected a change.
-		// We'll verify this by appending to the log.
 		commitLog = fmt.Sprintf("Commit Warning/Error: %s\nOutput: %s", commitErr.Error(), commitLog)
 	}
 
-	pushLog, err := ExecuteGitWithToken(config.RepoPath, token, "push", "origin", "main")
+	pushLog, err := ExecuteGitWithToken(config.RepoPath, token, "push", config.GitRemote, config.GitBranch)
 
 	// Invalidate cache after successful publish to refresh dirty status
 	if err == nil {
