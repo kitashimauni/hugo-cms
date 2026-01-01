@@ -31,7 +31,10 @@ async function init() {
 
     // Editor
     window.loadFile = Editor.loadFile;
-    window.saveFile = Editor.saveFile;
+    window.saveFile = async () => {
+        await Editor.saveFile();
+        await refreshFileList();
+    };
     window.createNewFile = () => Editor.createNewFile(refreshFileList);
     window.deleteFile = () => Editor.deleteFile(refreshFileList);
     window.resetChanges = Editor.resetChanges;
