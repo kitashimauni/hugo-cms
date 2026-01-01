@@ -53,7 +53,7 @@ func GetArticlesCache() ([]models.Article, error) {
 
 	articles := make([]models.Article, len(paths))
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 20) // Limit concurrency
+	sem := make(chan struct{}, config.CacheConcurrency) // Limit concurrency
 
 	for i, path := range paths {
 		wg.Add(1)
@@ -68,8 +68,8 @@ func GetArticlesCache() ([]models.Article, error) {
 			repoRelPath = filepath.ToSlash(repoRelPath)
 			isDirty := dirtyFiles[repoRelPath]
 
-			// Read file to get title (Limit to 4KB for performance)
-			content, err := readHead(path, 4096)
+			// Read file to get title (Limit for performance)
+			content, err := readHead(path, config.FileReadHeadLimit)
 			title := relPath // Default to path
 			if err == nil {
 				fm, _, _, err := ParseFrontMatter(content)
@@ -191,7 +191,7 @@ func UpdateCache(relPath string) {
 	}
 
 	// For now assuming update/create means it exists or we handle error
-	content, err := readHead(fullPath, 4096)
+	content, err := readHead(fullPath, config.FileReadHeadLimit)
 	if err != nil {
 		return // Ignore error, maybe remove from cache if not found?
 	}

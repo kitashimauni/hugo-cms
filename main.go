@@ -49,13 +49,13 @@ func main() {
 	}
 
 	// Proxy /preview/ to Hugo Server
-	previewProxyURL, _ := url.Parse("http://127.0.0.1:1314")
+	previewProxyURL, _ := url.Parse("http://" + config.HugoServerBind + ":" + config.HugoServerPort)
 	proxy := httputil.NewSingleHostReverseProxy(previewProxyURL)
-	
+
 	r.Any(config.PreviewURL+"*path", func(c *gin.Context) {
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
-	
+
 	r.Static("/static", "./static") // Serve static assets (css/js)
 
 	// --- Auth Routes ---

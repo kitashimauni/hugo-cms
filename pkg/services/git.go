@@ -40,7 +40,7 @@ func CheckSemanticDiff(relPath string) (bool, error) {
 	return headBody != diskBody, nil
 }
 
-func ExecuteGitWithToken(dir, token string, args ...string) (error, string) {
+func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	start := time.Now()
 	defer func() {
 		fmt.Printf("[Git] Cmd: %v, Duration: %v\n", args, time.Since(start))
@@ -50,12 +50,12 @@ func ExecuteGitWithToken(dir, token string, args ...string) (error, string) {
 	cmdGetUrl.Dir = dir
 	outUrl, err := cmdGetUrl.Output()
 	if err != nil {
-		return err, "Failed to get remote url"
+		return "Failed to get remote url", err
 	}
 	remoteUrl := strings.TrimSpace(string(outUrl))
 	u, err := url.Parse(remoteUrl)
 	if err != nil {
-		return err, "Invalid remote url"
+		return "Invalid remote url", err
 	}
 	u.User = url.UserPassword("oauth2", token)
 	authenticatedUrl := u.String()
@@ -71,31 +71,32 @@ func ExecuteGitWithToken(dir, token string, args ...string) (error, string) {
 	output, err := cmd.CombinedOutput()
 	safeLog := strings.ReplaceAll(string(output), token, "***")
 	safeLog = strings.ReplaceAll(safeLog, authenticatedUrl, remoteUrl)
-	return err, safeLog
+	return safeLog, err
 }
 
-func SyncRepo(token string) (error, string) {
-	err, log := ExecuteGitWithToken(config.RepoPath, token, "pull", "origin", "main")
+func SyncRepo(token string) (string, error) {
+	log, err := ExecuteGitWithToken(config.RepoPath, token, "pull", "origin", "main")
 	if err == nil {
 		InvalidateCache()
 	}
-	return err, log
+	return log, err
 }
 
-func PublishChanges(token, path string) (error, string) {
+func PublishChanges(token, path string) (string, error) {
 	// Ensure Git Identity
 	// We set this locally for the repo so it doesn't affect global config
-	exec.Command("git", "config", "user.email", "bot@hugo-cms.local").Run()
-	// Make sure we run it in the repo dir if needed, but 'git config' without --global works in current dir usually.
-	// However, safer to specify Dir if we are not sure about CWD.
 
-	cmdConfigEmail := exec.Command("git", "config", "user.email", "bot@hugo-cms.local")
+	cmdConfigEmail := exec.Command("git", "config", "user.email", config.GitUserEmail)
 	cmdConfigEmail.Dir = config.RepoPath
-	cmdConfigEmail.Run()
+	if err := cmdConfigEmail.Run(); err != nil {
+		fmt.Printf("[Git] Warning: failed to set user.email: %v\n", err)
+	}
 
-	cmdConfigName := exec.Command("git", "config", "user.name", "Hugo CMS Bot")
+	cmdConfigName := exec.Command("git", "config", "user.name", config.GitUserName)
 	cmdConfigName.Dir = config.RepoPath
-	cmdConfigName.Run()
+	if err := cmdConfigName.Run(); err != nil {
+		fmt.Printf("[Git] Warning: failed to set user.name: %v\n", err)
+	}
 
 	var addCmd *exec.Cmd
 	var msg string
@@ -127,7 +128,7 @@ func PublishChanges(token, path string) (error, string) {
 
 	addCmd.Dir = config.RepoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
-		return err, fmt.Sprintf("Git Add Failed: %s\nOutput: %s", err.Error(), string(out))
+		return fmt.Sprintf("Git Add Failed: %s\nOutput: %s", err.Error(), string(out)), err
 	}
 
 	commitCmd := exec.Command("git", "commit", "-m", msg)
@@ -145,10 +146,15 @@ func PublishChanges(token, path string) (error, string) {
 		commitLog = fmt.Sprintf("Commit Warning/Error: %s\nOutput: %s", commitErr.Error(), commitLog)
 	}
 
-	err, pushLog := ExecuteGitWithToken(config.RepoPath, token, "push", "origin", "main")
+	pushLog, err := ExecuteGitWithToken(config.RepoPath, token, "push", "origin", "main")
+
+	// Invalidate cache after successful publish to refresh dirty status
+	if err == nil {
+		InvalidateCache()
+	}
 
 	fullLog := fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\n%s\n\n--- Git Push ---\n%s", commitLog, pushLog)
-	return err, fullLog
+	return fullLog, err
 }
 
 func Diff(f1Path, f2Path, relPath string) (string, string) {
@@ -181,9 +187,16 @@ func Diff(f1Path, f2Path, relPath string) (string, string) {
 	normalizedHead := NormalizeContent(outHead, collection)
 
 	// Write to temp file
-	fHead, _ := os.CreateTemp("", "diff_head_*")
+	fHead, err := os.CreateTemp("", "diff_head_*")
+	if err != nil {
+		fmt.Printf("[Diff] Warning: failed to create temp file: %v\n", err)
+		return "", "none"
+	}
 	defer os.Remove(fHead.Name())
-	fHead.Write(normalizedHead)
+	if _, err := fHead.Write(normalizedHead); err != nil {
+		fmt.Printf("[Diff] Warning: failed to write temp file: %v\n", err)
+		return "", "none"
+	}
 	fHead.Close()
 
 	cmdGit := exec.Command("git", "diff", "--no-index", "--", fHead.Name(), f2Path)
