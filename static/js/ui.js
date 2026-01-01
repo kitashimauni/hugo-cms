@@ -267,10 +267,11 @@ function renderField(container, field, value) {
             const d = new Date();
             const pad = (n) => n < 10 ? '0' + n : n;
             const localIso = d.getFullYear() + '-' +
-                pad(d.getMonth() + 1) + '-' +
-                pad(d.getDate()) + 'T' +
-                pad(d.getHours()) + ':' +
-                pad(d.getMinutes());
+                           pad(d.getMonth()+1) + '-' +
+                           pad(d.getDate()) + 'T' +
+                           pad(d.getHours()) + ':' +
+                           pad(d.getMinutes()) + ':' +
+                           pad(d.getSeconds());
             input.value = localIso;
         };
         wrapper.appendChild(input);
@@ -301,10 +302,11 @@ function createInputForWidget(field, value) {
                 const d = new Date(value);
                 const pad = (n) => n < 10 ? '0' + n : n;
                 const localIso = d.getFullYear() + '-' +
-                    pad(d.getMonth() + 1) + '-' +
-                    pad(d.getDate()) + 'T' +
-                    pad(d.getHours()) + ':' +
-                    pad(d.getMinutes());
+                               pad(d.getMonth()+1) + '-' +
+                               pad(d.getDate()) + 'T' +
+                               pad(d.getHours()) + ':' +
+                               pad(d.getMinutes()) + ':' +
+                               pad(d.getSeconds());
                 input.value = localIso;
             } catch (e) {
                 input.value = value;
