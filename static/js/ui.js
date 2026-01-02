@@ -599,10 +599,12 @@ export async function showMediaLibrary(onSelect, collectionName = null, currentP
     const tabStatic = createTab('static', 'Static');
     const tabArticle = createTab('content', 'Article');
 
-    if (!currentPath) {
+    const isBundle = currentPath && (currentPath.endsWith('/index.md') || currentPath.endsWith('/_index.md'));
+
+    if (!isBundle) {
         tabArticle.disabled = true;
         tabArticle.style.opacity = '0.5';
-        tabArticle.title = "No article selected";
+        tabArticle.title = "Only available for page bundles (index.md)";
     }
 
     tabs.appendChild(tabStatic);
@@ -628,10 +630,10 @@ export async function showMediaLibrary(onSelect, collectionName = null, currentP
     };
 
     tabStatic.onclick = () => switchTab('static');
-    tabArticle.onclick = () => { if(currentPath) switchTab('content'); };
+    tabArticle.onclick = () => { if(isBundle) switchTab('content'); };
 
     // Default tab
-    switchTab(currentPath ? 'content' : 'static');
+    switchTab(isBundle ? 'content' : 'static');
 }
 
 async function loadAndRenderMedia(container, mode, currentPath, onSelect) {
