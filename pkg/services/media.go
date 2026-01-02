@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"hugo-cms/pkg/config"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -21,174 +21,84 @@ type MediaFile struct {
 	RepoPath string `json:"repo_path"`
 }
 
-func GetMediaConfig(collectionName string) (string, string, error) {
-	cfg, err := GetCMSConfig()
-	if err != nil {
-		return "", "", err
-	}
-	
-	if collectionName != "" {
-		for _, col := range cfg.Collections {
-			if col.Name == collectionName {
-				if col.MediaFolder != "" {
-					return col.MediaFolder, col.PublicFolder, nil
-				}
-				break
-			}
-		}
-	}
-
-	if cfg.MediaFolder == "" {
-		return "", "", fmt.Errorf("media_folder not configured")
-	}
-	return cfg.MediaFolder, cfg.PublicFolder, nil
-}
-
-func ListMediaFiles(collectionName string) ([]MediaFile, error) {
-	mediaFolder, publicFolder, err := GetMediaConfig(collectionName)
-	if err != nil {
-		return nil, err
-	}
-
-	var collectionFolder string
-	if collectionName != "" {
-		cfg, _ := GetCMSConfig()
-		for _, col := range cfg.Collections {
-			if col.Name == collectionName {
-				collectionFolder = col.Folder
-				break
-			}
-		}
-	}
-
+func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 	var searchDirs []string
 	
-	// User Requirement: If collectionFolder is defined, media_folder is relative to it.
-	var strategies []string
-	if collectionFolder != "" {
-		// Clean mediaFolder to ensure it joins correctly
-		cleanMF := strings.TrimLeft(mediaFolder, `/\`)
-		strategies = []string{filepath.Join(collectionFolder, cleanMF)}
+	// Determine search roots based on mode
+	if mode == "static" {
+		// List all files in repo/static
+		staticDir := filepath.Join(config.RepoPath, "static")
+		if _, err := os.Stat(staticDir); err == nil {
+			searchDirs = append(searchDirs, staticDir)
+		}
+	} else if mode == "content" {
+		if articlePath == "" {
+			return nil, nil // No article context, return empty
+		}
+		// Assuming articlePath is "posts/2024/slug/index.md" (relative to content)
+		// We want to list files in "repo/content/posts/2024/slug"
+		bundleDir := filepath.Dir(articlePath)
+		fullBundlePath := filepath.Join(config.RepoPath, "content", bundleDir)
+		if _, err := os.Stat(fullBundlePath); err == nil {
+			searchDirs = append(searchDirs, fullBundlePath)
+		}
 	} else {
-		strategies = []string{mediaFolder}
-	}
-
-	fmt.Printf("[ListMedia] Collection: '%s', Folder: '%s', MediaFolder: '%s'\n", collectionName, collectionFolder, mediaFolder)
-
-	for _, pattern := range strategies {
-		pattern = strings.TrimLeft(pattern, `/\`)
-		
-		if strings.Contains(pattern, "{{") {
-			re := regexp.MustCompile(`\{\{[^}]+\}\}`)
-			globPattern := re.ReplaceAllString(pattern, "*")
-			fullGlob := filepath.Join(config.RepoPath, globPattern)
-			
-			matches, err := filepath.Glob(fullGlob)
-			if err == nil && len(matches) > 0 {
-				searchDirs = matches
-				break
-			}
-		} else {
-			fullPath := filepath.Join(config.RepoPath, pattern)
-			if info, err := os.Stat(fullPath); err == nil && info.IsDir() {
-				searchDirs = []string{fullPath}
-				break
-			}
+		// Default/Fallback: maybe show static?
+		staticDir := filepath.Join(config.RepoPath, "static")
+		if _, err := os.Stat(staticDir); err == nil {
+			searchDirs = append(searchDirs, staticDir)
 		}
 	}
 
 	var files []MediaFile
-	for _, dir := range searchDirs {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
+	for _, root := range searchDirs {
+		// Walk directory to find images
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
 			}
+			if d.IsDir() {
+				return nil
+			}
+			// Simple filter for images
+			ext := strings.ToLower(filepath.Ext(path))
+			switch ext {
+			case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg":
+				// Found image
+				relPath, _ := filepath.Rel(config.RepoPath, path)
+				relPath = filepath.ToSlash(relPath)
 
-			fullPath := filepath.Join(dir, entry.Name())
-			relPath, _ := filepath.Rel(config.RepoPath, fullPath)
-			relPath = filepath.ToSlash(relPath)
-
-			usagePath := ""
-			// Usage path logic
-			if publicFolder != "" && !strings.Contains(publicFolder, "{{") {
-				usagePath = filepath.ToSlash(filepath.Join(publicFolder, entry.Name()))
-			} else {
-				if collectionName != "" {
-					// User Requirement: /{folder}/{media_folder}/{filename}
-					// Matches repo-relative path starting with /
-					usagePath = "/" + relPath
+				// Determine Usage Path
+				usagePath := ""
+				if mode == "static" {
+					// repo/static/img.png -> /img.png
+					staticRel, _ := filepath.Rel(filepath.Join(config.RepoPath, "static"), path)
+					usagePath = "/" + filepath.ToSlash(staticRel)
 				} else {
-					if strings.HasPrefix(relPath, "static/") {
-						usagePath = "/" + strings.TrimPrefix(relPath, "static/")
-					} else if strings.HasPrefix(relPath, "content/") {
-						usagePath = entry.Name()
-					} else {
-						usagePath = entry.Name()
-					}
+					// content/posts/slug/img.png -> img.png (Page Bundle)
+					// Or if in subfolder src/img.png -> src/img.png
+					bundleRel, _ := filepath.Rel(root, path)
+					usagePath = filepath.ToSlash(bundleRel)
 				}
-			}
 
-			if !strings.HasPrefix(usagePath, "/") && !strings.HasPrefix(usagePath, "http") && strings.HasPrefix(relPath, "static/") {
-				usagePath = "/" + usagePath
+				files = append(files, MediaFile{
+					Name:     d.Name(), // Or relative path from root?
+					Path:     usagePath,
+					Size:     0, // d.Info() needed
+					URL:      "/api/media/raw?path=" + url.QueryEscape(relPath),
+					RepoPath: relPath,
+				})
 			}
-			usagePath = strings.ReplaceAll(usagePath, "//", "/")
-
-			displayName := entry.Name()
-			if len(searchDirs) > 1 {
-				displayName += " (" + filepath.Base(dir) + ")"
-			}
-
-			files = append(files, MediaFile{
-				Name:     displayName,
-				Path:     usagePath,
-				Size:     0,
-				URL:      "/api/media/raw?path=" + url.QueryEscape(relPath),
-				RepoPath: relPath,
-			})
+			return nil
+		})
+		if err != nil {
+			fmt.Printf("Walk error: %v\n", err)
 		}
 	}
 	return files, nil
 }
 
-func SaveMediaFile(header *multipart.FileHeader, collectionName, articlePath string) (*MediaFile, error) {
-	mediaFolder, publicFolder, err := GetMediaConfig(collectionName)
-	if err != nil {
-		return nil, err
-	}
-
-	mediaFolder = strings.TrimLeft(mediaFolder, `/\`)
-
-	resolvedMediaFolder := mediaFolder
-	if strings.Contains(mediaFolder, "{{") {
-		if articlePath == "" {
-			return nil, fmt.Errorf("cannot upload to dynamic folder without article context")
-		}
-
-		bundleDir := filepath.Dir(articlePath)
-		suffix := ""
-		lastBrace := strings.LastIndex(mediaFolder, "}}")
-		if lastBrace != -1 && lastBrace < len(mediaFolder)-2 {
-			suffix = mediaFolder[lastBrace+2:]
-			suffix = strings.TrimLeft(suffix, `/\`)
-		}
-
-		fullTargetDir := filepath.Join(config.RepoPath, "content", bundleDir, suffix)
-		if err := os.MkdirAll(fullTargetDir, 0755); err != nil {
-			return nil, err
-		}
-
-		rel, err := filepath.Rel(config.RepoPath, fullTargetDir)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			return nil, fmt.Errorf("resolved path outside repo")
-		}
-		resolvedMediaFolder = rel
-	}
-
+func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*MediaFile, error) {
 	src, err := header.Open()
 	if err != nil {
 		return nil, err
@@ -202,12 +112,31 @@ func SaveMediaFile(header *multipart.FileHeader, collectionName, articlePath str
 	name := strings.TrimSuffix(filename, ext)
 	filename = fmt.Sprintf("%s_%d%s", name, time.Now().Unix(), ext)
 
-	repoRelPath := filepath.Join(resolvedMediaFolder, filename)
-	fullMediaPath := SafeJoin(config.RepoPath, "", repoRelPath)
-	if fullMediaPath == "" {
-		return nil, fmt.Errorf("invalid media path")
+	var targetDir string
+
+	if mode == "static" {
+		// Save to static/uploads? or just static?
+		// Let's use static/images as a default convention if it exists, else static/
+		// Or maybe checking config?
+		// User didn't specify static upload structure.
+		// Let's dump in static/ for now or static/uploads.
+		targetDir = filepath.Join(config.RepoPath, "static", "uploads")
+	} else {
+		// Content mode
+		if articlePath == "" {
+			return nil, fmt.Errorf("article path required for content upload")
+		}
+		bundleDir := filepath.Dir(articlePath)
+		// Use ARTICLE_MEDIA_DIR config
+		subDir := config.ArticleMediaDir
+		targetDir = filepath.Join(config.RepoPath, "content", bundleDir, subDir)
 	}
 
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return nil, err
+	}
+
+	fullMediaPath := filepath.Join(targetDir, filename)
 	dst, err := os.Create(fullMediaPath)
 	if err != nil {
 		return nil, err
@@ -218,38 +147,31 @@ func SaveMediaFile(header *multipart.FileHeader, collectionName, articlePath str
 		return nil, err
 	}
 
+	// Calculate Result
+	relPath, _ := filepath.Rel(config.RepoPath, fullMediaPath)
+	relPath = filepath.ToSlash(relPath)
+
 	usagePath := ""
-	if publicFolder != "" && !strings.Contains(publicFolder, "{{") {
-		usagePath = filepath.ToSlash(filepath.Join(publicFolder, filename))
+	if mode == "static" {
+		staticRel, _ := filepath.Rel(filepath.Join(config.RepoPath, "static"), fullMediaPath)
+		usagePath = "/" + filepath.ToSlash(staticRel)
 	} else {
-		finalRepoPath, _ := filepath.Rel(config.RepoPath, fullMediaPath)
-		finalRepoPath = filepath.ToSlash(finalRepoPath)
-
-		if collectionName != "" {
-			usagePath = "/" + finalRepoPath
-		} else {
-			if strings.HasPrefix(finalRepoPath, "static/") {
-				usagePath = "/" + strings.TrimPrefix(finalRepoPath, "static/")
-			} else {
-				usagePath = filename
-			}
-		}
+		// Relative to bundle root
+		// targetDir is bundle + subDir
+		// We need path relative to bundle root.
+		// Bundle root is targetDir without subDir (if subDir is relative)
+		// Actually simpler:
+		bundleRoot := filepath.Join(config.RepoPath, "content", filepath.Dir(articlePath))
+		bundleRel, _ := filepath.Rel(bundleRoot, fullMediaPath)
+		usagePath = filepath.ToSlash(bundleRel)
 	}
-	
-	if !strings.HasPrefix(usagePath, "/") && !strings.HasPrefix(usagePath, "http") && strings.HasPrefix(resolvedMediaFolder, "static/") {
-		usagePath = "/" + usagePath
-	}
-	usagePath = strings.ReplaceAll(usagePath, "//", "/")
-
-	finalRepoPath, _ := filepath.Rel(config.RepoPath, fullMediaPath)
-	finalRepoPath = filepath.ToSlash(finalRepoPath)
 
 	return &MediaFile{
 		Name:     filename,
 		Path:     usagePath,
 		Size:     header.Size,
-		URL:      "/api/media/raw?path=" + url.QueryEscape(finalRepoPath),
-		RepoPath: finalRepoPath,
+		URL:      "/api/media/raw?path=" + url.QueryEscape(relPath),
+		RepoPath: relPath,
 	}, nil
 }
 

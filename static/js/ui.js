@@ -571,27 +571,88 @@ export async function showMediaLibrary(onSelect, collectionName = null, currentP
     const body = document.getElementById('modal-body');
 
     header.querySelector('span').textContent = "Media Library";
-    body.innerHTML = 'Loading...';
+    body.innerHTML = '';
     overlay.style.display = 'flex';
 
+    // Tabs
+    const tabs = document.createElement('div');
+    tabs.style.display = 'flex';
+    tabs.style.gap = '10px';
+    tabs.style.marginBottom = '15px';
+    tabs.style.borderBottom = '1px solid #444';
+    tabs.style.paddingBottom = '5px';
+
+    const createTab = (id, label) => {
+        const t = document.createElement('button');
+        t.textContent = label;
+        t.style.padding = '8px 16px';
+        t.style.border = 'none';
+        t.style.background = 'transparent';
+        t.style.color = '#888';
+        t.style.cursor = 'pointer';
+        t.style.fontSize = '14px';
+        t.style.fontWeight = 'bold';
+        t.id = `tab-media-${id}`;
+        return t;
+    };
+
+    const tabStatic = createTab('static', 'Static');
+    const tabArticle = createTab('content', 'Article');
+
+    if (!currentPath) {
+        tabArticle.disabled = true;
+        tabArticle.style.opacity = '0.5';
+        tabArticle.title = "No article selected";
+    }
+
+    tabs.appendChild(tabStatic);
+    tabs.appendChild(tabArticle);
+    body.appendChild(tabs);
+
+    const contentArea = document.createElement('div');
+    body.appendChild(contentArea);
+
+    // Tab Logic
+    const switchTab = (mode) => {
+        // Update styles
+        [tabStatic, tabArticle].forEach(t => {
+            t.style.borderBottom = 'none';
+            t.style.color = '#888';
+        });
+        const activeTab = mode === 'static' ? tabStatic : tabArticle;
+        activeTab.style.borderBottom = '2px solid #6f42c1';
+        activeTab.style.color = '#fff';
+
+        // Load content
+        loadAndRenderMedia(contentArea, mode, currentPath, onSelect);
+    };
+
+    tabStatic.onclick = () => switchTab('static');
+    tabArticle.onclick = () => { if(currentPath) switchTab('content'); };
+
+    // Default tab
+    switchTab(currentPath ? 'content' : 'static');
+}
+
+async function loadAndRenderMedia(container, mode, currentPath, onSelect) {
+    container.innerHTML = 'Loading...';
     try {
-        const files = await API.fetchMedia(collectionName);
-        renderMediaLibrary(body, files || [], onSelect, collectionName, currentPath);
+        const files = await API.fetchMedia(mode, currentPath);
+        renderMediaGrid(container, files || [], mode, currentPath, onSelect);
     } catch (e) {
-        body.innerHTML = `<p style="color:red">Failed to load media: ${e.message}</p>`;
+        container.innerHTML = `<p style="color:red">Failed to load media: ${e.message}</p>`;
     }
 }
 
-function renderMediaLibrary(container, files, onSelect, collectionName, currentPath) {
+function renderMediaGrid(container, files, mode, currentPath, onSelect) {
     container.innerHTML = '';
 
-    // Toolbar
+    // Toolbar (Upload)
     const toolbar = document.createElement('div');
     toolbar.style.marginBottom = '10px';
     toolbar.style.display = 'flex';
     toolbar.style.justifyContent = 'space-between';
-    toolbar.style.alignItems = 'center';
-
+    
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = 'image/*';
@@ -601,11 +662,9 @@ function renderMediaLibrary(container, files, onSelect, collectionName, currentP
             const file = e.target.files[0];
             showToast("Uploading...", "info");
             try {
-                const newFile = await API.uploadMedia(file, collectionName, currentPath);
+                await API.uploadMedia(file, mode, currentPath);
                 showToast("Uploaded!", "success");
-                // Refresh list
-                const updatedFiles = await API.fetchMedia(collectionName);
-                renderMediaLibrary(container, updatedFiles || [], onSelect, collectionName, currentPath);
+                loadAndRenderMedia(container, mode, currentPath, onSelect);
             } catch (err) {
                 showToast("Upload failed: " + err.message, "error");
             }
@@ -614,7 +673,7 @@ function renderMediaLibrary(container, files, onSelect, collectionName, currentP
 
     const uploadBtn = document.createElement('button');
     uploadBtn.className = 'action-btn';
-    uploadBtn.textContent = '⬆ Upload Image';
+    uploadBtn.textContent = `⬆ Upload to ${mode === 'static' ? 'Static' : 'Article'}`;
     uploadBtn.onclick = () => fileInput.click();
 
     toolbar.appendChild(uploadBtn);
@@ -649,7 +708,6 @@ function renderMediaLibrary(container, files, onSelect, collectionName, currentP
         img.style.objectFit = 'cover';
         img.title = f.name;
 
-        // Overlay name
         const name = document.createElement('div');
         name.textContent = f.name;
         name.style.position = 'absolute';
@@ -663,7 +721,6 @@ function renderMediaLibrary(container, files, onSelect, collectionName, currentP
         name.style.textOverflow = 'ellipsis';
         name.style.textAlign = 'center';
 
-        // Delete button (small X)
         const delBtn = document.createElement('button');
         delBtn.textContent = '×';
         delBtn.style.position = 'absolute';
@@ -674,14 +731,14 @@ function renderMediaLibrary(container, files, onSelect, collectionName, currentP
         delBtn.style.border = 'none';
         delBtn.style.cursor = 'pointer';
         delBtn.style.padding = '0 5px';
+        
         delBtn.onclick = async (e) => {
             e.stopPropagation();
             if (!confirm(`Delete ${f.name}?`)) return;
             try {
                 await API.deleteMedia(f.repo_path);
                 showToast("Deleted", "success");
-                const updatedFiles = await API.fetchMedia(collectionName);
-                renderMediaLibrary(container, updatedFiles || [], onSelect, collectionName, currentPath);
+                loadAndRenderMedia(container, mode, currentPath, onSelect);
             } catch (err) {
                 showToast("Delete failed", "error");
             }

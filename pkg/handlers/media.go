@@ -9,8 +9,9 @@ import (
 )
 
 func ListMedia(c *gin.Context) {
-	collection := c.Query("collection")
-	files, err := services.ListMediaFiles(collection)
+	mode := c.Query("mode")
+	articlePath := c.Query("path")
+	files, err := services.ListMediaFiles(mode, articlePath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list media: " + err.Error()})
 		return
@@ -19,15 +20,15 @@ func ListMedia(c *gin.Context) {
 }
 
 func UploadMedia(c *gin.Context) {
-	collection := c.PostForm("collection")
-	path := c.PostForm("path")
+	mode := c.PostForm("mode")
+	articlePath := c.PostForm("path")
 	file, err := c.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
 		return
 	}
 
-	info, err := services.SaveMediaFile(file, collection, path)
+	info, err := services.SaveMediaFile(file, mode, articlePath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file: " + err.Error()})
 		return

@@ -1,5 +1,3 @@
-// api.js - サーバー通信ロジック
-
 export async function fetchConfig() {
     const res = await fetch('/api/config');
     if (!res.ok) throw new Error("Config fetch failed");
@@ -93,18 +91,18 @@ export async function runPublish(path = null) {
     return await res.json();
 }
 
-export async function fetchMedia(collection) {
-    let url = '/api/media';
-    if (collection) url += `?collection=${encodeURIComponent(collection)}`;
+export async function fetchMedia(mode, path) {
+    let url = `/api/media?mode=${mode}`;
+    if (path) url += `&path=${encodeURIComponent(path)}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to fetch media");
     return await res.json();
 }
 
-export async function uploadMedia(file, collection, path) {
+export async function uploadMedia(file, mode, path) {
     const formData = new FormData();
     formData.append('file', file);
-    if (collection) formData.append('collection', collection);
+    if (mode) formData.append('mode', mode);
     if (path) formData.append('path', path);
     const res = await fetch('/api/media', {
         method: 'POST',
