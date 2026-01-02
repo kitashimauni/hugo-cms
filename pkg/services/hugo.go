@@ -26,7 +26,7 @@ func StartHugoServer() error {
 		"--source", config.RepoPath,
 		"--bind", config.HugoServerBind,
 		"--port", config.HugoServerPort,
-		"--baseURL", config.GetAppURL(),
+		"--baseURL", config.GetAppURL()+config.PreviewURL,
 		"--appendPort=false",
 		"--disableLiveReload", // Disable WS to avoid timeouts on mobile/proxy
 		"-D",                  // Include drafts
@@ -74,7 +74,7 @@ func BuildSite() (string, error) {
 	cmd := exec.Command("hugo",
 		"--source", config.RepoPath,
 		"--destination", "public",
-		"--baseURL", config.GetAppURL(),
+		"--baseURL", config.GetAppURL()+config.PreviewURL,
 		"--cleanDestinationDir",
 		"-D",
 		"-F",

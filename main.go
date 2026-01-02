@@ -62,13 +62,6 @@ func main() {
 	proxy := httputil.NewSingleHostReverseProxy(previewProxyURL)
 
 	r.Any(config.PreviewURL+"*path", func(c *gin.Context) {
-		prefix := strings.TrimRight(config.PreviewURL, "/")
-		if strings.HasPrefix(c.Request.URL.Path, prefix) {
-			c.Request.URL.Path = strings.TrimPrefix(c.Request.URL.Path, prefix)
-			if c.Request.URL.Path == "" {
-				c.Request.URL.Path = "/"
-			}
-		}
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
 
