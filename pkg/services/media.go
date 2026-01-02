@@ -5,8 +5,10 @@ import (
 	"hugo-cms/pkg/config"
 	"io"
 	"mime/multipart"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -48,54 +50,79 @@ func ListMediaFiles(collectionName string) ([]MediaFile, error) {
 		return nil, err
 	}
 
-	fullMediaPath := filepath.Join(config.RepoPath, mediaFolder)
-	
-	// Create if not exists
-	if _, err := os.Stat(fullMediaPath); os.IsNotExist(err) {
-		os.MkdirAll(fullMediaPath, 0755)
-	}
-
-	entries, err := os.ReadDir(fullMediaPath)
-	if err != nil {
-		return nil, err
-	}
-
 	var files []MediaFile
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	var searchDirs []string
+
+	// Check for dynamic patterns {{...}}
+	if strings.Contains(mediaFolder, "{{") {
+		re := regexp.MustCompile(`\{\{[^}]+\}\}`)
+		globPattern := re.ReplaceAllString(mediaFolder, "*")
+		fullGlob := filepath.Join(config.RepoPath, globPattern)
+
+		matches, err := filepath.Glob(fullGlob)
+		if err != nil {
+			return nil, err
 		}
-		
-		info, err := entry.Info()
+		searchDirs = matches
+	} else {
+		fullMediaPath := filepath.Join(config.RepoPath, mediaFolder)
+		if _, err := os.Stat(fullMediaPath); os.IsNotExist(err) {
+			os.MkdirAll(fullMediaPath, 0755)
+		}
+		searchDirs = []string{fullMediaPath}
+	}
+
+	for _, dir := range searchDirs {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
 		}
 
-		usagePath := ""
-		if publicFolder != "" {
-			usagePath = filepath.ToSlash(filepath.Join(publicFolder, entry.Name()))
-		} else {
-			// Fallback
-			cleaned := filepath.ToSlash(mediaFolder)
-			if strings.HasPrefix(cleaned, "static/") {
-				usagePath = "/" + strings.TrimPrefix(cleaned, "static/") + "/" + entry.Name()
-			} else if strings.HasPrefix(cleaned, "content/") {
-				usagePath = entry.Name() 
-			} else {
-				usagePath = "/" + cleaned + "/" + entry.Name()
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
 			}
-		}
-		if !strings.HasPrefix(usagePath, "/") && !strings.HasPrefix(usagePath, "http") {
-			usagePath = "/" + usagePath
-		}
-		usagePath = strings.ReplaceAll(usagePath, "//", "/")
 
-		files = append(files, MediaFile{
-			Name: entry.Name(),
-			Path: usagePath,
-			Size: info.Size(),
-			URL:  usagePath, 
-		})
+			fullPath := filepath.Join(dir, entry.Name())
+			relPath, _ := filepath.Rel(config.RepoPath, fullPath)
+			relPath = filepath.ToSlash(relPath)
+
+			usagePath := ""
+			// Determine usage path (for Markdown insertion)
+			if publicFolder != "" && !strings.Contains(publicFolder, "{{") {
+				usagePath = filepath.ToSlash(filepath.Join(publicFolder, entry.Name()))
+			} else {
+				// Fallback logic
+				if strings.HasPrefix(relPath, "static/") {
+					usagePath = "/" + strings.TrimPrefix(relPath, "static/")
+				} else if strings.HasPrefix(relPath, "content/") {
+					// For page bundles, usually just filename
+					usagePath = entry.Name()
+				} else {
+					// Fallback to media folder relative
+					// usagePath = "/" + mediaFolder + "/" + entry.Name() // But mediaFolder might be dynamic
+					usagePath = entry.Name()
+				}
+			}
+
+			if !strings.HasPrefix(usagePath, "/") && !strings.HasPrefix(usagePath, "http") && strings.HasPrefix(relPath, "static/") {
+				usagePath = "/" + usagePath
+			}
+			usagePath = strings.ReplaceAll(usagePath, "//", "/")
+
+			// Display Name: include parent folder name if dynamic to distinguish
+			displayName := entry.Name()
+			if len(searchDirs) > 1 {
+				displayName += " (" + filepath.Base(dir) + ")"
+			}
+
+			files = append(files, MediaFile{
+				Name: displayName,
+				Path: usagePath,
+				Size: 0,
+				URL:  "/api/media/raw?path=" + url.QueryEscape(relPath),
+			})
+		}
 	}
 	return files, nil
 }

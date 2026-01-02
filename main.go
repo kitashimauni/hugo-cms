@@ -94,6 +94,7 @@ func main() {
 			api.GET("/media", handlers.ListMedia)
 			api.POST("/media", handlers.UploadMedia)
 			api.POST("/media/delete", handlers.DeleteMedia)
+			api.GET("/media/raw", handlers.ServeMediaRaw)
 		}
 	}
 

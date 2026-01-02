@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/services"
 	"net/http"
 
@@ -49,4 +50,22 @@ func DeleteMedia(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+func ServeMediaRaw(c *gin.Context) {
+	targetPath := c.Query("path")
+	if targetPath == "" {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+
+	// Assuming path is relative to RepoPath.
+	// We pass "" as sub-folder to allow access to static/ or content/ via SafeJoin logic
+	fullPath := services.SafeJoin(config.RepoPath, "", targetPath)
+	if fullPath == "" {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	c.File(fullPath)
 }
