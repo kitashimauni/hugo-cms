@@ -161,19 +161,34 @@ func PublishChanges(token, path string) (string, error) {
 		fmt.Printf("[Git] Warning: failed to set user.name: %v\n", err)
 	}
 
-	var addCmd *exec.Cmd
+	var filesToAdd []string
 	var msg string
 
 	if path != "" {
 		// Single file publish
-		addCmd = exec.Command("git", "add", path)
 		msg = fmt.Sprintf("Update %s via HomeCMS", path)
+		
+		// Always add static
+		filesToAdd = append(filesToAdd, "static")
+
+		// Check for Page Bundle
+		if strings.HasSuffix(path, "index.md") || strings.HasSuffix(path, "_index.md") {
+			// Add parent directory (bundle root)
+			dir := filepath.Dir(path)
+			filesToAdd = append(filesToAdd, dir)
+		} else {
+			// Just the file
+			filesToAdd = append(filesToAdd, path)
+		}
 	} else {
 		// Publish all
-		addCmd = exec.Command("git", "add", ".")
+		filesToAdd = []string{"."}
 		msg = fmt.Sprintf("Update via HomeCMS: %s", time.Now().Format("2006-01-02 15:04:05"))
 	}
 
+	// Prepare arguments for git add
+	gitAddArgs := append([]string{"add"}, filesToAdd...)
+	addCmd := exec.Command("git", gitAddArgs...)
 	addCmd.Dir = config.RepoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Sprintf("Git Add Failed: %s\nOutput: %s", err.Error(), string(out)), err
