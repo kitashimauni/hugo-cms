@@ -73,6 +73,13 @@ func main() {
 			c.JSON(http.StatusNotFound, gin.H{"error": "API route not found"})
 			return
 		}
+		
+		// Prepend PreviewURL (e.g. /preview) because Hugo expects it
+		prefix := strings.TrimRight(config.PreviewURL, "/")
+		if !strings.HasPrefix(c.Request.URL.Path, prefix) {
+			c.Request.URL.Path = prefix + c.Request.URL.Path
+		}
+
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
 
