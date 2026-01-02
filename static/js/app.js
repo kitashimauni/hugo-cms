@@ -56,7 +56,7 @@ async function init() {
         UI.showMediaLibrary((file) => {
             const markdown = `![${file.name}](${file.path})`;
             Editor.insertText(markdown);
-        }, collectionName);
+        }, collectionName, currentPath);
     };
     window.resetChanges = Editor.resetChanges;
     window.showDiff = Editor.showDiff;

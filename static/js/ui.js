@@ -565,7 +565,7 @@ export function showToast(message, type = 'info') {
     }, 5000);
 }
 
-export async function showMediaLibrary(onSelect, collectionName = null) {
+export async function showMediaLibrary(onSelect, collectionName = null, currentPath = null) {
     const overlay = document.getElementById('modal-overlay');
     const header = document.getElementById('modal-header');
     const body = document.getElementById('modal-body');
@@ -576,13 +576,13 @@ export async function showMediaLibrary(onSelect, collectionName = null) {
 
     try {
         const files = await API.fetchMedia(collectionName);
-        renderMediaLibrary(body, files || [], onSelect, collectionName);
+        renderMediaLibrary(body, files || [], onSelect, collectionName, currentPath);
     } catch (e) {
         body.innerHTML = `<p style="color:red">Failed to load media: ${e.message}</p>`;
     }
 }
 
-function renderMediaLibrary(container, files, onSelect, collectionName) {
+function renderMediaLibrary(container, files, onSelect, collectionName, currentPath) {
     container.innerHTML = '';
 
     // Toolbar
@@ -601,11 +601,11 @@ function renderMediaLibrary(container, files, onSelect, collectionName) {
             const file = e.target.files[0];
             showToast("Uploading...", "info");
             try {
-                const newFile = await API.uploadMedia(file, collectionName);
+                const newFile = await API.uploadMedia(file, collectionName, currentPath);
                 showToast("Uploaded!", "success");
                 // Refresh list
                 const updatedFiles = await API.fetchMedia(collectionName);
-                renderMediaLibrary(container, updatedFiles || [], onSelect, collectionName);
+                renderMediaLibrary(container, updatedFiles || [], onSelect, collectionName, currentPath);
             } catch (err) {
                 showToast("Upload failed: " + err.message, "error");
             }
@@ -678,10 +678,10 @@ function renderMediaLibrary(container, files, onSelect, collectionName) {
             e.stopPropagation();
             if (!confirm(`Delete ${f.name}?`)) return;
             try {
-                await API.deleteMedia(f.name, collectionName);
+                await API.deleteMedia(f.repo_path);
                 showToast("Deleted", "success");
                 const updatedFiles = await API.fetchMedia(collectionName);
-                renderMediaLibrary(container, updatedFiles || [], onSelect, collectionName);
+                renderMediaLibrary(container, updatedFiles || [], onSelect, collectionName, currentPath);
             } catch (err) {
                 showToast("Delete failed", "error");
             }

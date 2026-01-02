@@ -14,10 +14,11 @@ import (
 )
 
 type MediaFile struct {
-	Name string `json:"name"`
-	Path string `json:"path"` // Relative path for usage in markdown
-	Size int64  `json:"size"`
-	URL  string `json:"url"`  // URL for preview
+	Name     string `json:"name"`
+	Path     string `json:"path"` // Relative path for usage in markdown
+	Size     int64  `json:"size"`
+	URL      string `json:"url"`  // URL for preview
+	RepoPath string `json:"repo_path"` // Unique path relative to RepoPath for deletion
 }
 
 func GetMediaConfig(collectionName string) (string, string, error) {
@@ -26,7 +27,6 @@ func GetMediaConfig(collectionName string) (string, string, error) {
 		return "", "", err
 	}
 	
-	// Check collection override
 	if collectionName != "" {
 		for _, col := range cfg.Collections {
 			if col.Name == collectionName {
@@ -50,12 +50,13 @@ func ListMediaFiles(collectionName string) ([]MediaFile, error) {
 		return nil, err
 	}
 
+	mediaFolder = strings.TrimLeft(mediaFolder, "/\\")
+
 	var files []MediaFile
 	var searchDirs []string
 
-	// Check for dynamic patterns {{...}}
 	if strings.Contains(mediaFolder, "{{") {
-		re := regexp.MustCompile(`\{\{[^}]+\}\}`)
+		re := regexp.MustCompile(`\{\{[^}]+\}\\}`)
 		globPattern := re.ReplaceAllString(mediaFolder, "*")
 		fullGlob := filepath.Join(config.RepoPath, globPattern)
 
@@ -88,19 +89,14 @@ func ListMediaFiles(collectionName string) ([]MediaFile, error) {
 			relPath = filepath.ToSlash(relPath)
 
 			usagePath := ""
-			// Determine usage path (for Markdown insertion)
 			if publicFolder != "" && !strings.Contains(publicFolder, "{{") {
 				usagePath = filepath.ToSlash(filepath.Join(publicFolder, entry.Name()))
 			} else {
-				// Fallback logic
 				if strings.HasPrefix(relPath, "static/") {
 					usagePath = "/" + strings.TrimPrefix(relPath, "static/")
 				} else if strings.HasPrefix(relPath, "content/") {
-					// For page bundles, usually just filename
 					usagePath = entry.Name()
 				} else {
-					// Fallback to media folder relative
-					// usagePath = "/" + mediaFolder + "/" + entry.Name() // But mediaFolder might be dynamic
 					usagePath = entry.Name()
 				}
 			}
@@ -110,27 +106,55 @@ func ListMediaFiles(collectionName string) ([]MediaFile, error) {
 			}
 			usagePath = strings.ReplaceAll(usagePath, "//", "/")
 
-			// Display Name: include parent folder name if dynamic to distinguish
 			displayName := entry.Name()
 			if len(searchDirs) > 1 {
 				displayName += " (" + filepath.Base(dir) + ")"
 			}
 
 			files = append(files, MediaFile{
-				Name: displayName,
-				Path: usagePath,
-				Size: 0,
-				URL:  "/api/media/raw?path=" + url.QueryEscape(relPath),
+				Name:     displayName,
+				Path:     usagePath,
+				Size:     0,
+				URL:      "/api/media/raw?path=" + url.QueryEscape(relPath),
+				RepoPath: relPath,
 			})
 		}
 	}
 	return files, nil
 }
 
-func SaveMediaFile(header *multipart.FileHeader, collectionName string) (*MediaFile, error) {
+func SaveMediaFile(header *multipart.FileHeader, collectionName, articlePath string) (*MediaFile, error) {
 	mediaFolder, publicFolder, err := GetMediaConfig(collectionName)
 	if err != nil {
 		return nil, err
+	}
+
+	mediaFolder = strings.TrimLeft(mediaFolder, "/\\")
+
+	resolvedMediaFolder := mediaFolder
+	if strings.Contains(mediaFolder, "{{") {
+		if articlePath == "" {
+			return nil, fmt.Errorf("cannot upload to dynamic folder without article context")
+		}
+
+		bundleDir := filepath.Dir(articlePath)
+		suffix := ""
+		lastBrace := strings.LastIndex(mediaFolder, "}}")
+		if lastBrace != -1 && lastBrace < len(mediaFolder)-2 {
+			suffix = mediaFolder[lastBrace+2:]
+			suffix = strings.TrimLeft(suffix, "/\\")
+		}
+
+		fullTargetDir := filepath.Join(config.RepoPath, "content", bundleDir, suffix)
+		if err := os.MkdirAll(fullTargetDir, 0755); err != nil {
+			return nil, err
+		}
+
+		rel, err := filepath.Rel(config.RepoPath, fullTargetDir)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return nil, fmt.Errorf("resolved path outside repo")
+		}
+		resolvedMediaFolder = rel
 	}
 
 	src, err := header.Open()
@@ -146,7 +170,8 @@ func SaveMediaFile(header *multipart.FileHeader, collectionName string) (*MediaF
 	name := strings.TrimSuffix(filename, ext)
 	filename = fmt.Sprintf("%s_%d%s", name, time.Now().Unix(), ext)
 
-	fullMediaPath := SafeJoin(config.RepoPath, mediaFolder, filename)
+	repoRelPath := filepath.Join(resolvedMediaFolder, filename)
+	fullMediaPath := SafeJoin(config.RepoPath, "", repoRelPath)
 	if fullMediaPath == "" {
 		return nil, fmt.Errorf("invalid media path")
 	}
@@ -162,39 +187,40 @@ func SaveMediaFile(header *multipart.FileHeader, collectionName string) (*MediaF
 	}
 
 	usagePath := ""
-	if publicFolder != "" {
+	if publicFolder != "" && !strings.Contains(publicFolder, "{{") {
 		usagePath = filepath.ToSlash(filepath.Join(publicFolder, filename))
 	} else {
-		cleaned := filepath.ToSlash(mediaFolder)
-		if strings.HasPrefix(cleaned, "static/") {
-			usagePath = "/" + strings.TrimPrefix(cleaned, "static/") + "/" + filename
+		relPath, _ := filepath.Rel(config.RepoPath, fullMediaPath)
+		relPath = filepath.ToSlash(relPath)
+		
+		if strings.HasPrefix(relPath, "static/") {
+			usagePath = "/" + strings.TrimPrefix(relPath, "static/")
 		} else {
-			usagePath = "/" + cleaned + "/" + filename
+			usagePath = filename
 		}
 	}
-	if !strings.HasPrefix(usagePath, "/") {
+	
+	if !strings.HasPrefix(usagePath, "/") && !strings.HasPrefix(usagePath, "http") && strings.HasPrefix(resolvedMediaFolder, "static/") {
 		usagePath = "/" + usagePath
 	}
 	usagePath = strings.ReplaceAll(usagePath, "//", "/")
 
+	finalRepoPath, _ := filepath.Rel(config.RepoPath, fullMediaPath)
+	finalRepoPath = filepath.ToSlash(finalRepoPath)
+
 	return &MediaFile{
-		Name: filename,
-		Path: usagePath,
-		Size: header.Size,
-		URL:  usagePath,
+		Name:     filename,
+		Path:     usagePath,
+		Size:     header.Size,
+		URL:      "/api/media/raw?path=" + url.QueryEscape(finalRepoPath),
+		RepoPath: finalRepoPath,
 	}, nil
 }
 
-func DeleteMediaFile(filename, collectionName string) error {
-	mediaFolder, _, err := GetMediaConfig(collectionName)
-	if err != nil {
-		return err
-	}
-
-	fullMediaPath := SafeJoin(config.RepoPath, mediaFolder, filename)
+func DeleteMediaFile(repoPath string) error {
+	fullMediaPath := SafeJoin(config.RepoPath, "", repoPath)
 	if fullMediaPath == "" {
 		return fmt.Errorf("invalid media path")
 	}
-
 	return os.Remove(fullMediaPath)
 }

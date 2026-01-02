@@ -20,13 +20,14 @@ func ListMedia(c *gin.Context) {
 
 func UploadMedia(c *gin.Context) {
 	collection := c.PostForm("collection")
+	path := c.PostForm("path")
 	file, err := c.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
 		return
 	}
 
-	info, err := services.SaveMediaFile(file, collection)
+	info, err := services.SaveMediaFile(file, collection, path)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file: " + err.Error()})
 		return
@@ -37,15 +38,14 @@ func UploadMedia(c *gin.Context) {
 
 func DeleteMedia(c *gin.Context) {
 	var req struct {
-		Filename   string `json:"filename"`
-		Collection string `json:"collection"`
+		RepoPath string `json:"repo_path"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
 		return
 	}
 
-	if err := services.DeleteMediaFile(req.Filename, req.Collection); err != nil {
+	if err := services.DeleteMediaFile(req.RepoPath); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete: " + err.Error()})
 		return
 	}
@@ -59,8 +59,6 @@ func ServeMediaRaw(c *gin.Context) {
 		return
 	}
 
-	// Assuming path is relative to RepoPath.
-	// We pass "" as sub-folder to allow access to static/ or content/ via SafeJoin logic
 	fullPath := services.SafeJoin(config.RepoPath, "", targetPath)
 	if fullPath == "" {
 		c.Status(http.StatusNotFound)

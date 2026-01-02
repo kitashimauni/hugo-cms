@@ -101,10 +101,11 @@ export async function fetchMedia(collection) {
     return await res.json();
 }
 
-export async function uploadMedia(file, collection) {
+export async function uploadMedia(file, collection, path) {
     const formData = new FormData();
     formData.append('file', file);
     if (collection) formData.append('collection', collection);
+    if (path) formData.append('path', path);
     const res = await fetch('/api/media', {
         method: 'POST',
         body: formData
@@ -113,11 +114,11 @@ export async function uploadMedia(file, collection) {
     return await res.json();
 }
 
-export async function deleteMedia(filename, collection) {
+export async function deleteMedia(repoPath) {
     const res = await fetch('/api/media/delete', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ filename, collection })
+        body: JSON.stringify({ repo_path: repoPath })
     });
     if (!res.ok) throw new Error("Delete failed");
     return await res.json();
