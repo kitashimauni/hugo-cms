@@ -63,26 +63,24 @@ func ListMediaFiles(collectionName string) ([]MediaFile, error) {
 
 	var searchDirs []string
 	
-	// Strategies: 1. As configured (relative to repo), 2. Relative to collection folder
-	strategies := []string{mediaFolder}
+	// User Requirement: If collectionFolder is defined, media_folder is relative to it.
+	var strategies []string
 	if collectionFolder != "" {
-		// Try appending mediaFolder to collectionFolder
-		// Clean mediaFolder first to ensure it joins correctly
+		// Clean mediaFolder to ensure it joins correctly
 		cleanMF := strings.TrimLeft(mediaFolder, `/\`)
-		strategies = append(strategies, filepath.Join(collectionFolder, cleanMF))
+		strategies = []string{filepath.Join(collectionFolder, cleanMF)}
+	} else {
+		strategies = []string{mediaFolder}
 	}
 
 	for _, pattern := range strategies {
 		pattern = strings.TrimLeft(pattern, `/\`)
 		
 		if strings.Contains(pattern, "{{") {
-			re := regexp.MustCompile(`\{\{[^}]+\}\}`)
+			re := regexp.MustCompile(`\{\{[^}]+\}\} `)
 			globPattern := re.ReplaceAllString(pattern, "*")
 			fullGlob := filepath.Join(config.RepoPath, globPattern)
 			
-			// Debug
-			fmt.Printf("[ListMedia] Trying Glob: %s\n", fullGlob)
-
 			matches, err := filepath.Glob(fullGlob)
 			if err == nil && len(matches) > 0 {
 				searchDirs = matches
@@ -118,12 +116,18 @@ func ListMediaFiles(collectionName string) ([]MediaFile, error) {
 			if publicFolder != "" && !strings.Contains(publicFolder, "{{") {
 				usagePath = filepath.ToSlash(filepath.Join(publicFolder, entry.Name()))
 			} else {
-				if strings.HasPrefix(relPath, "static/") {
-					usagePath = "/" + strings.TrimPrefix(relPath, "static/")
-				} else if strings.HasPrefix(relPath, "content/") {
-					usagePath = entry.Name()
+				if collectionName != "" {
+					// User Requirement: /{folder}/{media_folder}/{filename}
+					// Matches repo-relative path starting with /
+					usagePath = "/" + relPath
 				} else {
-					usagePath = entry.Name()
+					if strings.HasPrefix(relPath, "static/") {
+						usagePath = "/" + strings.TrimPrefix(relPath, "static/")
+					} else if strings.HasPrefix(relPath, "content/") {
+						usagePath = entry.Name()
+					} else {
+						usagePath = entry.Name()
+					}
 				}
 			}
 
@@ -216,13 +220,17 @@ func SaveMediaFile(header *multipart.FileHeader, collectionName, articlePath str
 	if publicFolder != "" && !strings.Contains(publicFolder, "{{") {
 		usagePath = filepath.ToSlash(filepath.Join(publicFolder, filename))
 	} else {
-		relPath, _ := filepath.Rel(config.RepoPath, fullMediaPath)
-		relPath = filepath.ToSlash(relPath)
-		
-		if strings.HasPrefix(relPath, "static/") {
-			usagePath = "/" + strings.TrimPrefix(relPath, "static/")
+		finalRepoPath, _ := filepath.Rel(config.RepoPath, fullMediaPath)
+		finalRepoPath = filepath.ToSlash(finalRepoPath)
+
+		if collectionName != "" {
+			usagePath = "/" + finalRepoPath
 		} else {
-			usagePath = filename
+			if strings.HasPrefix(finalRepoPath, "static/") {
+				usagePath = "/" + strings.TrimPrefix(finalRepoPath, "static/")
+			} else {
+				usagePath = filename
+			}
 		}
 	}
 	
