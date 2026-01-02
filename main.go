@@ -82,6 +82,7 @@ func main() {
 		api := authorized.Group("/api")
 		{
 			api.POST("/build", handlers.HandleBuild)
+			api.POST("/build/restart", handlers.HandleRestart)
 			api.GET("/articles", handlers.ListArticles)
 			api.GET("/article", handlers.GetArticle)
 			api.POST("/article", handlers.SaveArticle)

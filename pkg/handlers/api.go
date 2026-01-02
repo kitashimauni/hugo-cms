@@ -19,6 +19,14 @@ func HandleBuild(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "log": "Preview managed by Hugo Server"})
 }
 
+func HandleRestart(c *gin.Context) {
+	if err := services.RestartHugoServer(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "log": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "log": "Hugo Server Restarted"})
+}
+
 func HandleSync(c *gin.Context) {
 	session := sessions.Default(c)
 	token, ok := session.Get("access_token").(string)

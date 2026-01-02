@@ -76,6 +76,11 @@ export async function runBuild() {
     return await res.json();
 }
 
+export async function restartHugo() {
+    const res = await fetch('/api/build/restart', { method: 'POST' });
+    return await res.json();
+}
+
 export async function runSync() {
     const res = await fetch('/api/sync', { method: 'POST' });
     return await res.json();

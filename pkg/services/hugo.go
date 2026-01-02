@@ -53,6 +53,18 @@ func StartHugoServer() error {
 	return nil
 }
 
+func RestartHugoServer() error {
+	if hugoServerCmd != nil && hugoServerCmd.Process != nil {
+		fmt.Println("[Hugo] Stopping existing server...")
+		if err := hugoServerCmd.Process.Kill(); err != nil {
+			return fmt.Errorf("failed to kill hugo server: %w", err)
+		}
+		// Give it a moment to release ports
+		time.Sleep(1 * time.Second)
+	}
+	return StartHugoServer()
+}
+
 func BuildSite() (string, error) {
 	start := time.Now()
 	defer func() {
