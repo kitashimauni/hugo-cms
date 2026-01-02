@@ -25,6 +25,7 @@ var (
 
 	// Media settings
 	ArticleMediaDir = ""
+	StaticMediaDir  = ""
 
 	// Git settings
 	GitUserEmail = "bot@hugo-cms.local"
@@ -59,6 +60,7 @@ func Init() {
 	HugoServerBind = getEnv("HUGO_SERVER_BIND", "127.0.0.1")
 
 	ArticleMediaDir = getEnv("ARTICLE_MEDIA_DIR", "")
+	StaticMediaDir = getEnv("STATIC_MEDIA_DIR", "")
 
 	GitUserEmail = getEnv("GIT_USER_EMAIL", "bot@hugo-cms.local")
 	GitUserName = getEnv("GIT_USER_NAME", "Hugo CMS Bot")

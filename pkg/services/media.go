@@ -26,8 +26,8 @@ func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 	
 	// Determine search roots based on mode
 	if mode == "static" {
-		// List all files in repo/static
-		staticDir := filepath.Join(config.RepoPath, "static")
+		// List all files in repo/static/{StaticMediaDir}
+		staticDir := filepath.Join(config.RepoPath, "static", config.StaticMediaDir)
 		if _, err := os.Stat(staticDir); err == nil {
 			searchDirs = append(searchDirs, staticDir)
 		}
@@ -44,7 +44,7 @@ func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 		}
 	} else {
 		// Default/Fallback: maybe show static?
-		staticDir := filepath.Join(config.RepoPath, "static")
+		staticDir := filepath.Join(config.RepoPath, "static", config.StaticMediaDir)
 		if _, err := os.Stat(staticDir); err == nil {
 			searchDirs = append(searchDirs, staticDir)
 		}
@@ -71,7 +71,10 @@ func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 				// Determine Usage Path
 				usagePath := ""
 				if mode == "static" {
-					// repo/static/img.png -> /img.png
+					// repo/static/sub/img.png -> /sub/img.png (relative to static)
+					// BUT usually Hugo static files are served at root.
+					// So if StaticMediaDir is "uploads", path is repo/static/uploads/img.png
+					// Usage path: /uploads/img.png
 					staticRel, _ := filepath.Rel(filepath.Join(config.RepoPath, "static"), path)
 					usagePath = "/" + filepath.ToSlash(staticRel)
 				} else {
@@ -115,12 +118,7 @@ func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*Med
 	var targetDir string
 
 	if mode == "static" {
-		// Save to static/uploads? or just static?
-		// Let's use static/images as a default convention if it exists, else static/
-		// Or maybe checking config?
-		// User didn't specify static upload structure.
-		// Let's dump in static/ for now or static/uploads.
-		targetDir = filepath.Join(config.RepoPath, "static", "uploads")
+		targetDir = filepath.Join(config.RepoPath, "static", config.StaticMediaDir)
 	} else {
 		// Content mode
 		if articlePath == "" {
