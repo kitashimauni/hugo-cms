@@ -31,6 +31,9 @@ async function init() {
 
     // Editor
     window.loadFile = Editor.loadFile;
+    window.buildAndPreview = async () => {
+        await Editor.execAutoSave();
+    };
     window.saveFile = async () => {
         await Editor.saveFile();
         await refreshFileList();

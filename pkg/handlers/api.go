@@ -21,19 +21,27 @@ func HandleBuild(c *gin.Context) {
 
 func HandleSync(c *gin.Context) {
 	session := sessions.Default(c)
-	token := session.Get("access_token").(string)
+	token, ok := session.Get("access_token").(string)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session token"})
+		return
+	}
 	log, err := services.SyncRepo(token)
 
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "log": log})
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "log": log})
 		return
 	}
-	c.JSON(200, gin.H{"status": "ok", "log": log})
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "log": log})
 }
 
 func HandlePublish(c *gin.Context) {
 	session := sessions.Default(c)
-	token := session.Get("access_token").(string)
+	token, ok := session.Get("access_token").(string)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session token"})
+		return
+	}
 
 	var req struct {
 		Path string `json:"path"`
