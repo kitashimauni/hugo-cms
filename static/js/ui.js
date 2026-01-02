@@ -1,4 +1,5 @@
 // ui.js - 画面描画ロジック
+import * as API from './api.js';
 
 export function switchView(viewName) {
     const contentArea = document.getElementById('content-area');
@@ -562,4 +563,199 @@ export function showToast(message, type = 'info') {
             setTimeout(() => toast.remove(), 300);
         }
     }, 5000);
+}
+
+export async function showMediaLibrary(onSelect, collectionName = null, currentPath = null) {
+    const overlay = document.getElementById('modal-overlay');
+    const header = document.getElementById('modal-header');
+    const body = document.getElementById('modal-body');
+
+    header.querySelector('span').textContent = "Media Library";
+    body.innerHTML = '';
+    overlay.style.display = 'flex';
+
+    // Tabs
+    const tabs = document.createElement('div');
+    tabs.style.display = 'flex';
+    tabs.style.gap = '10px';
+    tabs.style.marginBottom = '15px';
+    tabs.style.borderBottom = '1px solid #444';
+    tabs.style.paddingBottom = '5px';
+
+    const createTab = (id, label) => {
+        const t = document.createElement('button');
+        t.textContent = label;
+        t.style.padding = '8px 16px';
+        t.style.border = 'none';
+        t.style.background = 'transparent';
+        t.style.color = '#888';
+        t.style.cursor = 'pointer';
+        t.style.fontSize = '14px';
+        t.style.fontWeight = 'bold';
+        t.id = `tab-media-${id}`;
+        return t;
+    };
+
+    const tabStatic = createTab('static', 'Static');
+    const tabArticle = createTab('content', 'Article');
+
+    const isBundle = currentPath && (currentPath.endsWith('/index.md') || currentPath.endsWith('/_index.md'));
+
+    if (!isBundle) {
+        tabArticle.disabled = true;
+        tabArticle.style.opacity = '0.5';
+        tabArticle.title = "Only available for page bundles (index.md)";
+    }
+
+    tabs.appendChild(tabStatic);
+    tabs.appendChild(tabArticle);
+    body.appendChild(tabs);
+
+    const contentArea = document.createElement('div');
+    body.appendChild(contentArea);
+
+    // Tab Logic
+    const switchTab = (mode) => {
+        // Update styles
+        [tabStatic, tabArticle].forEach(t => {
+            t.style.borderBottom = 'none';
+            t.style.color = '#888';
+        });
+        const activeTab = mode === 'static' ? tabStatic : tabArticle;
+        activeTab.style.borderBottom = '2px solid #6f42c1';
+        activeTab.style.color = '#fff';
+
+        // Load content
+        loadAndRenderMedia(contentArea, mode, currentPath, onSelect);
+    };
+
+    tabStatic.onclick = () => switchTab('static');
+    tabArticle.onclick = () => { if(isBundle) switchTab('content'); };
+
+    // Default tab
+    switchTab(isBundle ? 'content' : 'static');
+}
+
+async function loadAndRenderMedia(container, mode, currentPath, onSelect) {
+    container.innerHTML = 'Loading...';
+    try {
+        const files = await API.fetchMedia(mode, currentPath);
+        renderMediaGrid(container, files || [], mode, currentPath, onSelect);
+    } catch (e) {
+        container.innerHTML = `<p style="color:red">Failed to load media: ${e.message}</p>`;
+    }
+}
+
+function renderMediaGrid(container, files, mode, currentPath, onSelect) {
+    container.innerHTML = '';
+
+    // Toolbar (Upload)
+    const toolbar = document.createElement('div');
+    toolbar.style.marginBottom = '10px';
+    toolbar.style.display = 'flex';
+    toolbar.style.justifyContent = 'space-between';
+    
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/*';
+    fileInput.style.display = 'none';
+    fileInput.onchange = async (e) => {
+        if (e.target.files.length > 0) {
+            const file = e.target.files[0];
+            showToast("Uploading...", "info");
+            try {
+                await API.uploadMedia(file, mode, currentPath);
+                showToast("Uploaded!", "success");
+                loadAndRenderMedia(container, mode, currentPath, onSelect);
+            } catch (err) {
+                showToast("Upload failed: " + err.message, "error");
+            }
+        }
+    };
+
+    const uploadBtn = document.createElement('button');
+    uploadBtn.className = 'action-btn';
+    uploadBtn.textContent = `⬆ Upload to ${mode === 'static' ? 'Static' : 'Article'}`;
+    uploadBtn.onclick = () => fileInput.click();
+
+    toolbar.appendChild(uploadBtn);
+    container.appendChild(toolbar);
+    container.appendChild(fileInput);
+
+    // Grid
+    const grid = document.createElement('div');
+    grid.style.display = 'grid';
+    grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(100px, 1fr))';
+    grid.style.gap = '10px';
+    grid.style.maxHeight = '400px';
+    grid.style.overflowY = 'auto';
+
+    if (files.length === 0) {
+        grid.innerHTML = '<p style="grid-column: 1/-1; text-align:center; color:#888;">No images found.</p>';
+    }
+
+    files.forEach(f => {
+        const item = document.createElement('div');
+        item.style.border = '1px solid #444';
+        item.style.borderRadius = '4px';
+        item.style.overflow = 'hidden';
+        item.style.cursor = 'pointer';
+        item.style.position = 'relative';
+        item.style.backgroundColor = '#222';
+
+        const img = document.createElement('img');
+        img.src = f.url;
+        img.style.width = '100%';
+        img.style.height = '100px';
+        img.style.objectFit = 'cover';
+        img.title = f.name;
+
+        const name = document.createElement('div');
+        name.textContent = f.name;
+        name.style.position = 'absolute';
+        name.style.bottom = '0';
+        name.style.width = '100%';
+        name.style.background = 'rgba(0,0,0,0.7)';
+        name.style.fontSize = '10px';
+        name.style.padding = '2px';
+        name.style.whiteSpace = 'nowrap';
+        name.style.overflow = 'hidden';
+        name.style.textOverflow = 'ellipsis';
+        name.style.textAlign = 'center';
+
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '×';
+        delBtn.style.position = 'absolute';
+        delBtn.style.top = '0';
+        delBtn.style.right = '0';
+        delBtn.style.background = 'red';
+        delBtn.style.color = 'white';
+        delBtn.style.border = 'none';
+        delBtn.style.cursor = 'pointer';
+        delBtn.style.padding = '0 5px';
+        
+        delBtn.onclick = async (e) => {
+            e.stopPropagation();
+            if (!confirm(`Delete ${f.name}?`)) return;
+            try {
+                await API.deleteMedia(f.repo_path);
+                showToast("Deleted", "success");
+                loadAndRenderMedia(container, mode, currentPath, onSelect);
+            } catch (err) {
+                showToast("Delete failed", "error");
+            }
+        };
+
+        item.onclick = () => {
+            onSelect(f);
+            closeModal();
+        };
+
+        item.appendChild(img);
+        item.appendChild(name);
+        item.appendChild(delBtn);
+        grid.appendChild(item);
+    });
+
+    container.appendChild(grid);
 }

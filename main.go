@@ -91,6 +91,10 @@ func main() {
 			api.GET("/config", handlers.GetConfig)
 			api.POST("/sync", handlers.HandleSync)
 			api.POST("/publish", handlers.HandlePublish)
+			api.GET("/media", handlers.ListMedia)
+			api.POST("/media", handlers.UploadMedia)
+			api.POST("/media/delete", handlers.DeleteMedia)
+			api.GET("/media/raw", handlers.ServeMediaRaw)
 		}
 	}
 
