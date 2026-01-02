@@ -73,11 +73,13 @@ func ListMediaFiles(collectionName string) ([]MediaFile, error) {
 		strategies = []string{mediaFolder}
 	}
 
+	fmt.Printf("[ListMedia] Collection: '%s', Folder: '%s', MediaFolder: '%s'\n", collectionName, collectionFolder, mediaFolder)
+
 	for _, pattern := range strategies {
 		pattern = strings.TrimLeft(pattern, `/\`)
 		
 		if strings.Contains(pattern, "{{") {
-			re := regexp.MustCompile(`\{\{[^}]+\}\} `)
+			re := regexp.MustCompile(`\{\{[^}]+\}\}`)
 			globPattern := re.ReplaceAllString(pattern, "*")
 			fullGlob := filepath.Join(config.RepoPath, globPattern)
 			
