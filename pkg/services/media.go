@@ -18,7 +18,7 @@ type MediaFile struct {
 	Path     string `json:"path"` // Relative path for usage in markdown
 	Size     int64  `json:"size"`
 	URL      string `json:"url"`  // URL for preview
-	RepoPath string `json:"repo_path"` // Unique path relative to RepoPath for deletion
+	RepoPath string `json:"repo_path"`
 }
 
 func GetMediaConfig(collectionName string) (string, string, error) {
@@ -50,29 +50,54 @@ func ListMediaFiles(collectionName string) ([]MediaFile, error) {
 		return nil, err
 	}
 
-	mediaFolder = strings.TrimLeft(mediaFolder, "/\\")
-
-	var files []MediaFile
-	var searchDirs []string
-
-	if strings.Contains(mediaFolder, "{{") {
-		re := regexp.MustCompile(`\{\{[^}]+\}\\}`)
-		globPattern := re.ReplaceAllString(mediaFolder, "*")
-		fullGlob := filepath.Join(config.RepoPath, globPattern)
-
-		matches, err := filepath.Glob(fullGlob)
-		if err != nil {
-			return nil, err
+	var collectionFolder string
+	if collectionName != "" {
+		cfg, _ := GetCMSConfig()
+		for _, col := range cfg.Collections {
+			if col.Name == collectionName {
+				collectionFolder = col.Folder
+				break
+			}
 		}
-		searchDirs = matches
-	} else {
-		fullMediaPath := filepath.Join(config.RepoPath, mediaFolder)
-		if _, err := os.Stat(fullMediaPath); os.IsNotExist(err) {
-			os.MkdirAll(fullMediaPath, 0755)
-		}
-		searchDirs = []string{fullMediaPath}
 	}
 
+	var searchDirs []string
+	
+	// Strategies: 1. As configured (relative to repo), 2. Relative to collection folder
+	strategies := []string{mediaFolder}
+	if collectionFolder != "" {
+		// Try appending mediaFolder to collectionFolder
+		// Clean mediaFolder first to ensure it joins correctly
+		cleanMF := strings.TrimLeft(mediaFolder, `/\`)
+		strategies = append(strategies, filepath.Join(collectionFolder, cleanMF))
+	}
+
+	for _, pattern := range strategies {
+		pattern = strings.TrimLeft(pattern, `/\`)
+		
+		if strings.Contains(pattern, "{{") {
+			re := regexp.MustCompile(`\{\{[^}]+\}\}`)
+			globPattern := re.ReplaceAllString(pattern, "*")
+			fullGlob := filepath.Join(config.RepoPath, globPattern)
+			
+			// Debug
+			fmt.Printf("[ListMedia] Trying Glob: %s\n", fullGlob)
+
+			matches, err := filepath.Glob(fullGlob)
+			if err == nil && len(matches) > 0 {
+				searchDirs = matches
+				break
+			}
+		} else {
+			fullPath := filepath.Join(config.RepoPath, pattern)
+			if info, err := os.Stat(fullPath); err == nil && info.IsDir() {
+				searchDirs = []string{fullPath}
+				break
+			}
+		}
+	}
+
+	var files []MediaFile
 	for _, dir := range searchDirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -89,6 +114,7 @@ func ListMediaFiles(collectionName string) ([]MediaFile, error) {
 			relPath = filepath.ToSlash(relPath)
 
 			usagePath := ""
+			// Usage path logic
 			if publicFolder != "" && !strings.Contains(publicFolder, "{{") {
 				usagePath = filepath.ToSlash(filepath.Join(publicFolder, entry.Name()))
 			} else {
@@ -129,7 +155,7 @@ func SaveMediaFile(header *multipart.FileHeader, collectionName, articlePath str
 		return nil, err
 	}
 
-	mediaFolder = strings.TrimLeft(mediaFolder, "/\\")
+	mediaFolder = strings.TrimLeft(mediaFolder, `/\`)
 
 	resolvedMediaFolder := mediaFolder
 	if strings.Contains(mediaFolder, "{{") {
@@ -142,7 +168,7 @@ func SaveMediaFile(header *multipart.FileHeader, collectionName, articlePath str
 		lastBrace := strings.LastIndex(mediaFolder, "}}")
 		if lastBrace != -1 && lastBrace < len(mediaFolder)-2 {
 			suffix = mediaFolder[lastBrace+2:]
-			suffix = strings.TrimLeft(suffix, "/\\")
+			suffix = strings.TrimLeft(suffix, `/\`)
 		}
 
 		fullTargetDir := filepath.Join(config.RepoPath, "content", bundleDir, suffix)
