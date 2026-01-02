@@ -1,4 +1,5 @@
 // ui.js - 画面描画ロジック
+import * as API from './api.js';
 
 export function switchView(viewName) {
     const contentArea = document.getElementById('content-area');
@@ -562,4 +563,140 @@ export function showToast(message, type = 'info') {
             setTimeout(() => toast.remove(), 300);
         }
     }, 5000);
+}
+
+export async function showMediaLibrary(onSelect) {
+    const overlay = document.getElementById('modal-overlay');
+    const header = document.getElementById('modal-header');
+    const body = document.getElementById('modal-body');
+
+    header.querySelector('span').textContent = "Media Library";
+    body.innerHTML = 'Loading...';
+    overlay.style.display = 'flex';
+
+    try {
+        const files = await API.fetchMedia();
+        renderMediaLibrary(body, files, onSelect);
+    } catch (e) {
+        body.innerHTML = `<p style="color:red">Failed to load media: ${e.message}</p>`;
+    }
+}
+
+function renderMediaLibrary(container, files, onSelect) {
+    container.innerHTML = '';
+
+    // Toolbar
+    const toolbar = document.createElement('div');
+    toolbar.style.marginBottom = '10px';
+    toolbar.style.display = 'flex';
+    toolbar.style.justifyContent = 'space-between';
+    toolbar.style.alignItems = 'center';
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/*';
+    fileInput.style.display = 'none';
+    fileInput.onchange = async (e) => {
+        if (e.target.files.length > 0) {
+            const file = e.target.files[0];
+            showToast("Uploading...", "info");
+            try {
+                const newFile = await API.uploadMedia(file);
+                showToast("Uploaded!", "success");
+                // Refresh list
+                const updatedFiles = await API.fetchMedia();
+                renderMediaLibrary(container, updatedFiles, onSelect);
+            } catch (err) {
+                showToast("Upload failed: " + err.message, "error");
+            }
+        }
+    };
+
+    const uploadBtn = document.createElement('button');
+    uploadBtn.className = 'action-btn';
+    uploadBtn.textContent = '⬆ Upload Image';
+    uploadBtn.onclick = () => fileInput.click();
+
+    toolbar.appendChild(uploadBtn);
+    container.appendChild(toolbar);
+    container.appendChild(fileInput);
+
+    // Grid
+    const grid = document.createElement('div');
+    grid.style.display = 'grid';
+    grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(100px, 1fr))';
+    grid.style.gap = '10px';
+    grid.style.maxHeight = '400px';
+    grid.style.overflowY = 'auto';
+
+    if (files.length === 0) {
+        grid.innerHTML = '<p style="grid-column: 1/-1; text-align:center; color:#888;">No images found.</p>';
+    }
+
+    files.forEach(f => {
+        const item = document.createElement('div');
+        item.style.border = '1px solid #444';
+        item.style.borderRadius = '4px';
+        item.style.overflow = 'hidden';
+        item.style.cursor = 'pointer';
+        item.style.position = 'relative';
+        item.style.backgroundColor = '#222';
+
+        const img = document.createElement('img');
+        img.src = f.url;
+        img.style.width = '100%';
+        img.style.height = '100px';
+        img.style.objectFit = 'cover';
+        img.title = f.name;
+
+        // Overlay name
+        const name = document.createElement('div');
+        name.textContent = f.name;
+        name.style.position = 'absolute';
+        name.style.bottom = '0';
+        name.style.width = '100%';
+        name.style.background = 'rgba(0,0,0,0.7)';
+        name.style.fontSize = '10px';
+        name.style.padding = '2px';
+        name.style.whiteSpace = 'nowrap';
+        name.style.overflow = 'hidden';
+        name.style.textOverflow = 'ellipsis';
+        name.style.textAlign = 'center';
+
+        // Delete button (small X)
+        const delBtn = document.createElement('button');
+        delBtn.textContent = '×';
+        delBtn.style.position = 'absolute';
+        delBtn.style.top = '0';
+        delBtn.style.right = '0';
+        delBtn.style.background = 'red';
+        delBtn.style.color = 'white';
+        delBtn.style.border = 'none';
+        delBtn.style.cursor = 'pointer';
+        delBtn.style.padding = '0 5px';
+        delBtn.onclick = async (e) => {
+            e.stopPropagation();
+            if (!confirm(`Delete ${f.name}?`)) return;
+            try {
+                await API.deleteMedia(f.name);
+                showToast("Deleted", "success");
+                const updatedFiles = await API.fetchMedia();
+                renderMediaLibrary(container, updatedFiles, onSelect);
+            } catch (err) {
+                showToast("Delete failed", "error");
+            }
+        };
+
+        item.onclick = () => {
+            onSelect(f);
+            closeModal();
+        };
+
+        item.appendChild(img);
+        item.appendChild(name);
+        item.appendChild(delBtn);
+        grid.appendChild(item);
+    });
+
+    container.appendChild(grid);
 }

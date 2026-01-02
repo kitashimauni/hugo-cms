@@ -1,7 +1,9 @@
 package models
 
 type CMSConfig struct {
-	Collections []Collection `yaml:"collections"`
+	MediaFolder  string       `yaml:"media_folder"`
+	PublicFolder string       `yaml:"public_folder"`
+	Collections  []Collection `yaml:"collections"`
 }
 
 type Collection struct {

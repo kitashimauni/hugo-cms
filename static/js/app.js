@@ -40,6 +40,12 @@ async function init() {
     };
     window.createNewFile = () => Editor.createNewFile(refreshFileList);
     window.deleteFile = () => Editor.deleteFile(refreshFileList);
+    window.insertImage = () => {
+        UI.showMediaLibrary((file) => {
+            const markdown = `![${file.name}](${file.path})`;
+            Editor.insertText(markdown);
+        });
+    };
     window.resetChanges = Editor.resetChanges;
     window.showDiff = Editor.showDiff;
 

@@ -185,6 +185,22 @@ export async function resetChanges() {
     UI.showToast("Changes discarded", "info");
 }
 
+export function insertText(text) {
+    const editor = document.getElementById('editor');
+    if (!editor) return;
+
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    const val = editor.value;
+
+    editor.value = val.substring(0, start) + text + val.substring(end);
+    editor.selectionStart = editor.selectionEnd = start + text.length;
+    editor.focus();
+    
+    // Trigger input event for auto-save
+    editor.dispatchEvent(new Event('input'));
+}
+
 export async function showDiff() {
     if (!currentPath) return;
     const payload = getPayload();
