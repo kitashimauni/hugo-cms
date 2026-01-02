@@ -67,6 +67,15 @@ func main() {
 
 	r.Static("/static", "./static") // Serve static assets (css/js)
 
+	// Fallback proxy for site assets (e.g. /images/...) protected by auth
+	r.NoRoute(handlers.AuthRequired, func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "API route not found"})
+			return
+		}
+		proxy.ServeHTTP(c.Writer, c.Request)
+	})
+
 	// --- Auth Routes ---
 	r.GET("/login", handlers.LoginPage)
 	r.GET("/login/github", handlers.GithubLogin)
