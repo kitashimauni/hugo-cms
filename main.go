@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/handlers"
@@ -31,7 +33,14 @@ func main() {
 	isSecure := strings.HasPrefix(appURL, "https://")
 
 	// Session Setup
-	store := cookie.NewStore([]byte(os.Getenv("SESSION_SECRET")))
+	secret := os.Getenv("SESSION_SECRET")
+	if secret == "" {
+		fmt.Println("WARNING: SESSION_SECRET is not set. Using a temporary random secret.")
+		b := make([]byte, 32)
+		rand.Read(b)
+		secret = base64.StdEncoding.EncodeToString(b)
+	}
+	store := cookie.NewStore([]byte(secret))
 	store.Options(sessions.Options{
 		Path:     "/",
 		MaxAge:   86400 * 7,

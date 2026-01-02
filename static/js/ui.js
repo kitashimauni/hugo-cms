@@ -7,7 +7,7 @@ export function switchView(viewName) {
 
     document.getElementById('edit-view').style.display = 'none';
     document.getElementById('preview-view').style.display = 'none';
-    
+
     if (viewName === 'edit') {
         document.getElementById('edit-view').style.display = 'flex';
     } else if (viewName === 'preview') {
@@ -28,12 +28,12 @@ export function toggleSplitView() {
     const contentArea = document.getElementById('content-area');
     const isSplit = contentArea.classList.toggle('split-mode');
     const splitBtn = document.getElementById('btn-view-split');
-    
+
     if (isSplit) {
         splitBtn.classList.add('active');
         document.getElementById('btn-view-edit').classList.remove('active');
         document.getElementById('btn-view-preview').classList.remove('active');
-        
+
         // Trigger build since preview is shown
         if (window.buildAndPreview) window.buildAndPreview();
     } else {
@@ -57,7 +57,7 @@ export function toggleSidebar() {
 export async function showLoadingEditor() {
     const fmContainer = document.getElementById('fm-container');
     const editor = document.getElementById('editor');
-    
+
     // switchView('edit'); // Removed to preserve current view
     fmContainer.style.display = 'none';
     editor.value = "Loading...";
@@ -138,7 +138,7 @@ function renderCollectionGroup(container, label, files) {
     const details = document.createElement('details');
     details.open = true;
     details.style.marginBottom = '10px';
-    
+
     const summary = document.createElement('summary');
     summary.textContent = label;
     summary.style.cursor = 'pointer';
@@ -147,24 +147,24 @@ function renderCollectionGroup(container, label, files) {
     summary.style.color = '#fff';
     summary.style.fontWeight = 'bold';
     summary.style.borderBottom = '1px solid #444';
-    
+
     details.appendChild(summary);
 
     files.forEach(f => {
         const div = document.createElement('div');
         div.className = 'file-item';
-        div.style.paddingLeft = '20px'; 
-        
+        div.style.paddingLeft = '20px';
+
         const titleDiv = document.createElement('div');
         titleDiv.style.fontWeight = 'bold';
-        
+
         let titleText = f.title || f.path;
         if (f.is_dirty) {
             titleText = "✎ " + titleText;
             titleDiv.style.color = "#e2c08d";
         }
         titleDiv.textContent = titleText;
-        
+
         const pathDiv = document.createElement('div');
         pathDiv.style.fontSize = '12px';
         pathDiv.style.color = '#888';
@@ -172,7 +172,7 @@ function renderCollectionGroup(container, label, files) {
 
         div.appendChild(titleDiv);
         div.appendChild(pathDiv);
-        
+
         // グローバル関数 loadFile を呼び出す
         div.onclick = () => window.loadFile(f.path);
         details.appendChild(div);
@@ -194,10 +194,10 @@ function getCollectionForPath(path, config) {
 
 function renderFrontMatterForm(fm, path, config, container) {
     container.innerHTML = '';
-    
+
     const details = document.createElement('details');
     details.style.marginBottom = '10px';
-    
+
     const summary = document.createElement('summary');
     summary.textContent = "Article Settings";
     summary.style.fontWeight = 'bold';
@@ -207,14 +207,14 @@ function renderFrontMatterForm(fm, path, config, container) {
     summary.style.color = '#ccc';
     summary.style.borderRadius = '4px';
     summary.style.outline = 'none';
-    
+
     details.appendChild(summary);
-    
+
     const wrapper = document.createElement('div');
     wrapper.style.padding = '10px';
     wrapper.style.border = '1px solid #333';
     wrapper.style.borderTop = 'none';
-    
+
     const fragment = document.createDocumentFragment();
     const collection = getCollectionForPath(path, config);
     const definedFields = collection ? collection.fields : [];
@@ -235,7 +235,7 @@ function renderFrontMatterForm(fm, path, config, container) {
             renderField(fragment, { name: key, label: key + " (Extra)", widget: widget }, value);
         }
     }
-    
+
     wrapper.appendChild(fragment);
     details.appendChild(wrapper);
     container.appendChild(details);
@@ -244,7 +244,7 @@ function renderFrontMatterForm(fm, path, config, container) {
 function renderField(container, field, value) {
     const div = document.createElement('div');
     div.className = 'fm-field';
-    
+
     const label = document.createElement('label');
     label.className = 'fm-label';
     label.textContent = field.label || field.name;
@@ -256,21 +256,22 @@ function renderField(container, field, value) {
         wrapper.style.gap = '5px';
         const input = createInputForWidget(field, value);
         input.style.flex = '1';
-        
+
         const nowBtn = document.createElement('button');
         nowBtn.textContent = 'Now';
-        nowBtn.className = 'action-btn'; 
+        nowBtn.className = 'action-btn';
         nowBtn.style.background = '#444';
         nowBtn.style.padding = '4px 8px';
         nowBtn.style.fontSize = '12px';
         nowBtn.onclick = () => {
             const d = new Date();
-            const pad = (n) => n < 10 ? '0'+n : n;
-            const localIso = d.getFullYear() + '-' + 
-                           pad(d.getMonth()+1) + '-' + 
-                           pad(d.getDate()) + 'T' + 
-                           pad(d.getHours()) + ':' + 
-                           pad(d.getMinutes());
+            const pad = (n) => n < 10 ? '0' + n : n;
+            const localIso = d.getFullYear() + '-' +
+                           pad(d.getMonth()+1) + '-' +
+                           pad(d.getDate()) + 'T' +
+                           pad(d.getHours()) + ':' +
+                           pad(d.getMinutes()) + ':' +
+                           pad(d.getSeconds());
             input.value = localIso;
         };
         wrapper.appendChild(input);
@@ -299,14 +300,15 @@ function createInputForWidget(field, value) {
         if (value) {
             try {
                 const d = new Date(value);
-                const pad = (n) => n < 10 ? '0'+n : n;
-                const localIso = d.getFullYear() + '-' + 
-                               pad(d.getMonth()+1) + '-' + 
-                               pad(d.getDate()) + 'T' + 
-                               pad(d.getHours()) + ':' + 
-                               pad(d.getMinutes());
+                const pad = (n) => n < 10 ? '0' + n : n;
+                const localIso = d.getFullYear() + '-' +
+                               pad(d.getMonth()+1) + '-' +
+                               pad(d.getDate()) + 'T' +
+                               pad(d.getHours()) + ':' +
+                               pad(d.getMinutes()) + ':' +
+                               pad(d.getSeconds());
                 input.value = localIso;
-            } catch(e) {
+            } catch (e) {
                 input.value = value;
             }
         }
@@ -338,19 +340,19 @@ function createInputForWidget(field, value) {
 export function collectFrontMatter() {
     const fm = {};
     const inputs = document.querySelectorAll('#fm-container input');
-    
+
     inputs.forEach(input => {
         const key = input.dataset.key;
         const widget = input.dataset.widget;
-        
+
         if (widget === 'boolean') {
             fm[key] = input.checked;
         } else if (widget === 'list') {
             const val = input.value.trim();
             if (val === "") {
-                 fm[key] = [];
+                fm[key] = [];
             } else {
-                 fm[key] = val.split(',').map(s => s.trim()).filter(s => s !== "");
+                fm[key] = val.split(',').map(s => s.trim()).filter(s => s !== "");
             }
         } else if (widget === 'datetime') {
             if (input.value) {
@@ -360,14 +362,14 @@ export function collectFrontMatter() {
                 const dif = tzo >= 0 ? '+' : '-';
                 const offH = pad(Math.floor(Math.abs(tzo) / 60));
                 const offM = pad(Math.abs(tzo) % 60);
-                
-                fm[key] = d.getFullYear() + '-' + 
-                          pad(d.getMonth() + 1) + '-' + 
-                          pad(d.getDate()) + 'T' + 
-                          pad(d.getHours()) + ':' + 
-                          pad(d.getMinutes()) + ':' + 
-                          pad(d.getSeconds()) + 
-                          dif + offH + ':' + offM;
+
+                fm[key] = d.getFullYear() + '-' +
+                    pad(d.getMonth() + 1) + '-' +
+                    pad(d.getDate()) + 'T' +
+                    pad(d.getHours()) + ':' +
+                    pad(d.getMinutes()) + ':' +
+                    pad(d.getSeconds()) +
+                    dif + offH + ':' + offM;
             } else {
                 fm[key] = null;
             }
@@ -380,8 +382,8 @@ export function collectFrontMatter() {
 
 export function setPreviewUrl(path) {
     const frame = document.getElementById('preview-frame');
-    let previewPath = path.replace(/\.md$/, ""); 
-    
+    let previewPath = path.replace(/\.md$/, "");
+
     if (previewPath.endsWith("/index") || previewPath.endsWith("/_index")) {
         previewPath = previewPath.substring(0, previewPath.lastIndexOf("/"));
     } else if (previewPath === "index" || previewPath === "_index") {
@@ -403,7 +405,7 @@ export function toggleHeaderMenu() {
 }
 
 // Close the dropdown if the user clicks outside of it
-window.onclick = function(event) {
+window.onclick = function (event) {
     if (!event.target.matches('.mobile-actions button') && !event.target.matches('.mobile-actions button *')) {
         const dropdowns = document.getElementsByClassName("dropdown-content");
         for (let i = 0; i < dropdowns.length; i++) {
@@ -433,12 +435,12 @@ export function showCreationModal(config, onCreate) {
     const selWrapper = document.createElement('div');
     selWrapper.style.marginBottom = '15px';
     selWrapper.innerHTML = '<strong>Collection: </strong>';
-    
+
     const select = document.createElement('select');
     select.className = 'fm-input';
     select.style.width = 'auto';
     select.style.display = 'inline-block';
-    
+
     config.collections.forEach(c => {
         const opt = document.createElement('option');
         opt.value = c.name;
@@ -474,7 +476,7 @@ export function showCreationModal(config, onCreate) {
     const btnDiv = document.createElement('div');
     btnDiv.style.marginTop = '20px';
     btnDiv.style.textAlign = 'right';
-    
+
     const createBtn = document.createElement('button');
     createBtn.className = 'action-btn';
     createBtn.style.background = '#2da44e';
@@ -487,7 +489,7 @@ export function showCreationModal(config, onCreate) {
         inputs.forEach(input => {
             const key = input.dataset.key;
             const widget = input.dataset.widget;
-             if (widget === 'boolean') {
+            if (widget === 'boolean') {
                 fields[key] = input.checked;
             } else if (widget === 'list') {
                 const val = input.value.trim();
@@ -500,14 +502,14 @@ export function showCreationModal(config, onCreate) {
                     const dif = tzo >= 0 ? '+' : '-';
                     const offH = pad(Math.floor(Math.abs(tzo) / 60));
                     const offM = pad(Math.abs(tzo) % 60);
-                    
-                    fields[key] = d.getFullYear() + '-' + 
-                              pad(d.getMonth() + 1) + '-' + 
-                              pad(d.getDate()) + 'T' + 
-                              pad(d.getHours()) + ':' + 
-                              pad(d.getMinutes()) + ':' + 
-                              pad(d.getSeconds()) + 
-                              dif + offH + ':' + offM;
+
+                    fields[key] = d.getFullYear() + '-' +
+                        pad(d.getMonth() + 1) + '-' +
+                        pad(d.getDate()) + 'T' +
+                        pad(d.getHours()) + ':' +
+                        pad(d.getMinutes()) + ':' +
+                        pad(d.getSeconds()) +
+                        dif + offH + ':' + offM;
                 } else {
                     fields[key] = null;
                 }
@@ -525,4 +527,39 @@ export function showCreationModal(config, onCreate) {
 
 export function closeModal() {
     document.getElementById('modal-overlay').style.display = 'none';
+}
+
+// Toast Notifications
+export function showToast(message, type = 'info') {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `<span>${message}</span>`;
+
+    // Close button
+    const closeBtn = document.createElement('span');
+    closeBtn.innerHTML = '&times;';
+    closeBtn.style.cursor = 'pointer';
+    closeBtn.style.marginLeft = '10px';
+    closeBtn.onclick = () => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+    };
+    toast.appendChild(closeBtn);
+
+    container.appendChild(toast);
+
+    // Auto remove
+    setTimeout(() => {
+        if (toast.parentElement) {
+            toast.style.animation = 'fadeOut 0.3s forwards';
+            setTimeout(() => toast.remove(), 300);
+        }
+    }, 5000);
 }

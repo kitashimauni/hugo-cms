@@ -14,11 +14,26 @@ import (
 )
 
 func SafeJoin(root, sub, target string) string {
-	cleanTarget := filepath.Clean(target)
-	if strings.Contains(cleanTarget, "..") {
+	// Prevent absolute paths from bypassing the root
+	if filepath.IsAbs(target) {
 		return ""
 	}
-	return filepath.Join(root, sub, cleanTarget)
+
+	intendedRoot := filepath.Join(root, sub)
+	finalPath := filepath.Join(intendedRoot, target)
+
+	// Verify that finalPath is inside intendedRoot using filepath.Rel
+	rel, err := filepath.Rel(intendedRoot, finalPath)
+	if err != nil {
+		return ""
+	}
+
+	// Check if the relative path indicates traversal (starts with "..")
+	if strings.HasPrefix(rel, "..") || rel == ".." {
+		return ""
+	}
+
+	return finalPath
 }
 
 func DeleteFile(targetPath string) error {

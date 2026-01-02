@@ -54,20 +54,20 @@ func ConstructFileContent(fm map[string]interface{}, body string, format string)
 	var buf bytes.Buffer
 	switch format {
 	case "yaml":
-		buf.WriteString("---")
+		buf.WriteString("---\n")
 		enc := yaml.NewEncoder(&buf)
 		enc.SetIndent(2)
 		if err := enc.Encode(normalizedFM); err != nil {
 			return nil, err
 		}
-		buf.WriteString("---")
+		buf.WriteString("---\n")
 	case "toml":
-		buf.WriteString("+++")
+		buf.WriteString("+++\n")
 		enc := toml.NewEncoder(&buf)
 		if err := enc.Encode(normalizedFM); err != nil {
 			return nil, err
 		}
-		buf.WriteString("+++")
+		buf.WriteString("+++\n")
 	case "json":
 		enc := json.NewEncoder(&buf)
 		enc.SetIndent("", "  ")
@@ -81,7 +81,7 @@ func ConstructFileContent(fm map[string]interface{}, body string, format string)
 
 	if body != "" {
 		buf.WriteString("\n")
-		buf.WriteString(body)
+		buf.WriteString(strings.Trim(body, "\r\n"))
 		buf.WriteString("\n")
 	}
 
@@ -119,7 +119,7 @@ func GenerateContentFromCollection(collection models.Collection, overrides map[s
 		} else {
 			switch field.Widget {
 			case "datetime":
-				fm[field.Name] = time.Now().Format(time.RFC3339)
+				fm[field.Name] = time.Now()
 			case "boolean":
 				fm[field.Name] = false
 			case "list":
@@ -192,6 +192,17 @@ func sanitizeFrontMatterValue(value interface{}) interface{} {
 		return float64(v)
 	case int32:
 		return float64(v)
+	case time.Time:
+		return v.Truncate(time.Second)
+	case string:
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			return t.Truncate(time.Second)
+		}
+		// Also try common date-only format YYYY-MM-DD
+		if t, err := time.Parse("2006-01-02", v); err == nil {
+			return t.Truncate(time.Second)
+		}
+		return v
 	default:
 		return v
 	}
@@ -398,6 +409,6 @@ func canonicalizeContentForDiff(content []byte, collection *models.Collection) (
 		return nil, "", err
 	}
 
-	normalizedBody := strings.TrimSpace(normalizeLineEndings(body))
+	normalizedBody := strings.Trim(normalizeLineEndings(body), "\n")
 	return canonicalFM, normalizedBody, nil
 }

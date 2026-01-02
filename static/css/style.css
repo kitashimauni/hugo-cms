@@ -118,3 +118,12 @@ details[open] > summary::before { content: '▾ '; }
     .view-toggle { padding: 4px 8px; }
     header { padding: 0 10px; }
 }
+
+/* Toast Notifications */
+#toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 10px; }
+.toast { background: #333; color: #fff; padding: 12px 20px; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); font-size: 14px; min-width: 250px; display: flex; align-items: center; justify-content: space-between; animation: slideIn 0.3s ease; border-left: 4px solid #0e639c; }
+.toast.success { border-left-color: #2da44e; }
+.toast.error { border-left-color: #ce3a3a; }
+.toast.warning { border-left-color: #e2c08d; }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
