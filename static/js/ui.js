@@ -576,7 +576,7 @@ export async function showMediaLibrary(onSelect) {
 
     try {
         const files = await API.fetchMedia();
-        renderMediaLibrary(body, files, onSelect);
+        renderMediaLibrary(body, files || [], onSelect);
     } catch (e) {
         body.innerHTML = `<p style="color:red">Failed to load media: ${e.message}</p>`;
     }
@@ -605,7 +605,7 @@ function renderMediaLibrary(container, files, onSelect) {
                 showToast("Uploaded!", "success");
                 // Refresh list
                 const updatedFiles = await API.fetchMedia();
-                renderMediaLibrary(container, updatedFiles, onSelect);
+                renderMediaLibrary(container, updatedFiles || [], onSelect);
             } catch (err) {
                 showToast("Upload failed: " + err.message, "error");
             }
@@ -681,7 +681,7 @@ function renderMediaLibrary(container, files, onSelect) {
                 await API.deleteMedia(f.name);
                 showToast("Deleted", "success");
                 const updatedFiles = await API.fetchMedia();
-                renderMediaLibrary(container, updatedFiles, onSelect);
+                renderMediaLibrary(container, updatedFiles || [], onSelect);
             } catch (err) {
                 showToast("Delete failed", "error");
             }
