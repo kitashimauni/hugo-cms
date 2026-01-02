@@ -8,7 +8,8 @@ import (
 )
 
 func ListMedia(c *gin.Context) {
-	files, err := services.ListMediaFiles()
+	collection := c.Query("collection")
+	files, err := services.ListMediaFiles(collection)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list media: " + err.Error()})
 		return
@@ -17,13 +18,14 @@ func ListMedia(c *gin.Context) {
 }
 
 func UploadMedia(c *gin.Context) {
+	collection := c.PostForm("collection")
 	file, err := c.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
 		return
 	}
 
-	info, err := services.SaveMediaFile(file)
+	info, err := services.SaveMediaFile(file, collection)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file: " + err.Error()})
 		return
@@ -34,14 +36,15 @@ func UploadMedia(c *gin.Context) {
 
 func DeleteMedia(c *gin.Context) {
 	var req struct {
-		Filename string `json:"filename"`
+		Filename   string `json:"filename"`
+		Collection string `json:"collection"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
 		return
 	}
 
-	if err := services.DeleteMediaFile(req.Filename); err != nil {
+	if err := services.DeleteMediaFile(req.Filename, req.Collection); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete: " + err.Error()})
 		return
 	}

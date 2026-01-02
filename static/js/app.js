@@ -41,10 +41,22 @@ async function init() {
     window.createNewFile = () => Editor.createNewFile(refreshFileList);
     window.deleteFile = () => Editor.deleteFile(refreshFileList);
     window.insertImage = () => {
+        const currentPath = Editor.getCurrentPath();
+        let collectionName = null;
+        if (currentPath && cmsConfig && cmsConfig.collections) {
+            for (const col of cmsConfig.collections) {
+                const colFolder = col.folder.replace(/^content\//, '');
+                if (currentPath.startsWith(colFolder + "/") || currentPath === colFolder) {
+                    collectionName = col.name;
+                    break;
+                }
+            }
+        }
+
         UI.showMediaLibrary((file) => {
             const markdown = `![${file.name}](${file.path})`;
             Editor.insertText(markdown);
-        });
+        }, collectionName);
     };
     window.resetChanges = Editor.resetChanges;
     window.showDiff = Editor.showDiff;

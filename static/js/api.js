@@ -93,15 +93,18 @@ export async function runPublish(path = null) {
     return await res.json();
 }
 
-export async function fetchMedia() {
-    const res = await fetch('/api/media');
+export async function fetchMedia(collection) {
+    let url = '/api/media';
+    if (collection) url += `?collection=${encodeURIComponent(collection)}`;
+    const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to fetch media");
     return await res.json();
 }
 
-export async function uploadMedia(file) {
+export async function uploadMedia(file, collection) {
     const formData = new FormData();
     formData.append('file', file);
+    if (collection) formData.append('collection', collection);
     const res = await fetch('/api/media', {
         method: 'POST',
         body: formData
@@ -110,11 +113,11 @@ export async function uploadMedia(file) {
     return await res.json();
 }
 
-export async function deleteMedia(filename) {
+export async function deleteMedia(filename, collection) {
     const res = await fetch('/api/media/delete', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ filename })
+        body: JSON.stringify({ filename, collection })
     });
     if (!res.ok) throw new Error("Delete failed");
     return await res.json();
