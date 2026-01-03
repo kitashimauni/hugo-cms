@@ -18,10 +18,10 @@ func AuthRequired(c *gin.Context) {
 	session := sessions.Default(c)
 	token := session.Get("access_token")
 	if token == nil {
-		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+		if strings.HasPrefix(c.Request.URL.Path, "/admin/api/") {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		} else {
-			c.Redirect(http.StatusFound, "/login")
+			c.Redirect(http.StatusFound, "/admin/login")
 			c.Abort()
 		}
 		return
@@ -72,12 +72,12 @@ func AuthCallback(c *gin.Context) {
 	session.Set("access_token", token.AccessToken)
 	session.Save()
 
-	c.Redirect(http.StatusFound, "/")
+	c.Redirect(http.StatusFound, "/admin/")
 }
 
 func Logout(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Clear()
 	session.Save()
-	c.Redirect(http.StatusFound, "/login")
+	c.Redirect(http.StatusFound, "/admin/login")
 }

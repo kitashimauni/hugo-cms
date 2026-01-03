@@ -13,7 +13,7 @@ import (
 var (
 	RepoPath   = "./repo"
 	PublicPath = "./repo/public"
-	PreviewURL = "/preview/"
+	PreviewURL = "/"
 
 	// Hugo Server settings
 	HugoServerPort = "1314"
@@ -50,7 +50,7 @@ func Init() {
 	}
 
 	appURL := getEnv("APP_URL", "http://localhost:8080")
-	redirectURL := getEnv("GITHUB_REDIRECT_URL", appURL+"/auth/callback")
+	redirectURL := getEnv("GITHUB_REDIRECT_URL", appURL+"/admin/auth/callback")
 
 	// Load Configs
 	RepoPath = getEnv("REPO_PATH", "./repo")

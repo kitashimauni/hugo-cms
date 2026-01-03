@@ -42,7 +42,7 @@ func main() {
 	}
 	store := cookie.NewStore([]byte(secret))
 	store.Options(sessions.Options{
-		Path:     "/",
+		Path:     "/", // Cookie valid for whole domain
 		MaxAge:   86400 * 7,
 		HttpOnly: true,
 		Secure:   isSecure,
@@ -52,68 +52,67 @@ func main() {
 
 	// Static Files & Templates
 	r.LoadHTMLGlob("templates/*")
+	
 	// Start Hugo Server
 	if err := services.StartHugoServer(); err != nil {
 		fmt.Printf("Failed to start Hugo Server: %v\n", err)
 	}
 
-	// Proxy /preview/ to Hugo Server
+	// CMS Static Assets
+	r.Static("/admin/static", "./static")
+
+	// --- Admin Routes ---
+	admin := r.Group("/admin")
+	{
+		// Public Auth
+		admin.GET("/login", handlers.LoginPage)
+		admin.GET("/login/github", handlers.GithubLogin)
+		admin.GET("/auth/callback", handlers.AuthCallback)
+		admin.GET("/logout", handlers.Logout)
+
+		// Protected Admin
+		authorized := admin.Group("/")
+		authorized.Use(handlers.AuthRequired)
+		{
+			authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
+
+			api := authorized.Group("/api")
+			{
+				api.POST("/build", handlers.HandleBuild)
+				api.POST("/build/restart", handlers.HandleRestart)
+				api.GET("/articles", handlers.ListArticles)
+				api.GET("/article", handlers.GetArticle)
+				api.POST("/article", handlers.SaveArticle)
+				api.POST("/create", handlers.CreateArticle)
+				api.POST("/delete", handlers.DeleteArticle)
+				api.POST("/diff", handlers.GetDiff)
+				api.GET("/config", handlers.GetConfig)
+				api.POST("/sync", handlers.HandleSync)
+				api.POST("/publish", handlers.HandlePublish)
+				api.GET("/media", handlers.ListMedia)
+				api.POST("/media", handlers.UploadMedia)
+				api.POST("/media/delete", handlers.DeleteMedia)
+				api.GET("/media/raw", handlers.ServeMediaRaw)
+			}
+		}
+	}
+
+	// --- Root Proxy to Hugo ---
 	previewProxyURL, _ := url.Parse("http://" + config.HugoServerBind + ":" + config.HugoServerPort)
 	proxy := httputil.NewSingleHostReverseProxy(previewProxyURL)
 
-	r.Any(config.PreviewURL+"*path", func(c *gin.Context) {
-		proxy.ServeHTTP(c.Writer, c.Request)
-	})
-
-	r.Static("/static", "./static") // Serve static assets (css/js)
-
-	// Fallback proxy for site assets (e.g. /images/...) protected by auth
-	r.NoRoute(handlers.AuthRequired, func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
-			c.JSON(http.StatusNotFound, gin.H{"error": "API route not found"})
+	r.NoRoute(func(c *gin.Context) {
+		// Protect Proxy
+		session := sessions.Default(c)
+		if session.Get("access_token") == nil {
+			// If not authenticated, redirect to admin login
+			c.Redirect(http.StatusFound, "/admin/login")
 			return
 		}
-		
-		// Prepend PreviewURL (e.g. /preview) because Hugo expects it
-		prefix := strings.TrimRight(config.PreviewURL, "/")
-		if !strings.HasPrefix(c.Request.URL.Path, prefix) {
-			c.Request.URL.Path = prefix + c.Request.URL.Path
-		}
 
+		// Proxy to Hugo
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
-
-	// --- Auth Routes ---
-	r.GET("/login", handlers.LoginPage)
-	r.GET("/login/github", handlers.GithubLogin)
-	r.GET("/auth/callback", handlers.AuthCallback)
-	r.GET("/logout", handlers.Logout)
-
-	// --- Main App (Authorized) ---
-	authorized := r.Group("/")
-	authorized.Use(handlers.AuthRequired)
-	{
-		authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
-
-		api := authorized.Group("/api")
-		{
-			api.POST("/build", handlers.HandleBuild)
-			api.POST("/build/restart", handlers.HandleRestart)
-			api.GET("/articles", handlers.ListArticles)
-			api.GET("/article", handlers.GetArticle)
-			api.POST("/article", handlers.SaveArticle)
-			api.POST("/create", handlers.CreateArticle)
-			api.POST("/delete", handlers.DeleteArticle)
-			api.POST("/diff", handlers.GetDiff)
-			api.GET("/config", handlers.GetConfig)
-			api.POST("/sync", handlers.HandleSync)
-			api.POST("/publish", handlers.HandlePublish)
-			api.GET("/media", handlers.ListMedia)
-			api.POST("/media", handlers.UploadMedia)
-			api.POST("/media/delete", handlers.DeleteMedia)
-			api.GET("/media/raw", handlers.ServeMediaRaw)
-		}
-	}
 
 	r.Run(":8080")
 }

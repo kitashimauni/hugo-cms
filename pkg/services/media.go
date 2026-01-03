@@ -88,7 +88,7 @@ func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 					Name:     d.Name(), // Or relative path from root?
 					Path:     usagePath,
 					Size:     0, // d.Info() needed
-					URL:      "/api/media/raw?path=" + url.QueryEscape(relPath),
+					URL:      "/admin/api/media/raw?path=" + url.QueryEscape(relPath),
 					RepoPath: relPath,
 				})
 			}
@@ -168,7 +168,7 @@ func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*Med
 		Name:     filename,
 		Path:     usagePath,
 		Size:     header.Size,
-		URL:      "/api/media/raw?path=" + url.QueryEscape(relPath),
+		URL:      "/admin/api/media/raw?path=" + url.QueryEscape(relPath),
 		RepoPath: relPath,
 	}, nil
 }
