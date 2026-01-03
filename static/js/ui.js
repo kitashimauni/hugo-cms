@@ -391,7 +391,7 @@ export function setPreviewUrl(path) {
         previewPath = "";
     }
 
-    const targetUrl = "/preview/" + previewPath + (previewPath ? "/" : "");
+    const targetUrl = previewPath + (previewPath ? "/" : "");
     frame.src = targetUrl + "?t=" + Date.now();
 }
 
