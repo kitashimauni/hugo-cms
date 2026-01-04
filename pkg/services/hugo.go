@@ -53,14 +53,22 @@ func StartHugoServer() error {
 	return nil
 }
 
-func RestartHugoServer() error {
+func StopHugoServer() error {
 	if hugoServerCmd != nil && hugoServerCmd.Process != nil {
-		fmt.Println("[Hugo] Stopping existing server...")
+		fmt.Println("[Hugo] Stopping server...")
 		if err := hugoServerCmd.Process.Kill(); err != nil {
 			return fmt.Errorf("failed to kill hugo server: %w", err)
 		}
-		// Give it a moment to release ports
-		time.Sleep(1 * time.Second)
+		// Wait for process to exit
+		time.Sleep(500 * time.Millisecond)
+		hugoServerCmd = nil
+	}
+	return nil
+}
+
+func RestartHugoServer() error {
+	if err := StopHugoServer(); err != nil {
+		return err
 	}
 	return StartHugoServer()
 }
