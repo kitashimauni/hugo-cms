@@ -111,7 +111,17 @@ func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*Med
 	filename := filepath.Base(header.Filename)
 	filename = strings.ReplaceAll(filename, " ", "_")
 	
-	ext := filepath.Ext(filename)
+	ext := strings.ToLower(filepath.Ext(filename))
+	
+	// Validate Extension
+	allowedExts := map[string]bool{
+		".jpg": true, ".jpeg": true, ".png": true, ".gif": true,
+		".webp": true, ".svg": true, ".mp4": true, ".webm": true, ".pdf": true,
+	}
+	if !allowedExts[ext] {
+		return nil, fmt.Errorf("file type not allowed: %s", ext)
+	}
+
 	name := strings.TrimSuffix(filename, ext)
 	filename = fmt.Sprintf("%s_%d%s", name, time.Now().Unix(), ext)
 
