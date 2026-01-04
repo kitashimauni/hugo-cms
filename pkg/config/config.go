@@ -18,6 +18,8 @@ var (
 	// Hugo Server settings
 	HugoServerPort = "1314"
 	HugoServerBind = "127.0.0.1"
+	
+	ServerPort = "8080"
 
 	// Cache settings
 	CacheConcurrency  = 20
@@ -58,6 +60,8 @@ func Init() {
 	
 	HugoServerPort = getEnv("HUGO_SERVER_PORT", "1314")
 	HugoServerBind = getEnv("HUGO_SERVER_BIND", "127.0.0.1")
+
+	ServerPort = getEnv("PORT", "8080")
 
 	ArticleMediaDir = getEnv("ARTICLE_MEDIA_DIR", "")
 	StaticMediaDir = getEnv("STATIC_MEDIA_DIR", "")
