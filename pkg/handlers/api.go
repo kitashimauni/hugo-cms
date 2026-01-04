@@ -64,6 +64,17 @@ func HandlePublish(c *gin.Context) {
 		// We use Join to be OS agnostic, but git expects forward slashes.
 		// git.go's PublishChanges might need to handle ToSlash, but let's do it here.
 		gitPath = filepath.ToSlash(filepath.Join("content", req.Path))
+		
+		// Verify file exists before passing to git
+		fullPath := services.SafeJoin(config.RepoPath, "content", req.Path)
+		if fullPath == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
+			return
+		}
+		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "File does not exist"})
+			return
+		}
 	}
 
 	log, err := services.PublishChanges(token, gitPath)
