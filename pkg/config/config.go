@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
@@ -36,9 +37,14 @@ var (
 	GitBranch    = "main"
 	GitRemote    = "origin"
 
+	// Git timeout settings (generous for large repos/slow networks)
+	GitCommandTimeout = 60 * time.Second // Local git commands (status, diff, etc.)
+	GitNetworkTimeout = 5 * time.Minute  // Network operations (push, pull)
+
 	// Security settings
 	AllowedGitHubUsers = []string{} // Empty means allow all authenticated users
 	CSRFSecret         = ""
+	GitHubOAuthScopes  = []string{"public_repo"} // Default to public_repo only
 )
 
 var OauthConf *oauth2.Config
@@ -88,10 +94,17 @@ func Init() {
 		}
 	}
 
+	// OAuth scopes configuration
+	// Use GITHUB_OAUTH_SCOPES env var to override (comma-separated)
+	// Options: public_repo (public only), repo (public + private)
+	if scopes := os.Getenv("GITHUB_OAUTH_SCOPES"); scopes != "" {
+		GitHubOAuthScopes = splitAndTrim(scopes, ",")
+	}
+
 	OauthConf = &oauth2.Config{
 		ClientID:     os.Getenv("GITHUB_CLIENT_ID"),
 		ClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
-		Scopes:       []string{"repo"},
+		Scopes:       GitHubOAuthScopes,
 		Endpoint:     github.Endpoint,
 		RedirectURL:  redirectURL,
 	}

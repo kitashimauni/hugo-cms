@@ -113,12 +113,12 @@ var httpClient = &http.Client{
 	Transport: &http.Transport{
 		// 接続（TCP）を確立するまでの制限
 		DialContext: (&net.Dialer{
-			Timeout: 5 * time.Second,
+			Timeout: 10 * time.Second,
 		}).DialContext,
 		// TLSの証明書交換にかける制限
-		TLSHandshakeTimeout: 5 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
 		// リクエストを送ってから、最初の1バイト（ヘッダー）が返ってくるまでの制限
-		ResponseHeaderTimeout: 5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
 	},
 }
 
@@ -147,6 +147,67 @@ func fetchGitHubUser(ctx context.Context, accessToken string) (*GitHubUser, erro
 	}
 
 	return &user, nil
+}
+
+// validateGitHubToken checks if the access token is still valid by calling GitHub API
+func validateGitHubToken(ctx context.Context, accessToken string) bool {
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK
+}
+
+// TokenValidation middleware periodically validates the GitHub access token
+// It caches the validation result to avoid excessive API calls
+func TokenValidation(c *gin.Context) {
+	session := sessions.Default(c)
+	token, ok := session.Get("access_token").(string)
+	if !ok || token == "" {
+		// No token, let AuthRequired handle it
+		c.Next()
+		return
+	}
+
+	// Check last validation time (validate every 5 minutes)
+	lastValidation, _ := session.Get("token_validated_at").(int64)
+	now := time.Now().Unix()
+
+	// Validate token every 5 minutes
+	if now-lastValidation > 300 {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+		defer cancel()
+
+		if !validateGitHubToken(ctx, token) {
+			// Token is invalid, clear session
+			session.Clear()
+			session.Save()
+
+			if strings.HasPrefix(c.Request.URL.Path, "/admin/api/") {
+				ErrorUnauthorized(c, "Session expired. Please login again.")
+				c.Abort()
+				return
+			}
+			c.Redirect(http.StatusFound, "/admin/login")
+			c.Abort()
+			return
+		}
+
+		// Update validation timestamp
+		session.Set("token_validated_at", now)
+		session.Save()
+	}
+
+	c.Next()
 }
 
 func Logout(c *gin.Context) {

@@ -69,6 +69,7 @@ func SetupRouter() *gin.Engine {
 		// Protected Admin
 		authorized := admin.Group("/")
 		authorized.Use(handlers.AuthRequired)
+		authorized.Use(handlers.TokenValidation) // Periodically validate GitHub token
 		{
 			// CMS Static Assets (Protected)
 			authorized.Static("/static", "./static")

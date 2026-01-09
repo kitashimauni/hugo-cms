@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"net/url"
@@ -16,7 +17,10 @@ import (
 func CheckSemanticDiff(relPath string) (bool, error) {
 	gitPath := filepath.ToSlash(relPath)
 
-	cmdHead := exec.Command("git", "show", "HEAD:"+gitPath)
+	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
+	defer cancel()
+
+	cmdHead := exec.CommandContext(ctx, "git", "show", "HEAD:"+gitPath)
 	cmdHead.Dir = config.RepoPath
 	headContent, _ := cmdHead.Output()
 
@@ -47,12 +51,16 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 		fmt.Printf("[Git] Cmd: %v, Duration: %v\n", args, time.Since(start))
 	}()
 
+	// Create context with timeout for network operations (pull/push)
+	ctx, cancel := context.WithTimeout(context.Background(), config.GitNetworkTimeout)
+	defer cancel()
+
 	// 1. Prepare secure remote URL (username only, no password)
 	// We want to use the token for auth, but via ASKPASS.
 	// We need to ensure the remote URL in the command triggers ASKPASS.
 	// Typically, https://username@host/repo... works, asking for password.
-	
-	cmdGetUrl := exec.Command("git", "remote", "get-url", "origin")
+
+	cmdGetUrl := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
 	cmdGetUrl.Dir = dir
 	outUrl, err := cmdGetUrl.Output()
 	if err != nil {
@@ -63,7 +71,7 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	if err != nil {
 		return "Invalid remote url", err
 	}
-	
+
 	// Set generic username "oauth2" and remove password to force prompt
 	u.User = url.User("oauth2")
 	authenticatedUrl := u.String()
@@ -84,7 +92,7 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	}
 	defer os.Remove(scriptPath)
 
-	cmd := exec.Command("git", newArgs...)
+	cmd := exec.CommandContext(ctx, "git", newArgs...)
 	cmd.Dir = dir
 
 	// 4. Set Environment
@@ -97,7 +105,7 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
-	
+
 	// 5. Sanitize Log
 	// The token is not in args, but might be in verbose output if any.
 	safeLog := strings.ReplaceAll(string(output), token, "***")
@@ -146,16 +154,20 @@ func SyncRepo(token string) (string, error) {
 }
 
 func PublishChanges(token, path string) (string, error) {
+	// Create context with timeout for local git operations
+	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
+	defer cancel()
+
 	// Ensure Git Identity
 	// We set this locally for the repo so it doesn't affect global config
 
-	cmdConfigEmail := exec.Command("git", "config", "user.email", config.GitUserEmail)
+	cmdConfigEmail := exec.CommandContext(ctx, "git", "config", "user.email", config.GitUserEmail)
 	cmdConfigEmail.Dir = config.RepoPath
 	if err := cmdConfigEmail.Run(); err != nil {
 		fmt.Printf("[Git] Warning: failed to set user.email: %v\n", err)
 	}
 
-	cmdConfigName := exec.Command("git", "config", "user.name", config.GitUserName)
+	cmdConfigName := exec.CommandContext(ctx, "git", "config", "user.name", config.GitUserName)
 	cmdConfigName.Dir = config.RepoPath
 	if err := cmdConfigName.Run(); err != nil {
 		fmt.Printf("[Git] Warning: failed to set user.name: %v\n", err)
@@ -167,7 +179,7 @@ func PublishChanges(token, path string) (string, error) {
 	if path != "" {
 		// Single file publish
 		msg = fmt.Sprintf("Update %s via HomeCMS", path)
-		
+
 		// Always add static
 		filesToAdd = append(filesToAdd, "static")
 
@@ -188,13 +200,13 @@ func PublishChanges(token, path string) (string, error) {
 
 	// Prepare arguments for git add
 	gitAddArgs := append([]string{"add"}, filesToAdd...)
-	addCmd := exec.Command("git", gitAddArgs...)
+	addCmd := exec.CommandContext(ctx, "git", gitAddArgs...)
 	addCmd.Dir = config.RepoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Sprintf("Git Add Failed: %s\nOutput: %s", err.Error(), string(out)), err
 	}
 
-	commitCmd := exec.Command("git", "commit", "-m", msg)
+	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", msg)
 	commitCmd.Dir = config.RepoPath
 	commitOut, commitErr := commitCmd.CombinedOutput()
 
@@ -215,8 +227,11 @@ func PublishChanges(token, path string) (string, error) {
 }
 
 func Diff(f1Path, f2Path, relPath string) (string, string) {
+	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
+	defer cancel()
+
 	// 1. Check Unsaved Diff (Saved/Disk Normalized vs Editor Normalized)
-	cmd := exec.Command("git", "diff", "--no-index", "--", f1Path, f2Path)
+	cmd := exec.CommandContext(ctx, "git", "diff", "--no-index", "--", f1Path, f2Path)
 	output, err := cmd.CombinedOutput()
 
 	if err != nil && cmd.ProcessState.ExitCode() == 1 {
@@ -234,7 +249,7 @@ func Diff(f1Path, f2Path, relPath string) (string, string) {
 	// Get HEAD content
 	// Use filepath.ToSlash to ensure forward slashes for git
 	gitPath := filepath.ToSlash(relPath)
-	cmdHead := exec.Command("git", "show", "HEAD:"+gitPath)
+	cmdHead := exec.CommandContext(ctx, "git", "show", "HEAD:"+gitPath)
 	cmdHead.Dir = config.RepoPath
 	outHead, _ := cmdHead.Output()
 	// err is expected for new files, we treat it as empty
@@ -256,7 +271,7 @@ func Diff(f1Path, f2Path, relPath string) (string, string) {
 	}
 	fHead.Close()
 
-	cmdGit := exec.Command("git", "diff", "--no-index", "--", fHead.Name(), f2Path)
+	cmdGit := exec.CommandContext(ctx, "git", "diff", "--no-index", "--", fHead.Name(), f2Path)
 	outGit, err := cmdGit.CombinedOutput()
 
 	if err != nil && cmdGit.ProcessState.ExitCode() == 1 {

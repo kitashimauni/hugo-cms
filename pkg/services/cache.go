@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/models"
@@ -112,7 +113,10 @@ func readHead(path string, limit int64) ([]byte, error) {
 }
 
 func getGitDirtyFiles(dir string) (map[string]bool, error) {
-	cmd := exec.Command("git", "status", "--porcelain", "--", "content")
+	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", "--", "content")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -135,7 +139,7 @@ func getGitDirtyFiles(dir string) (map[string]bool, error) {
 		}
 	}
 
-	cmdUntracked := exec.Command("git", "ls-files", "--others", "--exclude-standard", "--", "content")
+	cmdUntracked := exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard", "--", "content")
 	cmdUntracked.Dir = dir
 	if outUntracked, errUntracked := cmdUntracked.Output(); errUntracked == nil {
 		for _, raw := range strings.Split(string(outUntracked), "\n") {
@@ -226,11 +230,14 @@ func UpdateCache(relPath string) {
 }
 
 func getGitFileStatus(relPath string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
+	defer cancel()
+
 	// git status --porcelain content/posts/xxx.md
 	// Note: relPath is relative to content/, but git needs relative to RepoPath
 	target := filepath.Join("content", relPath)
 	targetGit := filepath.ToSlash(target)
-	cmd := exec.Command("git", "status", "--porcelain", targetGit)
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", targetGit)
 	cmd.Dir = config.RepoPath
 	out, err := cmd.Output()
 	if err != nil {
