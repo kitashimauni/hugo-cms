@@ -22,15 +22,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func main() {
-	// Initialize config
-	config.Init()
-
+func SetupRouter() *gin.Engine {
 	appURL := config.GetAppURL()
-	fmt.Printf("Starting server...\n")
-	fmt.Printf("APP_URL: %s\n", appURL)
-	fmt.Printf("Redirect URL: %s\n", config.OauthConf.RedirectURL)
-
 	r := gin.Default()
 
 	// Determine if we are running on HTTPS
@@ -54,31 +47,26 @@ func main() {
 	})
 	r.Use(sessions.Sessions("mysession", store))
 
-	// Static Files & Templates
-	r.LoadHTMLGlob("templates/*")
+		// Static Files & Templates
+		r.LoadHTMLGlob("templates/*")
 	
-	// Start Hugo Server
-	if err := services.StartHugoServer(); err != nil {
-		fmt.Printf("Failed to start Hugo Server: %v\n", err)
-	}
-
-	// CMS Static Assets
-	r.Static("/admin/static", "./static")
-
-	// --- Admin Routes ---
-	admin := r.Group("/admin")
-	{
-		// Public Auth
-		admin.GET("/login", handlers.LoginPage)
-		admin.GET("/login/github", handlers.GithubLogin)
-		admin.GET("/auth/callback", handlers.AuthCallback)
-		admin.GET("/logout", handlers.Logout)
-
-		// Protected Admin
-		authorized := admin.Group("/")
-		authorized.Use(handlers.AuthRequired)
+		// --- Admin Routes ---
+		admin := r.Group("/admin")
 		{
-			authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
+			// Public Auth
+			admin.GET("/login", handlers.LoginPage)
+			admin.GET("/login/github", handlers.GithubLogin)
+			admin.GET("/auth/callback", handlers.AuthCallback)
+			admin.GET("/logout", handlers.Logout)
+	
+			// Protected Admin
+			authorized := admin.Group("/")
+			authorized.Use(handlers.AuthRequired)
+			{
+				// CMS Static Assets (Protected)
+				authorized.Static("/static", "./static")
+	
+				authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
 
 			api := authorized.Group("/api")
 			{
@@ -117,6 +105,25 @@ func main() {
 		// Proxy to Hugo
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
+
+	return r
+}
+
+func main() {
+	// Initialize config
+	config.Init()
+
+	appURL := config.GetAppURL()
+	fmt.Printf("Starting server...\n")
+	fmt.Printf("APP_URL: %s\n", appURL)
+	fmt.Printf("Redirect URL: %s\n", config.OauthConf.RedirectURL)
+
+	// Start Hugo Server
+	if err := services.StartHugoServer(); err != nil {
+		fmt.Printf("Failed to start Hugo Server: %v\n", err)
+	}
+
+	r := SetupRouter()
 
 	srv := &http.Server{
 		Addr:    ":" + config.ServerPort,
