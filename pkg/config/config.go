@@ -19,7 +19,7 @@ var (
 	// Hugo Server settings
 	HugoServerPort = "1314"
 	HugoServerBind = "127.0.0.1"
-	
+
 	ServerPort = "8080"
 
 	// Cache settings
@@ -62,7 +62,7 @@ func Init() {
 	// Load Configs
 	RepoPath = getEnv("REPO_PATH", "./repo")
 	PublicPath = getEnv("PUBLIC_PATH", RepoPath+"/public")
-	
+
 	HugoServerPort = getEnv("HUGO_SERVER_PORT", "1314")
 	HugoServerBind = getEnv("HUGO_SERVER_BIND", "127.0.0.1")
 

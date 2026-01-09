@@ -15,14 +15,14 @@ type APIError struct {
 
 // Error codes
 const (
-	ErrCodeUnauthorized    = "UNAUTHORIZED"
-	ErrCodeForbidden       = "FORBIDDEN"
-	ErrCodeBadRequest      = "BAD_REQUEST"
-	ErrCodeNotFound        = "NOT_FOUND"
-	ErrCodeInternalError   = "INTERNAL_ERROR"
-	ErrCodeConflict        = "CONFLICT"
-	ErrCodeInvalidCSRF     = "INVALID_CSRF"
-	ErrCodeUserNotAllowed  = "USER_NOT_ALLOWED"
+	ErrCodeUnauthorized   = "UNAUTHORIZED"
+	ErrCodeForbidden      = "FORBIDDEN"
+	ErrCodeBadRequest     = "BAD_REQUEST"
+	ErrCodeNotFound       = "NOT_FOUND"
+	ErrCodeInternalError  = "INTERNAL_ERROR"
+	ErrCodeConflict       = "CONFLICT"
+	ErrCodeInvalidCSRF    = "INVALID_CSRF"
+	ErrCodeUserNotAllowed = "USER_NOT_ALLOWED"
 )
 
 // RespondError sends a standardized error response

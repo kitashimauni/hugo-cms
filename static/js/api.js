@@ -105,7 +105,7 @@ export async function getDiff(payload) {
 
 export async function runBuild() {
     await ensureCSRFToken();
-    const res = await fetch('/admin/api/build', { 
+    const res = await fetch('/admin/api/build', {
         method: 'POST',
         headers: getCSRFHeaders()
     });
@@ -114,7 +114,7 @@ export async function runBuild() {
 
 export async function restartHugo() {
     await ensureCSRFToken();
-    const res = await fetch('/admin/api/build/restart', { 
+    const res = await fetch('/admin/api/build/restart', {
         method: 'POST',
         headers: getCSRFHeaders()
     });
@@ -123,7 +123,7 @@ export async function restartHugo() {
 
 export async function runSync() {
     await ensureCSRFToken();
-    const res = await fetch('/admin/api/sync', { 
+    const res = await fetch('/admin/api/sync', {
         method: 'POST',
         headers: getCSRFHeaders()
     });
@@ -132,12 +132,12 @@ export async function runSync() {
 
 export async function runPublish(path = null) {
     await ensureCSRFToken();
-    const options = { 
+    const options = {
         method: 'POST',
         headers: getCSRFHeaders()
     };
     if (path) {
-        options.headers = { 
+        options.headers = {
             'Content-Type': 'application/json',
             ...getCSRFHeaders()
         };

@@ -50,26 +50,26 @@ func SetupRouter() *gin.Engine {
 	})
 	r.Use(sessions.Sessions("mysession", store))
 
-		// Static Files & Templates
-		r.LoadHTMLGlob("templates/*")
-	
-		// --- Admin Routes ---
-		admin := r.Group("/admin")
+	// Static Files & Templates
+	r.LoadHTMLGlob("templates/*")
+
+	// --- Admin Routes ---
+	admin := r.Group("/admin")
+	{
+		// Public Auth
+		admin.GET("/login", handlers.LoginPage)
+		admin.GET("/login/github", handlers.GithubLogin)
+		admin.GET("/auth/callback", handlers.AuthCallback)
+		admin.GET("/logout", handlers.Logout)
+
+		// Protected Admin
+		authorized := admin.Group("/")
+		authorized.Use(handlers.AuthRequired)
 		{
-			// Public Auth
-			admin.GET("/login", handlers.LoginPage)
-			admin.GET("/login/github", handlers.GithubLogin)
-			admin.GET("/auth/callback", handlers.AuthCallback)
-			admin.GET("/logout", handlers.Logout)
-	
-			// Protected Admin
-			authorized := admin.Group("/")
-			authorized.Use(handlers.AuthRequired)
-			{
-				// CMS Static Assets (Protected)
-				authorized.Static("/static", "./static")
-	
-				authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
+			// CMS Static Assets (Protected)
+			authorized.Static("/static", "./static")
+
+			authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
 
 			api := authorized.Group("/api")
 			api.Use(handlers.CSRFProtection) // Apply CSRF protection to all API routes
