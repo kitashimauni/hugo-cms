@@ -73,6 +73,10 @@ func RestartHugoServer() error {
 	return StartHugoServer()
 }
 
+// IsHugoServerRunning checks if the Hugo server process is currently running
+func IsHugoServerRunning() bool {
+	return hugoServerCmd != nil && hugoServerCmd.Process != nil
+}
 func BuildSite() (string, error) {
 	start := time.Now()
 	defer func() {

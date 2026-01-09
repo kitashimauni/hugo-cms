@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -75,15 +76,18 @@ func AuthCallback(c *gin.Context) {
 	// Remove state from session
 	session.Delete("oauth_state")
 
+	// Use request context for proper cancellation propagation
+	ctx := c.Request.Context()
+
 	code := c.Query("code")
-	token, err := config.OauthConf.Exchange(context.Background(), code)
+	token, err := config.OauthConf.Exchange(ctx, code)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "OAuth Exchange Failed")
 		return
 	}
 
 	// Fetch GitHub user info to check authorization
-	user, err := fetchGitHubUser(token.AccessToken)
+	user, err := fetchGitHubUser(ctx, token.AccessToken)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "Failed to fetch user info")
 		return
@@ -104,17 +108,30 @@ func AuthCallback(c *gin.Context) {
 	c.Redirect(http.StatusFound, "/admin/")
 }
 
+// HTTP client with timeout for external API calls
+var httpClient = &http.Client{
+	Transport: &http.Transport{
+		// 接続（TCP）を確立するまでの制限
+		DialContext: (&net.Dialer{
+			Timeout: 5 * time.Second,
+		}).DialContext,
+		// TLSの証明書交換にかける制限
+		TLSHandshakeTimeout: 5 * time.Second,
+		// リクエストを送ってから、最初の1バイト（ヘッダー）が返ってくるまでの制限
+		ResponseHeaderTimeout: 5 * time.Second,
+	},
+}
+
 // fetchGitHubUser fetches the authenticated user's info from GitHub API
-func fetchGitHubUser(accessToken string) (*GitHubUser, error) {
-	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+func fetchGitHubUser(ctx context.Context, accessToken string) (*GitHubUser, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -53,6 +53,10 @@ func SetupRouter() *gin.Engine {
 	// Static Files & Templates
 	r.LoadHTMLGlob("templates/*")
 
+	// --- Health Check Endpoints (Public) ---
+	r.GET("/health", handlers.HealthCheck)
+	r.GET("/ready", handlers.ReadinessCheck)
+
 	// --- Admin Routes ---
 	admin := r.Group("/admin")
 	{

@@ -96,7 +96,17 @@ func ListArticles(c *gin.Context) {
 
 func GetArticle(c *gin.Context) {
 	targetPath := c.Query("path")
+	if targetPath == "" {
+		ErrorBadRequest(c, "Path parameter is required")
+		return
+	}
+
 	fullPath := services.SafeJoin(config.RepoPath, "content", targetPath)
+	if fullPath == "" {
+		ErrorBadRequest(c, "Invalid path")
+		return
+	}
+
 	content, err := os.ReadFile(fullPath)
 	if err != nil {
 		ErrorNotFound(c, "File not found")
@@ -124,7 +134,17 @@ func SaveArticle(c *gin.Context) {
 		return
 	}
 
+	if art.Path == "" {
+		ErrorBadRequest(c, "Path is required")
+		return
+	}
+
 	fullPath := services.SafeJoin(config.RepoPath, "content", art.Path)
+	if fullPath == "" {
+		ErrorBadRequest(c, "Invalid path")
+		return
+	}
+
 	var finalContent []byte
 	var err error
 
@@ -273,7 +293,16 @@ func GetDiff(c *gin.Context) {
 		return
 	}
 
+	if art.Path == "" {
+		ErrorBadRequest(c, "Path is required")
+		return
+	}
+
 	fullPath := services.SafeJoin(config.RepoPath, "content", art.Path)
+	if fullPath == "" {
+		ErrorBadRequest(c, "Invalid path")
+		return
+	}
 
 	currentContent, err := os.ReadFile(fullPath)
 	if err != nil {
