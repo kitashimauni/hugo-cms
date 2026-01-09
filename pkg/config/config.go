@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
@@ -34,6 +35,10 @@ var (
 	GitUserName  = "Hugo CMS Bot"
 	GitBranch    = "main"
 	GitRemote    = "origin"
+
+	// Security settings
+	AllowedGitHubUsers = []string{} // Empty means allow all authenticated users
+	CSRFSecret         = ""
 )
 
 var OauthConf *oauth2.Config
@@ -71,6 +76,12 @@ func Init() {
 	GitBranch = getEnv("GIT_BRANCH", "main")
 	GitRemote = getEnv("GIT_REMOTE", "origin")
 
+	// Security settings
+	if users := os.Getenv("ALLOWED_GITHUB_USERS"); users != "" {
+		AllowedGitHubUsers = splitAndTrim(users, ",")
+	}
+	CSRFSecret = getEnv("CSRF_SECRET", "")
+
 	if cc := os.Getenv("CACHE_CONCURRENCY"); cc != "" {
 		if val, err := strconv.Atoi(cc); err == nil {
 			CacheConcurrency = val
@@ -92,4 +103,30 @@ func GetAppURL() string {
 		appURL = "http://localhost:8080"
 	}
 	return appURL
+}
+
+// splitAndTrim splits a string by separator and trims whitespace from each element
+func splitAndTrim(s, sep string) []string {
+	parts := strings.Split(s, sep)
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// IsUserAllowed checks if a GitHub username is in the allowed list
+func IsUserAllowed(username string) bool {
+	if len(AllowedGitHubUsers) == 0 {
+		return true // No restriction if list is empty
+	}
+	for _, u := range AllowedGitHubUsers {
+		if strings.EqualFold(u, username) {
+			return true
+		}
+	}
+	return false
 }

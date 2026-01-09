@@ -16,38 +16,38 @@ import (
 func HandleBuild(c *gin.Context) {
 	// With Hugo Server running, explicit build is not needed for preview.
 	// We just return OK so frontend logic continues.
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "log": "Preview managed by Hugo Server"})
+	RespondOK(c, "Preview managed by Hugo Server")
 }
 
 func HandleRestart(c *gin.Context) {
 	if err := services.RestartHugoServer(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "log": err.Error()})
+		ErrorInternal(c, "Failed to restart Hugo server: "+err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "log": "Hugo Server Restarted"})
+	RespondOK(c, "Hugo Server Restarted")
 }
 
 func HandleSync(c *gin.Context) {
 	session := sessions.Default(c)
 	token, ok := session.Get("access_token").(string)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session token"})
+		ErrorUnauthorized(c, "Invalid session token")
 		return
 	}
 	log, err := services.SyncRepo(token)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "log": log})
+		ErrorInternal(c, "Sync failed: "+log)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "log": log})
+	RespondOK(c, log)
 }
 
 func HandlePublish(c *gin.Context) {
 	session := sessions.Default(c)
 	token, ok := session.Get("access_token").(string)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session token"})
+		ErrorUnauthorized(c, "Invalid session token")
 		return
 	}
 
@@ -68,27 +68,27 @@ func HandlePublish(c *gin.Context) {
 		// Verify file exists before passing to git
 		fullPath := services.SafeJoin(config.RepoPath, "content", req.Path)
 		if fullPath == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
+			ErrorBadRequest(c, "Invalid path")
 			return
 		}
 		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "File does not exist"})
+			ErrorNotFound(c, "File does not exist")
 			return
 		}
 	}
 
 	log, err := services.PublishChanges(token, gitPath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "log": log})
+		ErrorInternal(c, "Publish failed: "+log)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "log": log})
+	RespondOK(c, log)
 }
 
 func ListArticles(c *gin.Context) {
 	articles, err := services.GetArticlesCache()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch articles"})
+		ErrorInternal(c, "Failed to fetch articles")
 		return
 	}
 	c.JSON(http.StatusOK, articles)
@@ -99,7 +99,7 @@ func GetArticle(c *gin.Context) {
 	fullPath := services.SafeJoin(config.RepoPath, "content", targetPath)
 	content, err := os.ReadFile(fullPath)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
+		ErrorNotFound(c, "File not found")
 		return
 	}
 
@@ -120,7 +120,7 @@ func GetArticle(c *gin.Context) {
 func SaveArticle(c *gin.Context) {
 	var art models.Article
 	if err := c.BindJSON(&art); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+		ErrorBadRequest(c, "Invalid JSON")
 		return
 	}
 
@@ -131,7 +131,7 @@ func SaveArticle(c *gin.Context) {
 	if art.FrontMatter != nil {
 		finalContent, err = services.ConstructFileContent(art.FrontMatter, art.Body, art.Format)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to construct file content: " + err.Error()})
+			ErrorInternal(c, "Failed to construct file content: "+err.Error())
 			return
 		}
 	} else {
@@ -139,7 +139,7 @@ func SaveArticle(c *gin.Context) {
 	}
 
 	if err := os.WriteFile(fullPath, finalContent, 0644); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Save failed"})
+		ErrorInternal(c, "Save failed")
 		return
 	}
 
@@ -155,7 +155,7 @@ func CreateArticle(c *gin.Context) {
 		Fields     map[string]interface{} `json:"fields"`
 	}
 	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+		ErrorBadRequest(c, "Invalid JSON")
 		return
 	}
 
@@ -163,7 +163,7 @@ func CreateArticle(c *gin.Context) {
 	if req.Collection != "" {
 		cmsConfig, err := services.GetCMSConfig()
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load CMS config"})
+			ErrorInternal(c, "Failed to load CMS config")
 			return
 		}
 
@@ -176,14 +176,14 @@ func CreateArticle(c *gin.Context) {
 		}
 
 		if targetCollection == nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Collection not found"})
+			ErrorNotFound(c, "Collection not found: "+req.Collection)
 			return
 		}
 
 		// Resolve Path
 		relPath, err := services.ResolvePath(*targetCollection, req.Fields)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to resolve path: " + err.Error()})
+			ErrorInternal(c, "Failed to resolve path: "+err.Error())
 			return
 		}
 
@@ -198,31 +198,31 @@ func CreateArticle(c *gin.Context) {
 
 		fullPath := services.SafeJoin(config.RepoPath, targetCollection.Folder, relPath)
 		if fullPath == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid resolved path"})
+			ErrorBadRequest(c, "Invalid resolved path")
 			return
 		}
 
 		// Check if file exists
 		if _, err := os.Stat(fullPath); err == nil {
-			c.JSON(http.StatusConflict, gin.H{"error": "File already exists"})
+			ErrorConflict(c, "File already exists")
 			return
 		}
 
 		// Generate Content
 		content, err := services.GenerateContentFromCollection(*targetCollection, req.Fields)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate content: " + err.Error()})
+			ErrorInternal(c, "Failed to generate content: "+err.Error())
 			return
 		}
 
 		// Write File
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create directory"})
+			ErrorInternal(c, "Failed to create directory")
 			return
 		}
 
 		if err := os.WriteFile(fullPath, content, 0644); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write file"})
+			ErrorInternal(c, "Failed to write file")
 			return
 		}
 
@@ -248,16 +248,16 @@ func CreateArticle(c *gin.Context) {
 
 	// Legacy/Direct path logic
 	if req.Path == "" || strings.Contains(req.Path, "..") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
+		ErrorBadRequest(c, "Invalid path")
 		return
 	}
 
 	log, err := services.CreateContent(req.Path)
 	if err != nil {
 		if os.IsExist(err) {
-			c.JSON(http.StatusConflict, gin.H{"error": log})
+			ErrorConflict(c, log)
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Hugo new failed", "log": log})
+			ErrorInternal(c, "Hugo new failed: "+log)
 		}
 		return
 	}
@@ -269,7 +269,7 @@ func CreateArticle(c *gin.Context) {
 func GetDiff(c *gin.Context) {
 	var art models.Article
 	if err := c.BindJSON(&art); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+		ErrorBadRequest(c, "Invalid JSON")
 		return
 	}
 
@@ -289,7 +289,7 @@ func GetDiff(c *gin.Context) {
 	if art.FrontMatter != nil {
 		newContent, err = services.ConstructFileContent(art.FrontMatter, art.Body, art.Format)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Construction failed"})
+			ErrorInternal(c, "Construction failed")
 			return
 		}
 	} else {
@@ -301,24 +301,24 @@ func GetDiff(c *gin.Context) {
 	tmpDir := os.TempDir()
 	f1, err := os.CreateTemp(tmpDir, "diff_old_*")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create temp file"})
+		ErrorInternal(c, "Failed to create temp file")
 		return
 	}
 	defer os.Remove(f1.Name())
 
 	f2, err := os.CreateTemp(tmpDir, "diff_new_*")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create temp file"})
+		ErrorInternal(c, "Failed to create temp file")
 		return
 	}
 	defer os.Remove(f2.Name())
 
 	if _, err := f1.Write(currentContent); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write temp file"})
+		ErrorInternal(c, "Failed to write temp file")
 		return
 	}
 	if _, err := f2.Write(newContent); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write temp file"})
+		ErrorInternal(c, "Failed to write temp file")
 		return
 	}
 	f1.Close()
@@ -335,17 +335,17 @@ func DeleteArticle(c *gin.Context) {
 		Path string `json:"path"`
 	}
 	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+		ErrorBadRequest(c, "Invalid JSON")
 		return
 	}
 
 	if req.Path == "" || strings.Contains(req.Path, "..") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid path"})
+		ErrorBadRequest(c, "Invalid path")
 		return
 	}
 
 	if err := services.DeleteFile(req.Path); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Delete failed: " + err.Error()})
+		ErrorInternal(c, "Delete failed: "+err.Error())
 		return
 	}
 
@@ -358,7 +358,7 @@ func DeleteArticle(c *gin.Context) {
 func GetConfig(c *gin.Context) {
 	cfg, err := services.GetConfig()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse config"})
+		ErrorInternal(c, "Failed to parse config")
 		return
 	}
 	c.JSON(http.StatusOK, cfg)

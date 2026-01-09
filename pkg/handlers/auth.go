@@ -4,8 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"math/big"
 	"net/http"
 	"strings"
+	"time"
 
 	"hugo-cms/pkg/config"
 
@@ -13,6 +17,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
 )
+
+// GitHubUser represents the user info from GitHub API
+type GitHubUser struct {
+	Login string `json:"login"`
+	ID    int64  `json:"id"`
+}
 
 func AuthRequired(c *gin.Context) {
 	session := sessions.Default(c)
@@ -35,7 +45,10 @@ func LoginPage(c *gin.Context) {
 
 func generateStateOauth() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to time-based state (less secure but functional)
+		return base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+	}
 	return base64.URLEncoding.EncodeToString(b)
 }
 
@@ -69,10 +82,54 @@ func AuthCallback(c *gin.Context) {
 		return
 	}
 
+	// Fetch GitHub user info to check authorization
+	user, err := fetchGitHubUser(token.AccessToken)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "Failed to fetch user info")
+		return
+	}
+
+	// Check if user is allowed
+	if !config.IsUserAllowed(user.Login) {
+		c.HTML(http.StatusForbidden, "login.html", gin.H{
+			"Error": fmt.Sprintf("User '%s' is not authorized to access this CMS", user.Login),
+		})
+		return
+	}
+
 	session.Set("access_token", token.AccessToken)
+	session.Set("github_user", user.Login)
 	session.Save()
 
 	c.Redirect(http.StatusFound, "/admin/")
+}
+
+// fetchGitHubUser fetches the authenticated user's info from GitHub API
+func fetchGitHubUser(accessToken string) (*GitHubUser, error) {
+	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github API returned status %d", resp.StatusCode)
+	}
+
+	var user GitHubUser
+	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+		return nil, err
+	}
+
+	return &user, nil
 }
 
 func Logout(c *gin.Context) {
@@ -80,4 +137,57 @@ func Logout(c *gin.Context) {
 	session.Clear()
 	session.Save()
 	c.Redirect(http.StatusFound, "/admin/login")
+}
+
+// GetCSRFToken returns the CSRF token for the current session
+func GetCSRFToken(c *gin.Context) {
+	session := sessions.Default(c)
+	token := session.Get("csrf_token")
+	if token == nil {
+		token = generateCSRFToken()
+		session.Set("csrf_token", token)
+		session.Save()
+	}
+	c.JSON(http.StatusOK, gin.H{"csrf_token": token})
+}
+
+// CSRFProtection middleware validates CSRF tokens on POST/PUT/DELETE requests
+func CSRFProtection(c *gin.Context) {
+	// Skip CSRF check for GET and HEAD requests
+	if c.Request.Method == "GET" || c.Request.Method == "HEAD" || c.Request.Method == "OPTIONS" {
+		c.Next()
+		return
+	}
+
+	session := sessions.Default(c)
+	sessionToken := session.Get("csrf_token")
+	if sessionToken == nil {
+		ErrorForbidden(c, "CSRF token not found in session")
+		c.Abort()
+		return
+	}
+
+	// Check header first, then form
+	requestToken := c.GetHeader("X-CSRF-Token")
+	if requestToken == "" {
+		requestToken = c.PostForm("csrf_token")
+	}
+
+	if requestToken == "" || requestToken != sessionToken.(string) {
+		ErrorForbidden(c, "Invalid CSRF token")
+		c.Abort()
+		return
+	}
+
+	c.Next()
+}
+
+func generateCSRFToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to time-based token with random component
+		n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
+		return base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%d-%d", time.Now().UnixNano(), n)))
+	}
+	return base64.URLEncoding.EncodeToString(b)
 }

@@ -13,7 +13,7 @@ func ListMedia(c *gin.Context) {
 	articlePath := c.Query("path")
 	files, err := services.ListMediaFiles(mode, articlePath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list media: " + err.Error()})
+		ErrorInternal(c, "Failed to list media: "+err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, files)
@@ -24,13 +24,13 @@ func UploadMedia(c *gin.Context) {
 	articlePath := c.PostForm("path")
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
+		ErrorBadRequest(c, "No file uploaded")
 		return
 	}
 
 	info, err := services.SaveMediaFile(file, mode, articlePath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save file: " + err.Error()})
+		ErrorInternal(c, "Failed to save file: "+err.Error())
 		return
 	}
 
@@ -42,12 +42,12 @@ func DeleteMedia(c *gin.Context) {
 		RepoPath string `json:"repo_path"`
 	}
 	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+		ErrorBadRequest(c, "Invalid JSON")
 		return
 	}
 
 	if err := services.DeleteMediaFile(req.RepoPath); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete: " + err.Error()})
+		ErrorInternal(c, "Failed to delete: "+err.Error())
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
@@ -56,13 +56,13 @@ func DeleteMedia(c *gin.Context) {
 func ServeMediaRaw(c *gin.Context) {
 	targetPath := c.Query("path")
 	if targetPath == "" {
-		c.Status(http.StatusBadRequest)
+		ErrorBadRequest(c, "Path parameter required")
 		return
 	}
 
 	fullPath := services.SafeJoin(config.RepoPath, "", targetPath)
 	if fullPath == "" {
-		c.Status(http.StatusNotFound)
+		ErrorNotFound(c, "Invalid path")
 		return
 	}
 

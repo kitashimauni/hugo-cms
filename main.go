@@ -33,8 +33,11 @@ func SetupRouter() *gin.Engine {
 	secret := os.Getenv("SESSION_SECRET")
 	if secret == "" {
 		fmt.Println("WARNING: SESSION_SECRET is not set. Using a temporary random secret.")
+		fmt.Println("WARNING: This is insecure for production. Please set SESSION_SECRET environment variable.")
 		b := make([]byte, 32)
-		rand.Read(b)
+		if _, err := rand.Read(b); err != nil {
+			panic("Failed to generate random session secret: " + err.Error())
+		}
 		secret = base64.StdEncoding.EncodeToString(b)
 	}
 	store := cookie.NewStore([]byte(secret))
@@ -69,7 +72,9 @@ func SetupRouter() *gin.Engine {
 				authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
 
 			api := authorized.Group("/api")
+			api.Use(handlers.CSRFProtection) // Apply CSRF protection to all API routes
 			{
+				api.GET("/csrf-token", handlers.GetCSRFToken) // Endpoint to get CSRF token
 				api.POST("/build", handlers.HandleBuild)
 				api.POST("/build/restart", handlers.HandleRestart)
 				api.GET("/articles", handlers.ListArticles)
