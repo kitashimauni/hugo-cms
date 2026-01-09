@@ -4,6 +4,8 @@ import (
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/services"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -43,6 +45,19 @@ func DeleteMedia(c *gin.Context) {
 	}
 	if err := c.BindJSON(&req); err != nil {
 		ErrorBadRequest(c, "Invalid JSON")
+		return
+	}
+
+	// Validate path is not empty and doesn't contain path traversal
+	if req.RepoPath == "" {
+		ErrorBadRequest(c, "repo_path is required")
+		return
+	}
+
+	// Additional validation: must be within allowed directories (static or content)
+	normalizedPath := filepath.ToSlash(filepath.Clean(req.RepoPath))
+	if !strings.HasPrefix(normalizedPath, "static/") && !strings.HasPrefix(normalizedPath, "content/") {
+		ErrorBadRequest(c, "Invalid media path: must be in static/ or content/")
 		return
 	}
 

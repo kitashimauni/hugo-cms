@@ -240,7 +240,9 @@ func CSRFProtection(c *gin.Context) {
 	session := sessions.Default(c)
 	sessionToken := session.Get("csrf_token")
 	if sessionToken == nil {
-		ErrorForbidden(c, "CSRF token not found in session")
+		// Generate a new token if none exists (for better UX)
+		// Client should retry after getting new token
+		ErrorForbidden(c, "CSRF token expired. Please refresh and try again.")
 		c.Abort()
 		return
 	}
@@ -251,8 +253,14 @@ func CSRFProtection(c *gin.Context) {
 		requestToken = c.PostForm("csrf_token")
 	}
 
-	if requestToken == "" || requestToken != sessionToken.(string) {
-		ErrorForbidden(c, "Invalid CSRF token")
+	if requestToken == "" {
+		ErrorForbidden(c, "CSRF token missing from request")
+		c.Abort()
+		return
+	}
+
+	if requestToken != sessionToken.(string) {
+		ErrorForbidden(c, "CSRF token mismatch. Please refresh and try again.")
 		c.Abort()
 		return
 	}

@@ -1,18 +1,26 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
-var hugoServerCmd *exec.Cmd
+var (
+	hugoServerCmd *exec.Cmd
+	hugoServerMu  sync.Mutex
+)
 
 func StartHugoServer() error {
+	hugoServerMu.Lock()
+	defer hugoServerMu.Unlock()
+
 	if hugoServerCmd != nil && hugoServerCmd.Process != nil {
 		// Check if process is still alive?
 		// For simplicity assume if variable is set, it's running.
@@ -47,13 +55,18 @@ func StartHugoServer() error {
 	go func() {
 		state, err := cmd.Process.Wait()
 		fmt.Printf("[Hugo] Server stopped. State: %v, Err: %v\n", state, err)
+		hugoServerMu.Lock()
 		hugoServerCmd = nil
+		hugoServerMu.Unlock()
 	}()
 
 	return nil
 }
 
 func StopHugoServer() error {
+	hugoServerMu.Lock()
+	defer hugoServerMu.Unlock()
+
 	if hugoServerCmd != nil && hugoServerCmd.Process != nil {
 		fmt.Println("[Hugo] Stopping server...")
 		if err := hugoServerCmd.Process.Kill(); err != nil {
@@ -75,6 +88,8 @@ func RestartHugoServer() error {
 
 // IsHugoServerRunning checks if the Hugo server process is currently running
 func IsHugoServerRunning() bool {
+	hugoServerMu.Lock()
+	defer hugoServerMu.Unlock()
 	return hugoServerCmd != nil && hugoServerCmd.Process != nil
 }
 func BuildSite() (string, error) {
@@ -83,7 +98,11 @@ func BuildSite() (string, error) {
 		fmt.Printf("[Hugo] Build Duration: %v\n", time.Since(start))
 	}()
 
-	cmd := exec.Command("hugo",
+	// Use generous timeout for large sites (5 minutes)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "hugo",
 		"--source", config.RepoPath,
 		"--destination", "public",
 		"--baseURL", config.GetAppURL()+config.PreviewURL,
@@ -92,6 +111,9 @@ func BuildSite() (string, error) {
 		"-F",
 	)
 	output, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(output), fmt.Errorf("hugo build timed out after 5 minutes")
+	}
 	return string(output), err
 }
 
@@ -140,9 +162,15 @@ func CreateContent(path string) (string, error) {
 		}
 	}
 
-	cmd := exec.Command("hugo", "new", "content", path)
+	// Use timeout for hugo new command (60 seconds should be plenty)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "hugo", "new", "content", path)
 	cmd.Dir = config.RepoPath
 	output, err := cmd.CombinedOutput()
-
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(output), fmt.Errorf("hugo new timed out")
+	}
 	return string(output), err
 }

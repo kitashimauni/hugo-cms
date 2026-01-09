@@ -1,8 +1,8 @@
 // CSRF Token Management
 let csrfToken = null;
 
-async function ensureCSRFToken() {
-    if (csrfToken) return csrfToken;
+async function ensureCSRFToken(forceRefresh = false) {
+    if (csrfToken && !forceRefresh) return csrfToken;
     const res = await fetch('/admin/api/csrf-token');
     if (!res.ok) throw new Error("Failed to fetch CSRF token");
     const data = await res.json();
@@ -12,6 +12,11 @@ async function ensureCSRFToken() {
 
 function getCSRFHeaders() {
     return csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
+}
+
+// Reset CSRF token on 403 errors (token expired/invalid)
+function resetCSRFToken() {
+    csrfToken = null;
 }
 
 export async function fetchConfig() {
@@ -45,6 +50,21 @@ export async function saveArticle(payload) {
         },
         body: JSON.stringify(payload)
     });
+    // Handle CSRF token expiration - retry once with fresh token
+    if (res.status === 403) {
+        resetCSRFToken();
+        await ensureCSRFToken(true);
+        const retryRes = await fetch('/admin/api/article', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...getCSRFHeaders()
+            },
+            body: JSON.stringify(payload)
+        });
+        if (!retryRes.ok) throw new Error("Save failed");
+        return await retryRes.json();
+    }
     if (!res.ok) throw new Error("Save failed");
     return await res.json();
 }
