@@ -1,0 +1,388 @@
+# アーキテクチャ
+
+Hugo CMSのシステム構成と実装詳細について説明します。
+
+## システム概要
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Browser                               │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
+│  │  app.js  │  │  api.js  │  │editor.js │  │  ui.js   │    │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘    │
+└───────┼─────────────┼─────────────┼─────────────┼──────────┘
+        │             │             │             │
+        ▼             ▼             ▼             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     Gin HTTP Server                          │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │                    Middleware                        │    │
+│  │  Session │ CSRF │ Auth │ TokenValidation            │    │
+│  └─────────────────────────────────────────────────────┘    │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐              │
+│  │   api.go   │ │  auth.go   │ │  media.go  │              │
+│  │  Articles  │ │   OAuth    │ │   Upload   │              │
+│  └─────┬──────┘ └─────┬──────┘ └─────┬──────┘              │
+└────────┼──────────────┼──────────────┼─────────────────────┘
+         │              │              │
+         ▼              ▼              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       Services                               │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
+│  │ cache.go │ │  git.go  │ │ hugo.go  │ │ media.go │       │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘       │
+└───────┼────────────┼────────────┼────────────┼──────────────┘
+        │            │            │            │
+        ▼            ▼            ▼            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    External Systems                          │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
+│  │   File   │ │   Git    │ │   Hugo   │ │  GitHub  │       │
+│  │  System  │ │   CLI    │ │  Server  │ │   API    │       │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## コンポーネント詳細
+
+### main.go - エントリーポイント
+
+アプリケーションの起動と設定を担当:
+
+1. 設定の初期化 (`config.Init()`)
+2. Hugoサーバーの起動
+3. Ginルーターの設定
+4. ミドルウェアの適用
+5. グレースフルシャットダウン
+
+```go
+// ルーティング構成
+/admin              # CMS UI
+/admin/auth/*       # 認証 (OAuth)
+/admin/api/*        # REST API (認証必須)
+/preview/*          # Hugoプレビュー (プロキシ)
+/health             # ヘルスチェック
+/ready              # 詳細ヘルスチェック
+```
+
+### pkg/handlers/ - HTTPハンドラー
+
+#### auth.go
+
+- **AuthRequired**: セッション認証ミドルウェア
+- **CSRFProtection**: CSRFトークン検証
+- **TokenValidation**: GitHubトークンの定期検証
+- **GithubLogin / AuthCallback**: OAuth フロー
+
+#### api.go
+
+- **ListArticles**: 記事一覧 (キャッシュ使用)
+- **GetArticle / SaveArticle**: 記事の取得・保存
+- **CreateArticle / DeleteArticle**: 記事の作成・削除
+- **HandleSync / HandlePublish**: Git操作
+
+#### media.go
+
+- **ListMedia**: メディアファイル一覧
+- **UploadMedia**: ファイルアップロード (サイズ制限あり)
+- **DeleteMedia**: ファイル削除 (パス検証あり)
+- **ServeMediaRaw**: 直接ファイル配信
+
+#### errors.go
+
+統一されたエラーレスポンス形式:
+
+```json
+{
+  "status": "error",
+  "code": "BAD_REQUEST",
+  "message": "詳細なエラーメッセージ"
+}
+```
+
+### pkg/services/ - ビジネスロジック
+
+#### cache.go - 記事キャッシュ
+
+並列処理による高速な記事読み込み:
+
+```go
+// 20並列でファイルを読み込み
+semaphore := make(chan struct{}, config.CacheConcurrency)
+```
+
+- Front Matterの先頭部分のみ読み込み (`FileReadHeadLimit`)
+- Gitステータスの取得 (dirty判定)
+- キャッシュの自動無効化
+
+#### git.go - Git操作
+
+GitHub Personal Access Token (OAuth) を使用:
+
+```go
+// ASKPASS方式による認証
+// トークンを環境変数経由で渡し、コマンドライン履歴に残らない
+GIT_ASKPASS=script.sh
+GIT_TOKEN=xxx
+```
+
+タイムアウト設定:
+- ローカル操作: 60秒
+- ネットワーク操作: 5分
+
+#### hugo.go - Hugoサーバー管理
+
+- **StartHugoServer**: バックグラウンドでHugoサーバー起動
+- **StopHugoServer**: プロセス終了
+- **BuildSite**: サイトビルド (5分タイムアウト)
+- **CreateContent**: 新規コンテンツ作成
+
+Mutex による排他制御:
+```go
+var hugoServerMu sync.Mutex
+```
+
+#### frontmatter.go - Front Matter処理
+
+サポートフォーマット:
+- YAML (`---`)
+- TOML (`+++`)
+- JSON (`{}`)
+
+正規化処理:
+- 日付フォーマットの統一
+- 空フィールドの除去
+- デフォルト値の適用
+
+### pkg/config/ - 設定管理
+
+環境変数の読み込みと設定の管理:
+
+```go
+var (
+    RepoPath          = "./repo"
+    MaxUploadSize     = int64(10 * 1024 * 1024)
+    GitCommandTimeout = 60 * time.Second
+    // ...
+)
+```
+
+### pkg/models/ - データモデル
+
+#### Article
+
+```go
+type Article struct {
+    Path        string                 // content相対パス
+    Title       string                 // タイトル
+    Date        time.Time              // 日付
+    Draft       bool                   // 下書きフラグ
+    Dirty       bool                   // 未公開変更あり
+    FrontMatter map[string]interface{} // 全Front Matter
+}
+```
+
+#### CMSConfig
+
+```go
+type CMSConfig struct {
+    Collections []Collection
+}
+
+type Collection struct {
+    Name        string
+    Label       string
+    Folder      string
+    Create      bool
+    Slug        string
+    Path        string
+    Format      string
+    Fields      []Field
+    MediaFolder string
+    // ...
+}
+```
+
+## データフロー
+
+### 記事の読み込み
+
+```
+1. クライアント: GET /admin/api/articles
+2. ListArticles() → GetArticlesCache()
+3. キャッシュあり → 即座に返却
+4. キャッシュなし →
+   a. content/ を走査
+   b. 並列でFront Matter読み込み
+   c. Gitステータス取得
+   d. キャッシュに格納
+5. JSON応答
+```
+
+### 記事の保存
+
+```
+1. クライアント: PUT /admin/api/article
+2. CSRFトークン検証
+3. SaveArticle() →
+   a. パス検証 (SafeJoin)
+   b. Front Matter正規化
+   c. ファイル書き込み
+   d. キャッシュ更新
+4. 成功応答
+```
+
+### 記事の公開
+
+```
+1. クライアント: POST /admin/api/publish
+2. CSRFトークン検証
+3. HandlePublish() → PublishChanges()
+   a. git config (user.name, user.email)
+   b. git add
+   c. git commit
+   d. git push (ASKPASS認証)
+4. キャッシュ無効化
+5. 成功応答 (Gitログ)
+```
+
+## セキュリティ実装
+
+### 認証フロー
+
+```
+1. /admin/auth/login
+2. GitHub OAuth認証画面へリダイレクト
+3. GitHub がcallback URLへリダイレクト
+4. /admin/auth/callback
+   a. stateパラメータ検証
+   b. アクセストークン取得
+   c. GitHubユーザー情報取得
+   d. ユーザー許可リスト確認
+   e. セッションにトークン保存
+5. /admin へリダイレクト
+```
+
+### CSRF保護
+
+```
+1. ログイン成功時にCSRFトークン生成
+2. セッションに保存
+3. クライアントは /admin/api/csrf からトークン取得
+4. POST/PUT/DELETE時に X-CSRF-Token ヘッダーで送信
+5. サーバーでセッションのトークンと照合
+```
+
+### パストラバーサル対策
+
+```go
+func SafeJoin(root, sub, target string) string {
+    // 絶対パスを拒否
+    if filepath.IsAbs(target) {
+        return ""
+    }
+    
+    finalPath := filepath.Join(root, sub, target)
+    
+    // 相対パスで確認
+    rel, _ := filepath.Rel(filepath.Join(root, sub), finalPath)
+    if strings.HasPrefix(rel, "..") {
+        return ""  // 親ディレクトリへの参照を拒否
+    }
+    
+    return finalPath
+}
+```
+
+## 並行処理
+
+### キャッシュの排他制御
+
+```go
+var (
+    articleCache []models.Article
+    cacheMutex   sync.Mutex
+    cacheLoaded  bool
+)
+
+func GetArticlesCache() ([]models.Article, error) {
+    cacheMutex.Lock()
+    defer cacheMutex.Unlock()
+    // ...
+}
+```
+
+### Hugoサーバーの排他制御
+
+```go
+var hugoServerMu sync.Mutex
+
+func StartHugoServer() error {
+    hugoServerMu.Lock()
+    defer hugoServerMu.Unlock()
+    // ...
+}
+```
+
+## エラーハンドリング
+
+### タイムアウト
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+defer cancel()
+
+cmd := exec.CommandContext(ctx, "hugo", "build")
+output, err := cmd.CombinedOutput()
+
+if ctx.Err() == context.DeadlineExceeded {
+    return "", fmt.Errorf("operation timed out")
+}
+```
+
+### グレースフルシャットダウン
+
+```go
+quit := make(chan os.Signal, 1)
+signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+<-quit
+
+// Hugoサーバー停止
+services.StopHugoServer()
+
+// HTTPサーバーシャットダウン (5秒タイムアウト)
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+srv.Shutdown(ctx)
+```
+
+## ロギング
+
+`log/slog` による構造化ログ:
+
+```go
+slog.Info("Hugo build completed", 
+    "duration", time.Since(start))
+
+slog.Warn("Failed to set git user.email", 
+    "error", err)
+
+slog.Debug("Git command executed", 
+    "args", args, 
+    "duration", time.Since(start))
+```
+
+## テスト
+
+### ユニットテスト
+
+```bash
+go test ./pkg/... -v
+```
+
+テストカバレッジ:
+- `pkg/handlers/`: エラーレスポンス、ヘルスチェック、メディアAPI
+- `pkg/services/`: SafeJoin、Front Matter、ファイル操作
+
+### 統合テスト
+
+実際のGit/Hugoコマンドを使用するため、CI環境では注意が必要です。
