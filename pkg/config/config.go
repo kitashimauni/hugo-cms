@@ -30,6 +30,7 @@ var (
 	// Media settings
 	ArticleMediaDir = ""
 	StaticMediaDir  = ""
+	MaxUploadSize   = int64(10 * 1024 * 1024) // 10MB default
 
 	// Git settings
 	GitUserEmail = "bot@hugo-cms.local"
@@ -76,6 +77,13 @@ func Init() {
 
 	ArticleMediaDir = getEnv("ARTICLE_MEDIA_DIR", "")
 	StaticMediaDir = getEnv("STATIC_MEDIA_DIR", "")
+
+	// Max upload size (default 10MB)
+	if maxSize := os.Getenv("MAX_UPLOAD_SIZE_MB"); maxSize != "" {
+		if val, err := strconv.ParseInt(maxSize, 10, 64); err == nil && val > 0 {
+			MaxUploadSize = val * 1024 * 1024
+		}
+	}
 
 	GitUserEmail = getEnv("GIT_USER_EMAIL", "bot@hugo-cms.local")
 	GitUserName = getEnv("GIT_USER_NAME", "Hugo CMS Bot")

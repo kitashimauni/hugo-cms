@@ -5,6 +5,7 @@ import (
 	"hugo-cms/pkg/services"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,13 @@ func UploadMedia(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
 		ErrorBadRequest(c, "No file uploaded")
+		return
+	}
+
+	// Check file size
+	if file.Size > config.MaxUploadSize {
+		maxMB := config.MaxUploadSize / 1024 / 1024
+		ErrorBadRequest(c, "File too large. Maximum size is "+strconv.FormatInt(maxMB, 10)+"MB")
 		return
 	}
 
