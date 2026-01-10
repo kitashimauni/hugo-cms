@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hugo-cms/pkg/config"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +29,7 @@ func StartHugoServer() error {
 		return nil
 	}
 
-	fmt.Printf("[Hugo] Starting server on :%s...\n", config.HugoServerPort)
+	slog.Info("Starting Hugo server", "port", config.HugoServerPort)
 
 	cmd := exec.Command("hugo", "server",
 		"--source", config.RepoPath,
@@ -54,7 +55,7 @@ func StartHugoServer() error {
 	// Wait in goroutine
 	go func() {
 		state, err := cmd.Process.Wait()
-		fmt.Printf("[Hugo] Server stopped. State: %v, Err: %v\n", state, err)
+		slog.Info("Hugo server stopped", "state", state, "error", err)
 		hugoServerMu.Lock()
 		hugoServerCmd = nil
 		hugoServerMu.Unlock()
@@ -68,7 +69,7 @@ func StopHugoServer() error {
 	defer hugoServerMu.Unlock()
 
 	if hugoServerCmd != nil && hugoServerCmd.Process != nil {
-		fmt.Println("[Hugo] Stopping server...")
+		slog.Info("Stopping Hugo server")
 		if err := hugoServerCmd.Process.Kill(); err != nil {
 			return fmt.Errorf("failed to kill hugo server: %w", err)
 		}
@@ -95,7 +96,7 @@ func IsHugoServerRunning() bool {
 func BuildSite() (string, error) {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("[Hugo] Build Duration: %v\n", time.Since(start))
+		slog.Info("Hugo build completed", "duration", time.Since(start))
 	}()
 
 	// Use generous timeout for large sites (5 minutes)
@@ -120,7 +121,7 @@ func BuildSite() (string, error) {
 func CreateContent(path string) (string, error) {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("[Hugo] New Content: %s, Duration: %v\n", path, time.Since(start))
+		slog.Info("Hugo new content", "path", path, "duration", time.Since(start))
 	}()
 
 	// Check if file already exists
@@ -157,7 +158,7 @@ func CreateContent(path string) (string, error) {
 					return "Created using CMS config", nil
 				}
 				// If generation fails, fall through to hugo new
-				fmt.Printf("Failed to generate content from config: %v\n", err)
+				slog.Warn("Failed to generate content from CMS config", "error", err)
 			}
 		}
 	}

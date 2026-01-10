@@ -2,11 +2,11 @@ package services
 
 import (
 	"context"
-	"fmt"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/models"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,7 +31,7 @@ func GetArticlesCache() ([]models.Article, error) {
 	}
 
 	defer func() {
-		fmt.Printf("[Cache] Rebuild All Duration: %v, Count: %d\n", time.Since(start), len(articleCache))
+		slog.Info("Cache rebuild completed", "duration", time.Since(start), "count", len(articleCache))
 	}()
 
 	contentDir := filepath.Join(config.RepoPath, "content")
@@ -170,7 +170,7 @@ func InvalidateCache() {
 func UpdateCache(relPath string) {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("[Cache] Update Single: %s, Duration: %v\n", relPath, time.Since(start))
+		slog.Debug("Cache update single", "path", relPath, "duration", time.Since(start))
 	}()
 
 	cacheMutex.Lock()

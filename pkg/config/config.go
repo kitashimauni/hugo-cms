@@ -1,7 +1,7 @@
 package config
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -51,7 +51,7 @@ var OauthConf *oauth2.Config
 
 func Init() {
 	if err := godotenv.Load(); err != nil {
-		fmt.Println("No .env file found or error loading it.")
+		slog.Info("No .env file found or error loading", "error", err)
 	}
 
 	// Helper to get env with default

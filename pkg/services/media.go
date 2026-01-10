@@ -5,6 +5,7 @@ import (
 	"hugo-cms/pkg/config"
 	"io"
 	"io/fs"
+	"log/slog"
 	"mime/multipart"
 	"net/url"
 	"os"
@@ -17,13 +18,13 @@ type MediaFile struct {
 	Name     string `json:"name"`
 	Path     string `json:"path"` // Relative path for usage in markdown
 	Size     int64  `json:"size"`
-	URL      string `json:"url"`  // URL for preview
+	URL      string `json:"url"` // URL for preview
 	RepoPath string `json:"repo_path"`
 }
 
 func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 	var searchDirs []string
-	
+
 	// Determine search roots based on mode
 	if mode == "static" {
 		// List all files in repo/static/{StaticMediaDir}
@@ -95,7 +96,7 @@ func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 			return nil
 		})
 		if err != nil {
-			fmt.Printf("Walk error: %v\n", err)
+			slog.Warn("Walk error during media listing", "root", root, "error", err)
 		}
 	}
 	return files, nil
@@ -110,9 +111,9 @@ func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*Med
 
 	filename := filepath.Base(header.Filename)
 	filename = strings.ReplaceAll(filename, " ", "_")
-	
+
 	ext := strings.ToLower(filepath.Ext(filename))
-	
+
 	// Validate Extension
 	allowedExts := map[string]bool{
 		".jpg": true, ".jpeg": true, ".png": true, ".gif": true,

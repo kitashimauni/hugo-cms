@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"hugo-cms/pkg/config"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
@@ -48,7 +49,7 @@ func CheckSemanticDiff(relPath string) (bool, error) {
 func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("[Git] Cmd: %v, Duration: %v\n", args, time.Since(start))
+		slog.Debug("Git command executed", "args", args, "duration", time.Since(start))
 	}()
 
 	// Create context with timeout for network operations (pull/push)
@@ -164,13 +165,13 @@ func PublishChanges(token, path string) (string, error) {
 	cmdConfigEmail := exec.CommandContext(ctx, "git", "config", "user.email", config.GitUserEmail)
 	cmdConfigEmail.Dir = config.RepoPath
 	if err := cmdConfigEmail.Run(); err != nil {
-		fmt.Printf("[Git] Warning: failed to set user.email: %v\n", err)
+		slog.Warn("Failed to set git user.email", "error", err)
 	}
 
 	cmdConfigName := exec.CommandContext(ctx, "git", "config", "user.name", config.GitUserName)
 	cmdConfigName.Dir = config.RepoPath
 	if err := cmdConfigName.Run(); err != nil {
-		fmt.Printf("[Git] Warning: failed to set user.name: %v\n", err)
+		slog.Warn("Failed to set git user.name", "error", err)
 	}
 
 	var filesToAdd []string
@@ -261,12 +262,12 @@ func Diff(f1Path, f2Path, relPath string) (string, string) {
 	// Write to temp file
 	fHead, err := os.CreateTemp("", "diff_head_*")
 	if err != nil {
-		fmt.Printf("[Diff] Warning: failed to create temp file: %v\n", err)
+		slog.Warn("Failed to create temp file for diff", "error", err)
 		return "", "none"
 	}
 	defer os.Remove(fHead.Name())
 	if _, err := fHead.Write(normalizedHead); err != nil {
-		fmt.Printf("[Diff] Warning: failed to write temp file: %v\n", err)
+		slog.Warn("Failed to write temp file for diff", "error", err)
 		return "", "none"
 	}
 	fHead.Close()

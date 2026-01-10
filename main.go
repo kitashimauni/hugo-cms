@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"fmt"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/handlers"
 	"hugo-cms/pkg/services"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -32,8 +32,8 @@ func SetupRouter() *gin.Engine {
 	// Session Setup
 	secret := os.Getenv("SESSION_SECRET")
 	if secret == "" {
-		fmt.Println("WARNING: SESSION_SECRET is not set. Using a temporary random secret.")
-		fmt.Println("WARNING: This is insecure for production. Please set SESSION_SECRET environment variable.")
+		slog.Warn("SESSION_SECRET is not set, using temporary random secret",
+			"warning", "insecure for production")
 		b := make([]byte, 32)
 		if _, err := rand.Read(b); err != nil {
 			panic("Failed to generate random session secret: " + err.Error())
@@ -124,13 +124,14 @@ func main() {
 	config.Init()
 
 	appURL := config.GetAppURL()
-	fmt.Printf("Starting server...\n")
-	fmt.Printf("APP_URL: %s\n", appURL)
-	fmt.Printf("Redirect URL: %s\n", config.OauthConf.RedirectURL)
+	slog.Info("Starting server",
+		"app_url", appURL,
+		"redirect_url", config.OauthConf.RedirectURL,
+		"port", config.ServerPort)
 
 	// Start Hugo Server
 	if err := services.StartHugoServer(); err != nil {
-		fmt.Printf("Failed to start Hugo Server: %v\n", err)
+		slog.Error("Failed to start Hugo Server", "error", err)
 	}
 
 	r := SetupRouter()
@@ -142,7 +143,7 @@ func main() {
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("listen: %s\n", err)
+			slog.Error("Server listen error", "error", err)
 		}
 	}()
 
@@ -150,18 +151,18 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	fmt.Println("Shutting down server...")
+	slog.Info("Shutting down server...")
 
 	// Clean up Hugo Server
 	if err := services.StopHugoServer(); err != nil {
-		fmt.Printf("Failed to stop Hugo Server: %v\n", err)
+		slog.Error("Failed to stop Hugo Server", "error", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		fmt.Printf("Server forced to shutdown: %v\n", err)
+		slog.Error("Server forced to shutdown", "error", err)
 	}
 
-	fmt.Println("Server exiting")
+	slog.Info("Server exiting")
 }
