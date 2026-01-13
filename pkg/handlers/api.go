@@ -409,72 +409,9 @@ func GetSnippets(c *gin.Context) {
 	// Simple sanitization for JSONC (VS Code snippets)
 	// 1. Remove trailing commas before closing braces/brackets
 	// 2. Remove comments (basic implementation)
-	sContent := string(content)
-	
-	// Remove single line comments // ...
-	lines := strings.Split(sContent, "\n")
-	var cleanLines []string
-	for _, line := range lines {
-		// Very basic comment stripping, assuming comments are on their own line or at end
-		// This is risky for URLs in strings "http://...", so we only strip if // is not inside quotes.
-		// For safety, let's assume valid JSON structure and only strip if it looks like a comment.
-		// Better approach: Use a proper lexer or just handle the trailing comma issue which is the main blocker.
-		// The error reported was "Unexpected token ']'", which is typically a trailing comma.
-		
-		// Strip trailing comma if it's the last non-space char before ] or }
-		// We'll do this on the full string or line by line? Line by line is safer for this.
-		
-		// Actually, let's just fix the trailing comma issue first as it's the most common JSONC issue.
-		// We can't easily parse JSONC in stdlib.
-		// Let's try to remove comments first using a simple state machine or regex if possible.
-		// Given constraints, let's try a regex for trailing commas.
-		cleanLines = append(cleanLines, line)
-	}
-	
-	// Re-join for regex
-	fullStr := strings.Join(cleanLines, "\n")
-
-	// Remove Comments (Block and Line) - simplified
-	// Removing comments with regex is tricky. 
-	// Let's try to just fix the trailing comma which caused the specific error `Unexpected token ']'`.
-	// Pattern: `,` followed by whitespace and `]` or `}`
-	// We need to be careful not to match inside strings, but trailing commas usually appear outside strings.
-	
-	// Helper to remove trailing commas
-	// Replaces `, \s* }` with `}` and `, \s* ]` with `]`
-	// Iterating to handle multiple occurrences
-	for {
-		orig := fullStr
-		fullStr = strings.ReplaceAll(fullStr, ",}", "}")
-		fullStr = strings.ReplaceAll(fullStr, ",]", "]")
-		// Handle whitespace
-		// Since we can't easily use regex replaceall with submatch in simple replaceall...
-		// Let's use a loop or just relying on the fact that we can clean it up.
-		if orig == fullStr {
-			break
-		}
-	}
-	
-	// Also handle ", \n }" etc.
-	// Since we don't have a JSONC parser, we will try to simply serve it.
-	// However, the user reported an error.
-	// Let's try to remove the specific trailing comma pattern using a loop over the string bytes? No.
-	
-	// Let's use a "dirty" JSONC sanitizer:
-	// 1. Strip comments
-	// 2. Strip trailing commas
-	
 	sanitized := sanitizeJSONC(string(content))
 
-	// Validate by Unmarshal
-	var jsonObj map[string]interface{}
-	// Use standard json.Unmarshal (via services helper or direct)
-	// services.JSONUnmarshal is not defined in previous context, using generic json
-	// We'll use a local unmarshal to verify
-	
-	// Note: services package might not have JSONUnmarshal exposed.
-	// Using generic approach for now.
-	
+	// Send sanitized content as JSON
 	c.Data(http.StatusOK, "application/json", []byte(sanitized))
 }
 
