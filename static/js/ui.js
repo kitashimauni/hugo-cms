@@ -943,11 +943,12 @@ function renderMediaGrid(container, files, mode, currentPath, onSelect) {
 
             input.className = 'fm-input';
 
-            input.value = v.default || "";
+            input.placeholder = v.default || ""; // Set default as placeholder
+            input.value = ""; // Clear initial value
 
             
 
-            inputs[v.id] = input;
+            inputs[v.id] = { el: input, default: v.default || "" }; // Store default for fallback
 
             
 
@@ -985,10 +986,9 @@ function renderMediaGrid(container, files, mode, currentPath, onSelect) {
 
             const values = {};
 
-            for (const [id, input] of Object.entries(inputs)) {
-
-                values[id] = input.value;
-
+            for (const [id, data] of Object.entries(inputs)) {
+                // Use input value or fallback to default
+                values[id] = data.el.value !== "" ? data.el.value : data.default;
             }
 
             onConfirm(values);
@@ -1010,7 +1010,7 @@ function renderMediaGrid(container, files, mode, currentPath, onSelect) {
 
         if (variables.length > 0) {
 
-            inputs[variables[0].id].focus();
+            inputs[variables[0].id].el.focus();
 
         }
 
