@@ -887,7 +887,7 @@ function renderMediaGrid(container, files, mode, currentPath, onSelect) {
 
     
 
-    export function showSnippetInputModal(variables, onConfirm) {
+    export function showSnippetInputModal(variables, onConfirm, onBack) {
 
         const overlay = document.getElementById('modal-overlay');
 
@@ -965,11 +965,15 @@ function renderMediaGrid(container, files, mode, currentPath, onSelect) {
 
         btnRow.style.display = 'flex';
 
-        btnRow.style.justifyContent = 'flex-end';
-
+        btnRow.style.justifyContent = 'space-between'; // Changed to space-between
         btnRow.style.marginTop = '10px';
 
-    
+        const backBtn = document.createElement('button');
+        backBtn.className = 'action-btn secondary';
+        backBtn.textContent = 'Back';
+        backBtn.onclick = () => {
+             if (onBack) onBack();
+        };
 
         const confirmBtn = document.createElement('button');
 
@@ -992,9 +996,8 @@ function renderMediaGrid(container, files, mode, currentPath, onSelect) {
             closeModal();
 
         };
-
     
-
+        btnRow.appendChild(backBtn);
         btnRow.appendChild(confirmBtn);
 
         form.appendChild(btnRow);
