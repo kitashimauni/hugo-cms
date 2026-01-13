@@ -1,18 +1,27 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"hugo-cms/pkg/config"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
-var hugoServerCmd *exec.Cmd
+var (
+	hugoServerCmd *exec.Cmd
+	hugoServerMu  sync.Mutex
+)
 
 func StartHugoServer() error {
+	hugoServerMu.Lock()
+	defer hugoServerMu.Unlock()
+
 	if hugoServerCmd != nil && hugoServerCmd.Process != nil {
 		// Check if process is still alive?
 		// For simplicity assume if variable is set, it's running.
@@ -20,7 +29,7 @@ func StartHugoServer() error {
 		return nil
 	}
 
-	fmt.Printf("[Hugo] Starting server on :%s...\n", config.HugoServerPort)
+	slog.Info("Starting Hugo server", "port", config.HugoServerPort)
 
 	cmd := exec.Command("hugo", "server",
 		"--source", config.RepoPath,
@@ -46,20 +55,55 @@ func StartHugoServer() error {
 	// Wait in goroutine
 	go func() {
 		state, err := cmd.Process.Wait()
-		fmt.Printf("[Hugo] Server stopped. State: %v, Err: %v\n", state, err)
+		slog.Info("Hugo server stopped", "state", state, "error", err)
+		hugoServerMu.Lock()
 		hugoServerCmd = nil
+		hugoServerMu.Unlock()
 	}()
 
 	return nil
 }
 
+func StopHugoServer() error {
+	hugoServerMu.Lock()
+	defer hugoServerMu.Unlock()
+
+	if hugoServerCmd != nil && hugoServerCmd.Process != nil {
+		slog.Info("Stopping Hugo server")
+		if err := hugoServerCmd.Process.Kill(); err != nil {
+			return fmt.Errorf("failed to kill hugo server: %w", err)
+		}
+		// Wait for process to exit
+		time.Sleep(500 * time.Millisecond)
+		hugoServerCmd = nil
+	}
+	return nil
+}
+
+func RestartHugoServer() error {
+	if err := StopHugoServer(); err != nil {
+		return err
+	}
+	return StartHugoServer()
+}
+
+// IsHugoServerRunning checks if the Hugo server process is currently running
+func IsHugoServerRunning() bool {
+	hugoServerMu.Lock()
+	defer hugoServerMu.Unlock()
+	return hugoServerCmd != nil && hugoServerCmd.Process != nil
+}
 func BuildSite() (string, error) {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("[Hugo] Build Duration: %v\n", time.Since(start))
+		slog.Info("Hugo build completed", "duration", time.Since(start))
 	}()
 
-	cmd := exec.Command("hugo",
+	// Use generous timeout for large sites (5 minutes)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "hugo",
 		"--source", config.RepoPath,
 		"--destination", "public",
 		"--baseURL", config.GetAppURL()+config.PreviewURL,
@@ -68,13 +112,16 @@ func BuildSite() (string, error) {
 		"-F",
 	)
 	output, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(output), fmt.Errorf("hugo build timed out after 5 minutes")
+	}
 	return string(output), err
 }
 
 func CreateContent(path string) (string, error) {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("[Hugo] New Content: %s, Duration: %v\n", path, time.Since(start))
+		slog.Info("Hugo new content", "path", path, "duration", time.Since(start))
 	}()
 
 	// Check if file already exists
@@ -111,14 +158,20 @@ func CreateContent(path string) (string, error) {
 					return "Created using CMS config", nil
 				}
 				// If generation fails, fall through to hugo new
-				fmt.Printf("Failed to generate content from config: %v\n", err)
+				slog.Warn("Failed to generate content from CMS config", "error", err)
 			}
 		}
 	}
 
-	cmd := exec.Command("hugo", "new", "content", path)
+	// Use timeout for hugo new command (60 seconds should be plenty)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "hugo", "new", "content", path)
 	cmd.Dir = config.RepoPath
 	output, err := cmd.CombinedOutput()
-
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(output), fmt.Errorf("hugo new timed out")
+	}
 	return string(output), err
 }

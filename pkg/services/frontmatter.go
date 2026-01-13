@@ -15,7 +15,7 @@ import (
 func ParseFrontMatter(content []byte) (map[string]interface{}, string, string, error) {
 	str := string(content)
 	// Check for YAML (---)
-	if strings.HasPrefix(str, "---") || strings.HasPrefix(str, "---") {
+	if strings.HasPrefix(str, "---") {
 		parts := strings.SplitN(str, "---", 3) // "", FM, Body
 		if len(parts) == 3 {
 			var fm map[string]interface{}
@@ -25,7 +25,7 @@ func ParseFrontMatter(content []byte) (map[string]interface{}, string, string, e
 		}
 	}
 	// Check for TOML (+++)
-	if strings.HasPrefix(str, "+++") || strings.HasPrefix(str, "+++") {
+	if strings.HasPrefix(str, "+++") {
 		parts := strings.SplitN(str, "+++", 3)
 		if len(parts) == 3 {
 			var fm map[string]interface{}

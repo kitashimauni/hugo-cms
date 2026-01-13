@@ -1,11 +1,12 @@
 package services
 
 import (
-	"fmt"
+	"context"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/models"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +31,7 @@ func GetArticlesCache() ([]models.Article, error) {
 	}
 
 	defer func() {
-		fmt.Printf("[Cache] Rebuild All Duration: %v, Count: %d\n", time.Since(start), len(articleCache))
+		slog.Info("Cache rebuild completed", "duration", time.Since(start), "count", len(articleCache))
 	}()
 
 	contentDir := filepath.Join(config.RepoPath, "content")
@@ -112,7 +113,10 @@ func readHead(path string, limit int64) ([]byte, error) {
 }
 
 func getGitDirtyFiles(dir string) (map[string]bool, error) {
-	cmd := exec.Command("git", "status", "--porcelain", "--", "content")
+	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", "--", "content")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -135,7 +139,7 @@ func getGitDirtyFiles(dir string) (map[string]bool, error) {
 		}
 	}
 
-	cmdUntracked := exec.Command("git", "ls-files", "--others", "--exclude-standard", "--", "content")
+	cmdUntracked := exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard", "--", "content")
 	cmdUntracked.Dir = dir
 	if outUntracked, errUntracked := cmdUntracked.Output(); errUntracked == nil {
 		for _, raw := range strings.Split(string(outUntracked), "\n") {
@@ -166,7 +170,7 @@ func InvalidateCache() {
 func UpdateCache(relPath string) {
 	start := time.Now()
 	defer func() {
-		fmt.Printf("[Cache] Update Single: %s, Duration: %v\n", relPath, time.Since(start))
+		slog.Debug("Cache update single", "path", relPath, "duration", time.Since(start))
 	}()
 
 	cacheMutex.Lock()
@@ -226,11 +230,14 @@ func UpdateCache(relPath string) {
 }
 
 func getGitFileStatus(relPath string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
+	defer cancel()
+
 	// git status --porcelain content/posts/xxx.md
 	// Note: relPath is relative to content/, but git needs relative to RepoPath
 	target := filepath.Join("content", relPath)
 	targetGit := filepath.ToSlash(target)
-	cmd := exec.Command("git", "status", "--porcelain", targetGit)
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", targetGit)
 	cmd.Dir = config.RepoPath
 	out, err := cmd.Output()
 	if err != nil {

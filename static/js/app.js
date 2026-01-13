@@ -65,6 +65,19 @@ async function init() {
     window.runSync = runSync;
     window.runPublish = runPublish;
     window.publishFile = publishFile;
+    window.restartPreview = async () => {
+        if (!confirm("Restart Hugo Server? (This helps if preview is stuck)")) return;
+        UI.showToast("Restarting server...", "info");
+        try {
+            await API.restartHugo();
+            UI.showToast("Server Restarted", "success");
+            // Reload iframe
+            const currentPath = Editor.getCurrentPath();
+            if (currentPath) UI.setPreviewUrl(currentPath);
+        } catch (e) {
+            UI.showToast("Restart Failed", "error");
+        }
+    };
 
     console.log("Hugo CMS Initialized");
 }

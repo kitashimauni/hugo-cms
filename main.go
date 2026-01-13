@@ -1,32 +1,29 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"fmt"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/handlers"
 	"hugo-cms/pkg/services"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 )
 
-func main() {
-	// Initialize config
-	config.Init()
-
+func SetupRouter() *gin.Engine {
 	appURL := config.GetAppURL()
-	fmt.Printf("Starting server...\n")
-	fmt.Printf("APP_URL: %s\n", appURL)
-	fmt.Printf("Redirect URL: %s\n", config.OauthConf.RedirectURL)
-
 	r := gin.Default()
 
 	// Determine if we are running on HTTPS
@@ -35,14 +32,17 @@ func main() {
 	// Session Setup
 	secret := os.Getenv("SESSION_SECRET")
 	if secret == "" {
-		fmt.Println("WARNING: SESSION_SECRET is not set. Using a temporary random secret.")
+		slog.Warn("SESSION_SECRET is not set, using temporary random secret",
+			"warning", "insecure for production")
 		b := make([]byte, 32)
-		rand.Read(b)
+		if _, err := rand.Read(b); err != nil {
+			panic("Failed to generate random session secret: " + err.Error())
+		}
 		secret = base64.StdEncoding.EncodeToString(b)
 	}
 	store := cookie.NewStore([]byte(secret))
 	store.Options(sessions.Options{
-		Path:     "/",
+		Path:     "/", // Cookie valid for whole domain
 		MaxAge:   86400 * 7,
 		HttpOnly: true,
 		Secure:   isSecure,
@@ -52,51 +52,117 @@ func main() {
 
 	// Static Files & Templates
 	r.LoadHTMLGlob("templates/*")
-	// Start Hugo Server
-	if err := services.StartHugoServer(); err != nil {
-		fmt.Printf("Failed to start Hugo Server: %v\n", err)
-	}
 
-	// Proxy /preview/ to Hugo Server
-	previewProxyURL, _ := url.Parse("http://" + config.HugoServerBind + ":" + config.HugoServerPort)
-	proxy := httputil.NewSingleHostReverseProxy(previewProxyURL)
+	// --- Health Check Endpoints (Public) ---
+	r.GET("/health", handlers.HealthCheck)
+	r.GET("/ready", handlers.ReadinessCheck)
 
-	r.Any(config.PreviewURL+"*path", func(c *gin.Context) {
-		proxy.ServeHTTP(c.Writer, c.Request)
-	})
-
-	r.Static("/static", "./static") // Serve static assets (css/js)
-
-	// --- Auth Routes ---
-	r.GET("/login", handlers.LoginPage)
-	r.GET("/login/github", handlers.GithubLogin)
-	r.GET("/auth/callback", handlers.AuthCallback)
-	r.GET("/logout", handlers.Logout)
-
-	// --- Main App (Authorized) ---
-	authorized := r.Group("/")
-	authorized.Use(handlers.AuthRequired)
+	// --- Admin Routes ---
+	admin := r.Group("/admin")
 	{
-		authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
+		// Public Auth
+		admin.GET("/login", handlers.LoginPage)
+		admin.GET("/login/github", handlers.GithubLogin)
+		admin.GET("/auth/callback", handlers.AuthCallback)
+		admin.GET("/logout", handlers.Logout)
 
-		api := authorized.Group("/api")
+		// Protected Admin
+		authorized := admin.Group("/")
+		authorized.Use(handlers.AuthRequired)
+		authorized.Use(handlers.TokenValidation) // Periodically validate GitHub token
 		{
-			api.POST("/build", handlers.HandleBuild)
-			api.GET("/articles", handlers.ListArticles)
-			api.GET("/article", handlers.GetArticle)
-			api.POST("/article", handlers.SaveArticle)
-			api.POST("/create", handlers.CreateArticle)
-			api.POST("/delete", handlers.DeleteArticle)
-			api.POST("/diff", handlers.GetDiff)
-			api.GET("/config", handlers.GetConfig)
-			api.POST("/sync", handlers.HandleSync)
-			api.POST("/publish", handlers.HandlePublish)
-			api.GET("/media", handlers.ListMedia)
-			api.POST("/media", handlers.UploadMedia)
-			api.POST("/media/delete", handlers.DeleteMedia)
-			api.GET("/media/raw", handlers.ServeMediaRaw)
+			// CMS Static Assets (Protected)
+			authorized.Static("/static", "./static")
+
+			authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
+
+			api := authorized.Group("/api")
+			api.Use(handlers.CSRFProtection) // Apply CSRF protection to all API routes
+			{
+				api.GET("/csrf-token", handlers.GetCSRFToken) // Endpoint to get CSRF token
+				api.POST("/build", handlers.HandleBuild)
+				api.POST("/build/restart", handlers.HandleRestart)
+				api.GET("/articles", handlers.ListArticles)
+				api.GET("/article", handlers.GetArticle)
+				api.POST("/article", handlers.SaveArticle)
+				api.POST("/create", handlers.CreateArticle)
+				api.POST("/delete", handlers.DeleteArticle)
+				api.POST("/diff", handlers.GetDiff)
+				api.GET("/config", handlers.GetConfig)
+				api.POST("/sync", handlers.HandleSync)
+				api.POST("/publish", handlers.HandlePublish)
+				api.GET("/media", handlers.ListMedia)
+				api.POST("/media", handlers.UploadMedia)
+				api.POST("/media/delete", handlers.DeleteMedia)
+				api.GET("/media/raw", handlers.ServeMediaRaw)
+			}
 		}
 	}
 
-	r.Run(":8080")
+	// --- Root Proxy to Hugo ---
+	previewProxyURL, _ := url.Parse("http://" + config.HugoServerBind + ":" + config.HugoServerPort)
+	proxy := httputil.NewSingleHostReverseProxy(previewProxyURL)
+
+	r.NoRoute(func(c *gin.Context) {
+		// Protect Proxy
+		session := sessions.Default(c)
+		if session.Get("access_token") == nil {
+			// If not authenticated, redirect to admin login
+			c.Redirect(http.StatusFound, "/admin/login")
+			return
+		}
+
+		// Proxy to Hugo
+		proxy.ServeHTTP(c.Writer, c.Request)
+	})
+
+	return r
+}
+
+func main() {
+	// Initialize config
+	config.Init()
+
+	appURL := config.GetAppURL()
+	slog.Info("Starting server",
+		"app_url", appURL,
+		"redirect_url", config.OauthConf.RedirectURL,
+		"port", config.ServerPort)
+
+	// Start Hugo Server
+	if err := services.StartHugoServer(); err != nil {
+		slog.Error("Failed to start Hugo Server", "error", err)
+	}
+
+	r := SetupRouter()
+
+	srv := &http.Server{
+		Addr:    ":" + config.ServerPort,
+		Handler: r,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("Server listen error", "error", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	slog.Info("Shutting down server...")
+
+	// Clean up Hugo Server
+	if err := services.StopHugoServer(); err != nil {
+		slog.Error("Failed to stop Hugo Server", "error", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		slog.Error("Server forced to shutdown", "error", err)
+	}
+
+	slog.Info("Server exiting")
 }

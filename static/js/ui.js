@@ -391,13 +391,38 @@ export function setPreviewUrl(path) {
         previewPath = "";
     }
 
-    const targetUrl = "/preview/" + previewPath + (previewPath ? "/" : "");
+    const rootRelativePath = "/" + previewPath.replace(/^\//, "");
+    const targetUrl = rootRelativePath + (rootRelativePath.endsWith("/") ? "" : "/");
+
     frame.src = targetUrl + "?t=" + Date.now();
 }
 
-export function showDiffModal(diffHtml) {
+export function showDiffModal(diffText) {
     const body = document.getElementById('modal-body');
-    body.innerHTML = diffHtml || "No differences";
+    body.innerHTML = ''; // Clear previous content
+
+    if (!diffText) {
+        body.textContent = "No differences";
+    } else {
+        const lines = diffText.split('\n');
+        lines.forEach(line => {
+            const div = document.createElement('div');
+            if (line.startsWith('+')) {
+                const span = document.createElement('span');
+                span.className = 'diff-added';
+                span.textContent = line;
+                div.appendChild(span);
+            } else if (line.startsWith('-')) {
+                const span = document.createElement('span');
+                span.className = 'diff-removed';
+                span.textContent = line;
+                div.appendChild(span);
+            } else {
+                div.textContent = line;
+            }
+            body.appendChild(div);
+        });
+    }
     document.getElementById('modal-overlay').style.display = 'flex';
 }
 
@@ -541,7 +566,10 @@ export function showToast(message, type = 'info') {
 
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    toast.innerHTML = `<span>${message}</span>`;
+    
+    const msgSpan = document.createElement('span');
+    msgSpan.textContent = message;
+    toast.appendChild(msgSpan);
 
     // Close button
     const closeBtn = document.createElement('span');

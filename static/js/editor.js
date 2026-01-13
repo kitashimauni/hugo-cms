@@ -206,14 +206,7 @@ export async function showDiff() {
     const payload = getPayload();
     try {
         const data = await API.getDiff(payload);
-        let html = data.diff.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        html = html.split('\n').map(line => {
-            if (line.startsWith('+')) return `<span class="diff-added">${line}</span>`;
-            if (line.startsWith('-')) return `<span class="diff-removed">${line}</span>`;
-            return line;
-        }).join('\n');
-
-        UI.showDiffModal(html);
+        UI.showDiffModal(data.diff);
     } catch (e) {
         UI.showToast("Failed to get diff: " + e.message, "error");
     }

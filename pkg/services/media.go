@@ -5,6 +5,7 @@ import (
 	"hugo-cms/pkg/config"
 	"io"
 	"io/fs"
+	"log/slog"
 	"mime/multipart"
 	"net/url"
 	"os"
@@ -17,13 +18,13 @@ type MediaFile struct {
 	Name     string `json:"name"`
 	Path     string `json:"path"` // Relative path for usage in markdown
 	Size     int64  `json:"size"`
-	URL      string `json:"url"`  // URL for preview
+	URL      string `json:"url"` // URL for preview
 	RepoPath string `json:"repo_path"`
 }
 
 func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 	var searchDirs []string
-	
+
 	// Determine search roots based on mode
 	if mode == "static" {
 		// List all files in repo/static/{StaticMediaDir}
@@ -88,14 +89,14 @@ func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 					Name:     d.Name(), // Or relative path from root?
 					Path:     usagePath,
 					Size:     0, // d.Info() needed
-					URL:      "/api/media/raw?path=" + url.QueryEscape(relPath),
+					URL:      "/admin/api/media/raw?path=" + url.QueryEscape(relPath),
 					RepoPath: relPath,
 				})
 			}
 			return nil
 		})
 		if err != nil {
-			fmt.Printf("Walk error: %v\n", err)
+			slog.Warn("Walk error during media listing", "root", root, "error", err)
 		}
 	}
 	return files, nil
@@ -110,8 +111,18 @@ func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*Med
 
 	filename := filepath.Base(header.Filename)
 	filename = strings.ReplaceAll(filename, " ", "_")
-	
-	ext := filepath.Ext(filename)
+
+	ext := strings.ToLower(filepath.Ext(filename))
+
+	// Validate Extension
+	allowedExts := map[string]bool{
+		".jpg": true, ".jpeg": true, ".png": true, ".gif": true,
+		".webp": true, ".svg": true, ".mp4": true, ".webm": true, ".pdf": true,
+	}
+	if !allowedExts[ext] {
+		return nil, fmt.Errorf("file type not allowed: %s", ext)
+	}
+
 	name := strings.TrimSuffix(filename, ext)
 	filename = fmt.Sprintf("%s_%d%s", name, time.Now().Unix(), ext)
 
@@ -168,7 +179,7 @@ func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*Med
 		Name:     filename,
 		Path:     usagePath,
 		Size:     header.Size,
-		URL:      "/api/media/raw?path=" + url.QueryEscape(relPath),
+		URL:      "/admin/api/media/raw?path=" + url.QueryEscape(relPath),
 		RepoPath: relPath,
 	}, nil
 }
