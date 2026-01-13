@@ -58,6 +58,41 @@ async function init() {
             Editor.insertText(markdown);
         }, collectionName, currentPath);
     };
+    window.insertSnippet = async () => {
+        try {
+            const snippets = await API.fetchSnippets();
+            UI.showSnippetsModal(snippets, (snippet) => {
+                let body = Array.isArray(snippet.body) ? snippet.body.join('\n') : snippet.body;
+
+                const vars = new Map();
+                // Regex for ${1:default} or ${1}
+                const regex = /\$\{(\d+)(?::([^}]*))?\}/g;
+                let match;
+                while ((match = regex.exec(body)) !== null) {
+                    const id = match[1];
+                    const def = match[2] || "";
+                    if (!vars.has(id)) {
+                        vars.set(id, { id, label: def || `Param ${id}`, default: def });
+                    }
+                }
+
+                if (vars.size > 0) {
+                    const varList = Array.from(vars.values()).sort((a, b) => a.id - b.id);
+                    UI.showSnippetInputModal(varList, (values) => {
+                        let finalBody = body.replace(regex, (m, id, def) => {
+                            return values[id] !== undefined ? values[id] : (def || "");
+                        });
+                        Editor.insertText(finalBody);
+                    });
+                } else {
+                    Editor.insertText(body);
+                    UI.closeModal();
+                }
+            });
+        } catch (e) {
+            UI.showToast("Failed to load snippets: " + e.message, "error");
+        }
+    };
     window.resetChanges = Editor.resetChanges;
     window.showDiff = Editor.showDiff;
 

@@ -392,3 +392,20 @@ func GetConfig(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, cfg)
 }
+
+func GetSnippets(c *gin.Context) {
+	snippetsPath := filepath.Join("repo", ".vscode", "md.code-snippets")
+	content, err := os.ReadFile(snippetsPath)
+	if err != nil {
+		// If file doesn't exist, return empty object
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusOK, gin.H{})
+			return
+		}
+		ErrorInternal(c, "Failed to read snippets")
+		return
+	}
+
+	// We return the raw JSON content as it is expected to be a valid JSON object
+	c.Data(http.StatusOK, "application/json", content)
+}

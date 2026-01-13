@@ -785,5 +785,232 @@ function renderMediaGrid(container, files, mode, currentPath, onSelect) {
         grid.appendChild(item);
     });
 
-    container.appendChild(grid);
-}
+        container.appendChild(grid);
+
+    }
+
+    
+
+    export function showSnippetsModal(snippets, onSelect) {
+
+        const overlay = document.getElementById('modal-overlay');
+
+        const header = document.getElementById('modal-header');
+
+        const body = document.getElementById('modal-body');
+
+    
+
+        header.querySelector('span').textContent = "Insert Snippet";
+
+        body.innerHTML = '';
+
+        overlay.style.display = 'flex';
+
+    
+
+        if (!snippets || Object.keys(snippets).length === 0) {
+
+            body.innerHTML = '<p>No snippets found.</p>';
+
+            return;
+
+        }
+
+    
+
+        const list = document.createElement('div');
+
+        list.style.display = 'flex';
+
+        list.style.flexDirection = 'column';
+
+        list.style.gap = '5px';
+
+    
+
+        for (const [key, val] of Object.entries(snippets)) {
+
+            const btn = document.createElement('button');
+
+            btn.className = 'action-btn secondary';
+
+            btn.style.textAlign = 'left';
+
+            btn.style.display = 'flex';
+
+            btn.style.flexDirection = 'column';
+
+            btn.style.alignItems = 'flex-start';
+
+            btn.style.padding = '8px';
+
+            
+
+            const title = document.createElement('span');
+
+            title.style.fontWeight = 'bold';
+
+            title.textContent = key;
+
+            
+
+            const desc = document.createElement('span');
+
+            desc.style.fontSize = '12px';
+
+            desc.style.color = '#ccc';
+
+            desc.textContent = val.description || "";
+
+    
+
+            btn.appendChild(title);
+
+            if (val.description) btn.appendChild(desc);
+
+    
+
+            btn.onclick = () => {
+
+                onSelect(val);
+
+            };
+
+            list.appendChild(btn);
+
+        }
+
+        body.appendChild(list);
+
+    }
+
+    
+
+    export function showSnippetInputModal(variables, onConfirm) {
+
+        const overlay = document.getElementById('modal-overlay');
+
+        const header = document.getElementById('modal-header');
+
+        const body = document.getElementById('modal-body');
+
+    
+
+        header.querySelector('span').textContent = "Snippet Parameters";
+
+        body.innerHTML = '';
+
+        
+
+        const form = document.createElement('div');
+
+        form.style.display = 'flex';
+
+        form.style.flexDirection = 'column';
+
+        form.style.gap = '10px';
+
+    
+
+        const inputs = {};
+
+    
+
+        variables.forEach(v => {
+
+            const wrapper = document.createElement('div');
+
+            wrapper.style.display = 'flex';
+
+            wrapper.style.flexDirection = 'column';
+
+            
+
+            const label = document.createElement('label');
+
+            label.textContent = v.label || `Parameter ${v.id}`;
+
+            label.style.fontSize = '12px';
+
+            label.style.marginBottom = '4px';
+
+    
+
+            const input = document.createElement('input');
+
+            input.type = 'text';
+
+            input.className = 'fm-input';
+
+            input.value = v.default || "";
+
+            
+
+            inputs[v.id] = input;
+
+            
+
+            wrapper.appendChild(label);
+
+            wrapper.appendChild(input);
+
+            form.appendChild(wrapper);
+
+        });
+
+    
+
+        const btnRow = document.createElement('div');
+
+        btnRow.style.display = 'flex';
+
+        btnRow.style.justifyContent = 'flex-end';
+
+        btnRow.style.marginTop = '10px';
+
+    
+
+        const confirmBtn = document.createElement('button');
+
+        confirmBtn.className = 'action-btn';
+
+        confirmBtn.textContent = 'Insert';
+
+        confirmBtn.onclick = () => {
+
+            const values = {};
+
+            for (const [id, input] of Object.entries(inputs)) {
+
+                values[id] = input.value;
+
+            }
+
+            onConfirm(values);
+
+            closeModal();
+
+        };
+
+    
+
+        btnRow.appendChild(confirmBtn);
+
+        form.appendChild(btnRow);
+
+        body.appendChild(form);
+
+    
+
+        // Focus first input
+
+        if (variables.length > 0) {
+
+            inputs[variables[0].id].focus();
+
+        }
+
+    }
+
+    
