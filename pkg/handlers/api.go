@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/models"
 	"hugo-cms/pkg/services"
@@ -394,25 +395,58 @@ func GetConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, cfg)
 }
 
+type SnippetDef struct {
+	Prefix      interface{} `json:"prefix"`
+	Body        interface{} `json:"body"`
+	Description string      `json:"description"`
+	Scope       string      `json:"scope,omitempty"`
+}
+
 func GetSnippets(c *gin.Context) {
-	snippetsPath := filepath.Join("repo", ".vscode", "md.code-snippets")
-	content, err := os.ReadFile(snippetsPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			c.JSON(http.StatusOK, gin.H{})
-			return
+	allSnippets := make(map[string]SnippetDef)
+
+	for _, path := range config.SnippetPaths {
+		// Clean the path
+		path = filepath.Clean(path)
+		
+		content, err := os.ReadFile(path)
+		if err != nil {
+			// Skip missing or unreadable files
+			continue
 		}
-		ErrorInternal(c, "Failed to read snippets")
-		return
+
+		// Simple sanitization for JSONC (VS Code snippets)
+		sanitized := sanitizeJSONC(string(content))
+
+		var fileSnippets map[string]SnippetDef
+		if err := json.Unmarshal([]byte(sanitized), &fileSnippets); err != nil {
+			// Skip malformed files
+			continue
+		}
+
+		for name, snippet := range fileSnippets {
+			// Scope check
+			// If scope is defined, it must contain "markdown"
+			if snippet.Scope != "" {
+				scopes := strings.Split(snippet.Scope, ",")
+				isMarkdown := false
+				for _, s := range scopes {
+					if strings.TrimSpace(s) == "markdown" {
+						isMarkdown = true
+						break
+					}
+				}
+				if !isMarkdown {
+					continue
+				}
+			}
+
+			// Add to map (last one wins if duplicate names)
+			allSnippets[name] = snippet
+		}
 	}
 
-	// Simple sanitization for JSONC (VS Code snippets)
-	// 1. Remove trailing commas before closing braces/brackets
-	// 2. Remove comments (basic implementation)
-	sanitized := sanitizeJSONC(string(content))
-
-	// Send sanitized content as JSON
-	c.Data(http.StatusOK, "application/json", []byte(sanitized))
+	c.JSON(http.StatusOK, allSnippets)
 }
 
 // sanitizeJSONC is a simple helper to remove comments and trailing commas.

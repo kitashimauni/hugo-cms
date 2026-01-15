@@ -126,6 +126,10 @@ func CreateContent(path string) (string, error) {
 
 	// Check if file already exists
 	fullPath := SafeJoin(config.RepoPath, "content", path)
+	if fullPath == "" {
+		return "Invalid path", fmt.Errorf("invalid path: %s", path)
+	}
+
 	if _, err := os.Stat(fullPath); err == nil {
 		return "File already exists", os.ErrExist
 	}
