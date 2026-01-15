@@ -100,6 +100,7 @@ go build -o hugo-cms .
 | `PORT` | サーバーポート | `8080` |
 | `APP_URL` | アプリケーションURL | `http://localhost:8080` |
 | `REPO_PATH` | Hugoリポジトリのパス | `./repo` |
+| `SNIPPET_PATHS` | スニペットファイルのパス(カンマ区切り) | `repo/.vscode/md.code-snippets` |
 | `MAX_UPLOAD_SIZE_MB` | 最大アップロードサイズ(MB) | `10` |
 | `ARTICLE_MEDIA_DIR` | 記事バンドル内の画像ディレクトリ | (空) |
 | `STATIC_MEDIA_DIR` | static内の画像ディレクトリ | (空) |
@@ -114,6 +115,7 @@ go build -o hugo-cms .
 
 - [設定ガイド](docs/configuration.md) - 詳細な設定オプション
 - [CMS設定](docs/cms-config.md) - コレクションとフィールドの設定
+- [スニペット機能](docs/snippets.md) - スニペットの使い方と設定
 - [アーキテクチャ](docs/architecture.md) - システム構成と実装詳細
 - [API リファレンス](docs/api.md) - REST API仕様
 - [デプロイ](docs/deployment.md) - 本番環境へのデプロイ方法
