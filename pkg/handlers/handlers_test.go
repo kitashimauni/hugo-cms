@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"hugo-cms/pkg/config"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -278,5 +281,86 @@ func TestStartTime(t *testing.T) {
 	}
 	if startTime.After(time.Now()) {
 		t.Error("startTime should not be in the future")
+	}
+}
+
+func TestGetSnippets(t *testing.T) {
+	// Create temp dir for snippets
+	tmpDir, err := os.MkdirTemp("", "snippets_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create snippet file 1
+	snippet1Content := `{
+		"Global Snippet": {
+			"prefix": "global",
+			"body": "global body",
+			"description": "Global snippet"
+		},
+		"Markdown Snippet": {
+			"prefix": "md",
+			"body": "md body",
+			"scope": "markdown"
+		}
+	}`
+	file1 := filepath.Join(tmpDir, "snippets1.code-snippets")
+	if err := os.WriteFile(file1, []byte(snippet1Content), 0644); err != nil {
+		t.Fatalf("Failed to write snippet file 1: %v", err)
+	}
+
+	// Create snippet file 2
+	snippet2Content := `{
+		"JS Snippet": {
+			"prefix": "js",
+			"body": "js body",
+			"scope": "javascript"
+		},
+		"Mixed Snippet": {
+			"prefix": "mixed",
+			"body": "mixed body",
+			"scope": "javascript, markdown"
+		}
+	}`
+	file2 := filepath.Join(tmpDir, "snippets2.code-snippets")
+	if err := os.WriteFile(file2, []byte(snippet2Content), 0644); err != nil {
+		t.Fatalf("Failed to write snippet file 2: %v", err)
+	}
+
+	// Override config
+	oldPaths := config.SnippetPaths
+	defer func() { config.SnippetPaths = oldPaths }()
+	config.SnippetPaths = []string{file1, file2}
+
+	// Test
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	GetSnippets(c)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("GetSnippets() status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var snippets map[string]SnippetDef
+	if err := json.Unmarshal(w.Body.Bytes(), &snippets); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	// Verify snippets
+	expected := []string{"Global Snippet", "Markdown Snippet", "Mixed Snippet"}
+	unexpected := []string{"JS Snippet"}
+
+	for _, name := range expected {
+		if _, ok := snippets[name]; !ok {
+			t.Errorf("Expected snippet %q not found", name)
+		}
+	}
+
+	for _, name := range unexpected {
+		if _, ok := snippets[name]; ok {
+			t.Errorf("Unexpected snippet %q found", name)
+		}
 	}
 }

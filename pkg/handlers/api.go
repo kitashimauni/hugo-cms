@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"encoding/json"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/models"
 	"hugo-cms/pkg/services"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/gin-contrib/sessions"
@@ -391,4 +393,127 @@ func GetConfig(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, cfg)
+}
+
+type SnippetDef struct {
+	Prefix      interface{} `json:"prefix"`
+	Body        interface{} `json:"body"`
+	Description string      `json:"description"`
+	Scope       string      `json:"scope,omitempty"`
+}
+
+func GetSnippets(c *gin.Context) {
+	allSnippets := make(map[string]SnippetDef)
+
+	for _, path := range config.SnippetPaths {
+		// Clean the path
+		path = filepath.Clean(path)
+		
+		content, err := os.ReadFile(path)
+		if err != nil {
+			// Skip missing or unreadable files
+			continue
+		}
+
+		// Simple sanitization for JSONC (VS Code snippets)
+		sanitized := sanitizeJSONC(string(content))
+
+		var fileSnippets map[string]SnippetDef
+		if err := json.Unmarshal([]byte(sanitized), &fileSnippets); err != nil {
+			// Skip malformed files
+			continue
+		}
+
+		for name, snippet := range fileSnippets {
+			// Scope check
+			// If scope is defined, it must contain "markdown"
+			if snippet.Scope != "" {
+				scopes := strings.Split(snippet.Scope, ",")
+				isMarkdown := false
+				for _, s := range scopes {
+					if strings.TrimSpace(s) == "markdown" {
+						isMarkdown = true
+						break
+					}
+				}
+				if !isMarkdown {
+					continue
+				}
+			}
+
+			// Add to map (last one wins if duplicate names)
+			allSnippets[name] = snippet
+		}
+	}
+
+	c.JSON(http.StatusOK, allSnippets)
+}
+
+// sanitizeJSONC is a simple helper to remove comments and trailing commas.
+func sanitizeJSONC(src string) string {
+	var out []rune
+	var inString bool
+	var escaped bool
+	
+	// Convert to runes for iteration
+	runes := []rune(src)
+	length := len(runes)
+
+	for i := 0; i < length; i++ {
+		c := runes[i]
+
+		if inString {
+			out = append(out, c)
+			if escaped {
+				escaped = false
+			} else {
+				if c == '\\' {
+					escaped = true
+				} else if c == '"' {
+					inString = false
+				}
+			}
+			continue
+		}
+
+		// Check for comments
+		if c == '/' && i+1 < length {
+			next := runes[i+1]
+			if next == '/' {
+				// Single line comment: skip until newline
+				i += 2
+				for i < length && runes[i] != '\n' {
+					i++
+				}
+				// Keep the newline
+				if i < length {
+					out = append(out, '\n')
+				}
+				continue
+			} else if next == '*' {
+				// Block comment: skip until */
+				i += 2
+				for i+1 < length && !(runes[i] == '*' && runes[i+1] == '/') {
+					i++
+				}
+				i++ // skip '/'
+				continue
+			}
+		}
+
+		out = append(out, c)
+	}
+	
+	res := string(out)
+	
+	// Remove trailing commas using Regex
+	// We matched comment-stripped text. Now we remove commas before closing braces.
+	// We must avoid matching inside strings.
+	// But we already preserved strings in `out`.
+	// Since we are doing a quick fix and valid JSON rarely has `,\s*}` inside a string,
+	// we will use regex. A robust parser is better but complex.
+	
+	// Regex to remove trailing commas: ,(?:\s*)([}\]])
+	re := regexp.MustCompile(`,(\s*[}\]])`)
+	return re.ReplaceAllString(res, "$1")
 }

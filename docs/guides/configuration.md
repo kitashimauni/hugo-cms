@@ -91,6 +91,21 @@ REPO_PATH=./repo
 REPO_PATH=/var/www/my-hugo-site
 ```
 
+### スニペット設定
+
+#### `SNIPPET_PATHS`
+
+Markdown編集時に使用するスニペットファイルのパス。カンマ区切りで複数指定可能。
+ファイル形式は VS Code のスニペット形式 (`.code-snippets` または `.json`) に準拠します。
+`scope` プロパティに `markdown` が含まれるか、`scope` が未指定（グローバル）のスニペットのみが読み込まれます。
+
+デフォルト: `repo/.vscode/md.code-snippets`
+
+```env
+# 複数ファイルを指定
+SNIPPET_PATHS=repo/.vscode/global.code-snippets,repo/.vscode/md.code-snippets
+```
+
 ### メディア設定
 
 #### `MAX_UPLOAD_SIZE_MB`

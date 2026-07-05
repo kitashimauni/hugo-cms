@@ -46,6 +46,9 @@ var (
 	AllowedGitHubUsers = []string{} // Empty means allow all authenticated users
 	CSRFSecret         = ""
 	GitHubOAuthScopes  = []string{"public_repo"} // Default to public_repo only
+
+	// Snippet settings
+	SnippetPaths = []string{"repo/.vscode/md.code-snippets"}
 )
 
 var OauthConf *oauth2.Config
@@ -100,6 +103,10 @@ func Init() {
 		if val, err := strconv.Atoi(cc); err == nil {
 			CacheConcurrency = val
 		}
+	}
+
+	if snippets := os.Getenv("SNIPPET_PATHS"); snippets != "" {
+		SnippetPaths = splitAndTrim(snippets, ",")
 	}
 
 	// OAuth scopes configuration

@@ -204,3 +204,9 @@ export async function deleteMedia(repoPath) {
     if (!res.ok) throw new Error("Delete failed");
     return await res.json();
 }
+
+export async function fetchSnippets() {
+    const res = await fetch('/admin/api/snippets');
+    if (!res.ok) throw new Error("Failed to fetch snippets");
+    return await res.json();
+}

@@ -89,6 +89,7 @@ func SetupRouter() *gin.Engine {
 				api.POST("/delete", handlers.DeleteArticle)
 				api.POST("/diff", handlers.GetDiff)
 				api.GET("/config", handlers.GetConfig)
+				api.GET("/snippets", handlers.GetSnippets)
 				api.POST("/sync", handlers.HandleSync)
 				api.POST("/publish", handlers.HandlePublish)
 				api.GET("/media", handlers.ListMedia)
