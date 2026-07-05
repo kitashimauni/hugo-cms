@@ -15,7 +15,7 @@ Hugoサイト用のセルフホスト型ヘッドレスCMSです。GitHub OAuth�
 
 ### 前提条件
 
-- Go 1.21以上
+- mise（Go 1.24.11のセットアップに使用）
 - Hugo (Extended版推奨)
 - Git
 - GitHub OAuth App
@@ -61,7 +61,7 @@ CMSの設定ファイルを作成:
 mkdir -p repo/static/admin
 ```
 
-`repo/static/admin/config.yml` を作成 ([設定例](docs/cms-config.md)):
+`repo/static/admin/config.yml` を作成 ([設定例](docs/reference/cms-config.md)):
 
 ```yaml
 collections:
@@ -77,11 +77,11 @@ collections:
       - { label: "本文", name: "body", widget: "markdown" }
 ```
 
-### 5. ビルドと起動
+### 5. 開発環境の準備と起動
 
 ```bash
-go build -o hugo-cms .
-./hugo-cms
+mise install
+mise run dev
 ```
 
 ブラウザで http://localhost:8080/admin にアクセス
@@ -109,22 +109,23 @@ go build -o hugo-cms .
 | `GIT_USER_EMAIL` | Gitコミット用メール | `bot@hugo-cms.local` |
 | `GIT_BRANCH` | Gitブランチ | `main` |
 
-詳細は [設定ガイド](docs/configuration.md) を参照してください。
+詳細は [設定ガイド](docs/guides/configuration.md) を参照してください。
 
 ## ドキュメント
 
-- [設定ガイド](docs/configuration.md) - 詳細な設定オプション
-- [CMS設定](docs/cms-config.md) - コレクションとフィールドの設定
-- [スニペット機能](docs/snippets.md) - スニペットの使い方と設定
-- [アーキテクチャ](docs/architecture.md) - システム構成と実装詳細
-- [API リファレンス](docs/api.md) - REST API仕様
-- [デプロイ](docs/deployment.md) - 本番環境へのデプロイ方法
+- [ドキュメント一覧](docs/README.md) - 目的別の索引
+- [設定ガイド](docs/guides/configuration.md) - 詳細な設定オプション
+- [CMS設定](docs/reference/cms-config.md) - コレクションとフィールドの設定
+- [現行アーキテクチャ](docs/architecture/current-architecture.md) - 現在のシステム構成
+- [マルチサイト・マルチジェネレーター設計](docs/architecture/multi-site-generator-design.md) - 複数HugoサイトとEleventy等への対応方針
+- [セキュリティ・品質監査](docs/audits/security-and-quality-audit.md) - 既知の問題と推奨対応
 
 ## プロジェクト構造
 
 ```
 hugo-cms/
 ├── main.go              # エントリーポイント、ルーティング
+├── mise.toml            # 開発ツールと共通タスク
 ├── pkg/
 │   ├── config/          # 設定管理
 │   ├── handlers/        # HTTPハンドラー
@@ -141,6 +142,11 @@ hugo-cms/
 │       ├── git.go       # Git操作
 │       ├── hugo.go      # Hugoサーバー管理
 │       └── media.go     # メディアファイル管理
+├── docs/
+│   ├── guides/          # 設定・デプロイ手順
+│   ├── reference/       # API・CMS設定リファレンス
+│   ├── architecture/    # 現行・将来アーキテクチャ
+│   └── audits/          # セキュリティ・品質監査
 ├── static/              # フロントエンド静的ファイル
 │   ├── css/
 │   └── js/
@@ -157,13 +163,13 @@ hugo-cms/
 ### テストの実行
 
 ```bash
-go test ./pkg/... -v
+mise run test
 ```
 
 ### ビルド
 
 ```bash
-go build -o hugo-cms .
+mise run build
 ```
 
 ## セキュリティ
