@@ -7,6 +7,8 @@ repo/
 # Binaries
 main
 main.exe
+hugo-cms
+hugo-cms.exe
 
 # OS Specific
 .DS_Store

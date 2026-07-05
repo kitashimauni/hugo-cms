@@ -1,0 +1,26 @@
+[tools]
+go = "1.24.11"
+
+[tasks.format]
+description = "Format Go source files"
+run = "go fmt ./..."
+
+[tasks.test]
+description = "Run tests"
+run = "go test ./..."
+
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.build]
+description = "Compile all packages"
+run = "go build ./..."
+
+[tasks.dev]
+description = "Start the CMS"
+run = "go run ."
+
+[tasks.check]
+description = "Run all non-mutating checks"
+depends = ["vet", "test", "build"]
