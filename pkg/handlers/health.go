@@ -3,7 +3,6 @@ package handlers
 import (
 	"net/http"
 	"os"
-	"runtime"
 	"time"
 
 	"hugo-cms/pkg/config"
@@ -46,7 +45,6 @@ func ReadinessCheck(c *gin.Context) {
 	contentAccessible := isDirAccessible(contentDir)
 	checks["content_dir"] = gin.H{
 		"healthy": contentAccessible,
-		"path":    contentDir,
 	}
 	if !contentAccessible {
 		allHealthy = false
@@ -61,19 +59,11 @@ func ReadinessCheck(c *gin.Context) {
 		allHealthy = false
 	}
 
-	// System info
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-
 	response := gin.H{
 		"status":    getOverallStatus(allHealthy),
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"uptime":    time.Since(startTime).String(),
 		"checks":    checks,
-		"system": gin.H{
-			"goroutines":   runtime.NumGoroutine(),
-			"memory_alloc": memStats.Alloc / 1024 / 1024, // MB
-		},
 	}
 
 	if allHealthy {

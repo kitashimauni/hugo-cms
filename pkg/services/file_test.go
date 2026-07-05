@@ -1,6 +1,7 @@
 package services
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -8,7 +9,7 @@ import (
 
 func TestSafeJoin(t *testing.T) {
 	root := "/tmp/repo"
-	
+
 	absTarget := "/etc/passwd"
 	if runtime.GOOS == "windows" {
 		absTarget = "C:\\Windows\\System32\\drivers\\etc\\hosts"
@@ -39,9 +40,9 @@ func TestSafeJoin(t *testing.T) {
 			wantPath: "",
 		},
 		{
-			name:     "Valid Nested Traversal",
-			sub:      "content",
-			target:   "posts/../about.md",
+			name:   "Valid Nested Traversal",
+			sub:    "content",
+			target: "posts/../about.md",
 			// Resolves to content/about.md which is inside content
 			wantPath: filepath.Join(root, "content", "about.md"),
 		},
@@ -58,7 +59,7 @@ func TestSafeJoin(t *testing.T) {
 			got := SafeJoin(root, tt.sub, tt.target)
 			// Normalize paths for comparison (Windows/Unix separators)
 			// But SafeJoin returns empty on error, so literal comparison is mostly fine except separators
-			
+
 			// If wantPath is empty, we expect empty
 			if tt.wantPath == "" {
 				if got != "" {
@@ -70,5 +71,27 @@ func TestSafeJoin(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSafeJoinRejectsSymlinkEscape(t *testing.T) {
+	baseDir := t.TempDir()
+	root := filepath.Join(baseDir, "repo")
+	contentDir := filepath.Join(root, "content")
+	outsideDir := filepath.Join(baseDir, "outside")
+	if err := os.MkdirAll(contentDir, 0755); err != nil {
+		t.Fatalf("create content directory: %v", err)
+	}
+	if err := os.MkdirAll(outsideDir, 0755); err != nil {
+		t.Fatalf("create outside directory: %v", err)
+	}
+
+	linkPath := filepath.Join(contentDir, "linked")
+	if err := os.Symlink(outsideDir, linkPath); err != nil {
+		t.Skipf("symlinks are not available in this environment: %v", err)
+	}
+
+	if got := SafeJoin(root, "content", "linked/secret.md"); got != "" {
+		t.Fatalf("SafeJoin() followed a symlink outside the root: %q", got)
 	}
 }

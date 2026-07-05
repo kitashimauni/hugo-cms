@@ -3,8 +3,11 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"hugo-cms/pkg/config"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -164,6 +167,11 @@ func TestServeMediaRaw_PathValidation(t *testing.T) {
 			path:           "../../../etc/passwd",
 			expectedStatus: http.StatusNotFound,
 		},
+		{
+			name:           "Repository metadata",
+			path:           ".git/config",
+			expectedStatus: http.StatusNotFound,
+		},
 	}
 
 	for _, tt := range tests {
@@ -180,6 +188,35 @@ func TestServeMediaRaw_PathValidation(t *testing.T) {
 				t.Errorf("ServeMediaRaw() status = %d, want %d", w.Code, tt.expectedStatus)
 			}
 		})
+	}
+}
+
+func TestServeMediaRaw_AllowedMedia(t *testing.T) {
+	originalRepoPath := config.RepoPath
+	t.Cleanup(func() { config.RepoPath = originalRepoPath })
+
+	config.RepoPath = t.TempDir()
+	mediaPath := filepath.Join(config.RepoPath, "static", "images", "photo.png")
+	if err := os.MkdirAll(filepath.Dir(mediaPath), 0755); err != nil {
+		t.Fatalf("create media directory: %v", err)
+	}
+	if err := os.WriteFile(mediaPath, []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+	}, 0644); err != nil {
+		t.Fatalf("write media file: %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest("GET", "/api/media/raw?path=static/images/photo.png", nil)
+
+	ServeMediaRaw(c)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("ServeMediaRaw() status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if got := recorder.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
 	}
 }
 

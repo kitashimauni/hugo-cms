@@ -48,7 +48,8 @@ cp .env.example .env
 ```env
 GITHUB_CLIENT_ID=your_client_id
 GITHUB_CLIENT_SECRET=your_client_secret
-SESSION_SECRET=ランダムな文字列
+SESSION_SECRET=32文字以上のランダムな文字列
+ALLOWED_GITHUB_USERS=your-github-username
 ```
 
 ### 4. Hugoサイトの準備
@@ -95,7 +96,8 @@ mise run dev
 | `GITHUB_CLIENT_ID` | GitHub OAuth Client ID | (必須) |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth Client Secret | (必須) |
 | `SESSION_SECRET` | セッション暗号化キー | (自動生成・非推奨) |
-| `ALLOWED_GITHUB_USERS` | 許可するGitHubユーザー名(カンマ区切り) | (空=全員許可) |
+| `ALLOWED_GITHUB_USERS` | 許可するGitHubユーザー名(カンマ区切り) | (必須) |
+| `ALLOW_ALL_GITHUB_USERS` | 全GitHubユーザーを許可する開発用設定 | `false` |
 | `GITHUB_OAUTH_SCOPES` | OAuthスコープ | `public_repo` |
 | `PORT` | サーバーポート | `8080` |
 | `APP_URL` | アプリケーションURL | `http://localhost:8080` |

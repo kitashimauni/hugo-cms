@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
+	"fmt"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/handlers"
 	"hugo-cms/pkg/services"
@@ -22,7 +25,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func SetupRouter() *gin.Engine {
+func SetupRouter() (*gin.Engine, error) {
 	appURL := config.GetAppURL()
 	r := gin.Default()
 
@@ -32,6 +35,9 @@ func SetupRouter() *gin.Engine {
 	// Session Setup
 	secret := os.Getenv("SESSION_SECRET")
 	if secret == "" {
+		if gin.Mode() == gin.ReleaseMode {
+			return nil, fmt.Errorf("SESSION_SECRET is required in release mode")
+		}
 		slog.Warn("SESSION_SECRET is not set, using temporary random secret",
 			"warning", "insecure for production")
 		b := make([]byte, 32)
@@ -40,7 +46,12 @@ func SetupRouter() *gin.Engine {
 		}
 		secret = base64.StdEncoding.EncodeToString(b)
 	}
-	store := cookie.NewStore([]byte(secret))
+	if len(secret) < 32 {
+		return nil, fmt.Errorf("SESSION_SECRET must be at least 32 characters")
+	}
+	authKey := sha512.Sum512([]byte("hugo-cms/session-auth/" + secret))
+	encryptionKey := sha256.Sum256([]byte("hugo-cms/session-encryption/" + secret))
+	store := cookie.NewStore(authKey[:], encryptionKey[:])
 	store.Options(sessions.Options{
 		Path:     "/", // Cookie valid for whole domain
 		MaxAge:   86400 * 7,
@@ -59,6 +70,12 @@ func SetupRouter() *gin.Engine {
 
 	// --- Admin Routes ---
 	admin := r.Group("/admin")
+	admin.Use(func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "SAMEORIGIN")
+		c.Header("Referrer-Policy", "no-referrer")
+		c.Next()
+	})
 	{
 		// Public Auth
 		admin.GET("/login", handlers.LoginPage)
@@ -77,6 +94,7 @@ func SetupRouter() *gin.Engine {
 			authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
 
 			api := authorized.Group("/api")
+			api.Use(handlers.RequestBodyLimit(config.MaxUploadSize + (1 << 20)))
 			api.Use(handlers.CSRFProtection) // Apply CSRF protection to all API routes
 			{
 				api.GET("/csrf-token", handlers.GetCSRFToken) // Endpoint to get CSRF token
@@ -104,25 +122,24 @@ func SetupRouter() *gin.Engine {
 	previewProxyURL, _ := url.Parse("http://" + config.HugoServerBind + ":" + config.HugoServerPort)
 	proxy := httputil.NewSingleHostReverseProxy(previewProxyURL)
 
-	r.NoRoute(func(c *gin.Context) {
-		// Protect Proxy
-		session := sessions.Default(c)
-		if session.Get("access_token") == nil {
-			// If not authenticated, redirect to admin login
-			c.Redirect(http.StatusFound, "/admin/login")
-			return
-		}
-
-		// Proxy to Hugo
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		slog.Warn("Hugo preview proxy failed", "error", err)
+		http.Error(w, "Preview unavailable", http.StatusBadGateway)
+	}
+	r.NoRoute(handlers.AuthRequired, handlers.TokenValidation, func(c *gin.Context) {
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
 
-	return r
+	return r, nil
 }
 
 func main() {
 	// Initialize config
 	config.Init()
+	if err := config.ValidateSecurityConfig(); err != nil {
+		slog.Error("Invalid security configuration", "error", err)
+		os.Exit(1)
+	}
 
 	appURL := config.GetAppURL()
 	slog.Info("Starting server",
@@ -130,16 +147,25 @@ func main() {
 		"redirect_url", config.OauthConf.RedirectURL,
 		"port", config.ServerPort)
 
+	r, err := SetupRouter()
+	if err != nil {
+		slog.Error("Failed to configure HTTP router", "error", err)
+		os.Exit(1)
+	}
+
 	// Start Hugo Server
 	if err := services.StartHugoServer(); err != nil {
 		slog.Error("Failed to start Hugo Server", "error", err)
 	}
 
-	r := SetupRouter()
-
 	srv := &http.Server{
-		Addr:    ":" + config.ServerPort,
-		Handler: r,
+		Addr:              ":" + config.ServerPort,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      6 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	go func() {
