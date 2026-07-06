@@ -88,10 +88,7 @@ async function queueCurrentSave(statusMessage) {
         }
 
         lastQueuedPayload = payloadStr;
-        const operation = saveQueue.catch(() => {
-            // A newer payload should still be allowed to save after an earlier
-            // request failed.
-        }).then(async () => {
+        const operation = saveQueue.then(async () => {
             updateSaveStatus(statusMessage, "saving");
             try {
                 await API.saveArticle(payloadObj);
@@ -111,7 +108,10 @@ async function queueCurrentSave(statusMessage) {
             }
         });
 
-        saveQueue = operation;
+        // Return the rejecting operation to its caller, but keep the queue tail
+        // fulfilled so an old failure cannot block a later no-op, retry,
+        // preview, or publish.
+        saveQueue = operation.catch(() => undefined);
         return operation;
     }
     return false;
@@ -120,7 +120,6 @@ async function queueCurrentSave(statusMessage) {
 export async function flushPendingSave() {
     clearAutoSaveTimer();
     await queueCurrentSave("Saving before publish...");
-    await saveQueue;
 }
 
 export async function loadFile(path) {
