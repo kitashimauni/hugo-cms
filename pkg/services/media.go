@@ -43,6 +43,11 @@ func isAllowedMediaExtension(path string) bool {
 	return ok
 }
 
+func isAllowedImageExtension(path string) bool {
+	mediaType, ok := allowedMediaTypes[strings.ToLower(filepath.Ext(path))]
+	return ok && strings.HasPrefix(mediaType, "image/")
+}
+
 func ValidateMediaRepoPath(repoPath string) bool {
 	if repoPath == "" || !isAllowedMediaExtension(repoPath) {
 		return false
@@ -99,8 +104,9 @@ func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 			if d.IsDir() {
 				return nil
 			}
-			// Only expose explicitly allowed media files.
-			if isAllowedMediaExtension(path) {
+			// The current media picker renders thumbnails with <img> and
+			// inserts image Markdown, so only expose image files here.
+			if isAllowedImageExtension(path) {
 				// Found image
 				relPath, relErr := filepath.Rel(config.RepoPath, path)
 				if relErr != nil {

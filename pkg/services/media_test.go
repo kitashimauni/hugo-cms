@@ -55,32 +55,27 @@ func withMediaConfig(t *testing.T, repoPath string) {
 }
 
 func TestListMediaFiles(t *testing.T) {
-	// Create temp directory structure
-	tmpDir, err := os.MkdirTemp("", "media_test")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	repoPath := t.TempDir()
+	withMediaConfig(t, repoPath)
 
-	// Create static/images directory
-	staticDir := filepath.Join(tmpDir, "static", "images")
+	staticDir := filepath.Join(repoPath, "static", "images")
 	if err := os.MkdirAll(staticDir, 0755); err != nil {
-		t.Fatalf("Failed to create static dir: %v", err)
+		t.Fatalf("create static directory: %v", err)
 	}
 
-	// Create test image file
-	testFile := filepath.Join(staticDir, "test.jpg")
-	if err := os.WriteFile(testFile, []byte("fake image data"), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
+	for _, name := range []string{"photo.jpg", "clip.mp4", "document.pdf", "script.svg"} {
+		if err := os.WriteFile(filepath.Join(staticDir, name), []byte("test"), 0644); err != nil {
+			t.Fatalf("create test media %q: %v", name, err)
+		}
 	}
 
-	// Note: ListMediaFiles uses config.RepoPath which makes it hard to test in isolation.
-	// This test documents the expected behavior but may need config injection for proper unit testing.
-	t.Run("Static mode requires valid config", func(t *testing.T) {
-		// This would require setting up config.RepoPath, config.StaticMediaDir
-		// For now, we test the function exists and returns without panic
-		_, _ = ListMediaFiles("static", "")
-	})
+	files, err := ListMediaFiles("static", "")
+	if err != nil {
+		t.Fatalf("ListMediaFiles() unexpected error: %v", err)
+	}
+	if len(files) != 1 || files[0].Name != "photo.jpg" {
+		t.Fatalf("ListMediaFiles() = %#v, want only photo.jpg", files)
+	}
 
 	t.Run("Content mode requires article path", func(t *testing.T) {
 		files, err := ListMediaFiles("content", "")
@@ -238,6 +233,8 @@ func TestValidateMediaRepoPath(t *testing.T) {
 		want bool
 	}{
 		{path: "static/images/photo.jpg", want: true},
+		{path: "static/images/clip.mp4", want: true},
+		{path: "static/images/document.pdf", want: true},
 		{path: "content/posts/photo.png", want: true},
 		{path: ".git/config", want: false},
 		{path: "static/../.git/config.jpg", want: false},
