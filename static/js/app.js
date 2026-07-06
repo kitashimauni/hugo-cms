@@ -4,6 +4,7 @@ import * as Editor from './editor.js';
 
 // Global State
 let cmsConfig = null;
+let publishInProgress = false;
 
 // Initialization
 init();
@@ -32,7 +33,11 @@ async function init() {
     // Editor
     window.loadFile = Editor.loadFile;
     window.buildAndPreview = async () => {
-        await Editor.execAutoSave();
+        try {
+            await Editor.flushPendingSave();
+        } catch (e) {
+            UI.showToast("Preview update cancelled: save failed", "error");
+        }
     };
     window.saveFile = async () => {
         await Editor.saveFile();
@@ -137,7 +142,12 @@ async function refreshFileList() {
 async function switchView(viewName) {
     // Trigger save to ensure preview is up to date
     if (viewName === 'preview') {
-        await Editor.execAutoSave();
+        try {
+            await Editor.flushPendingSave();
+        } catch (e) {
+            UI.showToast("Preview cancelled: save failed", "error");
+            return;
+        }
     }
     UI.switchView(viewName);
 }
@@ -165,12 +175,18 @@ async function runSync() {
 }
 
 async function runPublish(path = null) {
+    if (publishInProgress) {
+        UI.showToast("Publish is already running", "warning");
+        return;
+    }
+
     const isSingle = !!path;
     const msg = isSingle
         ? "このファイルの変更をGitHubにPushして公開しますか？"
         : "全ての変更をGitHubにPushして公開しますか？";
 
     if (!confirm(msg)) return;
+    publishInProgress = true;
 
     // UI Feedback
     let btnSelector = 'button[onclick="runPublish()"]';
@@ -187,6 +203,7 @@ async function runPublish(path = null) {
     }
 
     try {
+        await Editor.flushPendingSave();
         const data = await API.runPublish(path);
         if (data.status === 'ok') {
             UI.showToast("Published Successfully! 🚀", "success");
@@ -196,8 +213,9 @@ async function runPublish(path = null) {
             UI.showToast("Publish Error: " + data.log, "error");
         }
     } catch (e) {
-        UI.showToast("Network Error", "error");
+        UI.showToast("Publish cancelled: " + e.message, "error");
     } finally {
+        publishInProgress = false;
         if (btn) {
             btn.innerHTML = originalText;
             btn.disabled = false;

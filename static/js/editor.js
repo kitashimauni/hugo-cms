@@ -6,6 +6,9 @@ let currentData = null;
 let cmsConfig = null;
 let autoSaveTimer = null;
 let lastSavedPayload = "";
+let lastQueuedPayload = "";
+let saveQueue = Promise.resolve();
+let deletingPath = "";
 
 export function getCurrentPath() {
     return currentPath;
@@ -28,10 +31,24 @@ export function initAutoSave() {
 
 function triggerAutoSave() {
     if (!currentPath) return;
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    if (currentPath === deletingPath) return;
+    clearAutoSaveTimer();
 
     // Debounce 3 seconds
-    autoSaveTimer = setTimeout(execAutoSave, 3000);
+    autoSaveTimer = setTimeout(() => {
+        autoSaveTimer = null;
+        execAutoSave().catch(() => {
+            // The editor status already reports the failure. Avoid an
+            // unhandled rejection from the timer callback.
+        });
+    }, 3000);
+}
+
+function clearAutoSaveTimer() {
+    if (autoSaveTimer) {
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+    }
 }
 
 function updateSaveStatus(msg, type) {
@@ -52,31 +69,69 @@ function reloadPreviewIfNeeded() {
 }
 
 export async function execAutoSave() {
-    if (!currentPath) return;
+    return queueCurrentSave("Auto Saving...");
+}
 
-    const payloadObj = getPayload();
-    const payloadStr = JSON.stringify(payloadObj);
+async function queueCurrentSave(statusMessage) {
+    while (currentPath && currentPath !== deletingPath) {
+        // Another payload may become the saved value while we wait. Read the
+        // editor again afterwards so preview/publish always uses what is
+        // currently visible, including a revert to an older payload.
+        if (lastQueuedPayload !== "") {
+            await saveQueue;
+            continue;
+        }
 
-    if (payloadStr === lastSavedPayload) {
-        return; // No changes
+        const payloadObj = getPayload();
+        const payloadStr = JSON.stringify(payloadObj);
+
+        if (payloadStr === lastSavedPayload) {
+            return false;
+        }
+
+        lastQueuedPayload = payloadStr;
+        const operation = saveQueue.then(async () => {
+            updateSaveStatus(statusMessage, "saving");
+            try {
+                await API.saveArticle(payloadObj);
+                lastSavedPayload = payloadStr;
+                console.log("[AutoSave] Saved:", payloadObj.path);
+                updateSaveStatus("Saved", "saved");
+                reloadPreviewIfNeeded();
+                return true;
+            } catch (e) {
+                console.error("[AutoSave] Failed:", e);
+                updateSaveStatus("Save Failed", "error");
+                throw e;
+            } finally {
+                if (lastQueuedPayload === payloadStr) {
+                    lastQueuedPayload = "";
+                }
+            }
+        });
+
+        // Return the rejecting operation to its caller, but keep the queue tail
+        // fulfilled so an old failure cannot block a later no-op, retry,
+        // preview, or publish.
+        saveQueue = operation.catch(() => undefined);
+        return operation;
     }
+    return false;
+}
 
-    updateSaveStatus("Auto Saving...", "saving");
-
-    try {
-        await API.saveArticle(payloadObj);
-        lastSavedPayload = payloadStr;
-        console.log("[AutoSave] Saved:", currentPath);
-        updateSaveStatus("Saved", "saved");
-        reloadPreviewIfNeeded();
-    } catch (e) {
-        console.error("[AutoSave] Failed:", e);
-        updateSaveStatus("Save Failed", "error");
+export async function flushPendingSave() {
+    clearAutoSaveTimer();
+    if (currentPath && currentPath === deletingPath) {
+        throw new Error("Article deletion is in progress");
     }
+    await queueCurrentSave("Saving before publish...");
 }
 
 export async function loadFile(path) {
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    clearAutoSaveTimer();
+    await saveQueue.catch(() => {
+        // Loading another file remains possible after a failed save.
+    });
 
     currentPath = path;
     const display = document.getElementById('filename-display');
@@ -90,6 +145,7 @@ export async function loadFile(path) {
         UI.updateEditorContent(data, path, cmsConfig);
 
         lastSavedPayload = JSON.stringify(getPayload());
+        lastQueuedPayload = "";
         UI.setPreviewUrl(path);
 
     } catch (e) {
@@ -113,42 +169,61 @@ function getPayload() {
 
 export async function saveFile() {
     if (!currentPath) return UI.showToast("No file selected", "warning");
+    if (currentPath === deletingPath) {
+        return UI.showToast("Article deletion is in progress", "warning");
+    }
 
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
-
-    updateSaveStatus("Saving...", "saving");
+    clearAutoSaveTimer();
 
     try {
-        const payload = getPayload();
-        await API.saveArticle(payload);
-        lastSavedPayload = JSON.stringify(payload);
-        updateSaveStatus("Saved", "saved");
+        await queueCurrentSave("Saving...");
         UI.showToast("File saved successfully", "success");
-        reloadPreviewIfNeeded();
     } catch (e) {
         UI.showToast("Error saving: " + e.message, "error");
-        updateSaveStatus("Error", "error");
     }
 }
 
 export async function deleteFile(refreshListCb) {
     if (!currentPath) return UI.showToast("No file selected", "warning");
+    if (currentPath === deletingPath) {
+        return UI.showToast("Article deletion is already in progress", "warning");
+    }
 
     if (!confirm("Are you sure you want to delete this article?\nThis action cannot be undone.")) return;
 
+    const pathToDelete = currentPath;
+    let deleted = false;
+    clearAutoSaveTimer();
+    deletingPath = pathToDelete;
+
     try {
-        await API.deleteArticle(currentPath);
+        // Let a save that already reached the server finish, then prevent all
+        // queued saves for this path from starting before DELETE.
+        await saveQueue;
+        await API.deleteArticle(pathToDelete);
+        deleted = true;
         UI.showToast("Article deleted", "success");
 
-        currentPath = "";
-        currentData = null;
-        document.getElementById('filename-display').textContent = "Select a file...";
-        document.getElementById('editor').value = "";
-        document.getElementById('fm-container').style.display = 'none';
+        if (currentPath === pathToDelete) {
+            currentPath = "";
+            currentData = null;
+            lastSavedPayload = "";
+            lastQueuedPayload = "";
+            document.getElementById('filename-display').textContent = "Select a file...";
+            document.getElementById('editor').value = "";
+            document.getElementById('fm-container').style.display = 'none';
+        }
 
         if (refreshListCb) await refreshListCb();
     } catch (e) {
         UI.showToast("Delete failed: " + e.message, "error");
+    } finally {
+        if (deletingPath === pathToDelete) {
+            deletingPath = "";
+        }
+        if (!deleted && currentPath === pathToDelete) {
+            triggerAutoSave();
+        }
     }
 }
 

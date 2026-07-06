@@ -79,7 +79,7 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 
 ### 5. 自動保存完了前に公開できる
 
-- 状態: 未対応
+- 状態: 対応済み
 - 該当箇所:
   - `static/js/editor.js` の3秒後の自動保存
   - `static/js/app.js` の`publishFile`および`runPublish`
@@ -93,7 +93,7 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 
 ### 6. `git commit`失敗後もpushし、成功扱いになる
 
-- 状態: 未対応
+- 状態: 対応済み
 - 該当箇所: `pkg/services/git.go` の `PublishChanges`
 - 影響:
   - コミット失敗が警告文字列へ変換されるだけで、処理はpushへ進む。
@@ -105,7 +105,7 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 
 ### 7. JSON Front Matterで本文が失われる
 
-- 状態: 未対応
+- 状態: 対応済み
 - 該当箇所: `pkg/services/frontmatter.go`
 - 影響:
   - JSON Front Matterの読み込みはファイル全体をJSONとして解析するため、本文付きの記事を解析できない。
@@ -134,8 +134,10 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 
 ### 9. Hugo再起動時にプロセス管理が競合する
 
-- 状態: 未対応
-- 該当箇所: `pkg/services/hugo.go`
+- 状態: 対応済み
+- 該当箇所:
+  - `pkg/services/process_manager.go`
+  - `pkg/services/hugo_adapter.go`
 - 影響:
   - 旧プロセスの監視goroutineが、新プロセス起動後に共有変数を`nil`へ戻す可能性がある。
   - Hugoの二重起動、稼働状態の誤判定、停止不能につながる。
@@ -159,7 +161,7 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 
 ### 11. コレクションのFront Matter形式指定を無視する
 
-- 状態: 未対応
+- 状態: 対応済み
 - 該当箇所:
   - `pkg/models/cms.go`
   - `pkg/services/frontmatter.go` の `GenerateContentFromCollection`

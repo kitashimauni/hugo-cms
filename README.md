@@ -142,7 +142,9 @@ hugo-cms/
 │       ├── file.go      # ファイル操作
 │       ├── frontmatter.go # Front Matter処理
 │       ├── git.go       # Git操作
-│       ├── hugo.go      # Hugoサーバー管理
+│       ├── generator.go # ジェネレーター共通インターフェース
+│       ├── hugo_adapter.go # Hugoアダプター
+│       ├── process_manager.go # プレビュープロセス管理
 │       └── media.go     # メディアファイル管理
 ├── docs/
 │   ├── guides/          # 設定・デプロイ手順

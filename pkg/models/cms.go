@@ -12,6 +12,7 @@ type Collection struct {
 	Folder       string  `yaml:"folder"`
 	Path         string  `yaml:"path"`
 	Extension    string  `yaml:"extension"`
+	Format       string  `yaml:"format"`
 	MediaFolder  string  `yaml:"media_folder"`
 	PublicFolder string  `yaml:"public_folder"`
 	Fields       []Field `yaml:"fields"`

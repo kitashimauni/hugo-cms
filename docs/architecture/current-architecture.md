@@ -29,7 +29,7 @@ Hugo CMSのシステム構成と実装詳細について説明します。
 ┌─────────────────────────────────────────────────────────────┐
 │                       Services                               │
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
-│  │ cache.go │ │  git.go  │ │ hugo.go  │ │ media.go │       │
+│  │ cache.go │ │  git.go  │ │generator │ │ media.go │       │
 │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘       │
 └───────┼────────────┼────────────┼────────────┼──────────────┘
         │            │            │            │
@@ -130,17 +130,17 @@ GIT_TOKEN=xxx
 - ローカル操作: 60秒
 - ネットワーク操作: 5分
 
-#### hugo.go - Hugoサーバー管理
+保存、同期、公開はリポジトリ操作ロックで直列化される。公開処理はステージ済み変更を確認し、commitが成功した場合だけpushする。
 
-- **StartHugoServer**: バックグラウンドでHugoサーバー起動
-- **StopHugoServer**: プロセス終了
-- **BuildSite**: サイトビルド (5分タイムアウト)
-- **CreateContent**: 新規コンテンツ作成
+#### generator.go / hugo_adapter.go - ジェネレーター管理
 
-Mutex による排他制御:
-```go
-var hugoServerMu sync.Mutex
-```
+`GeneratorAdapter`がプレビュー起動・停止・再起動、ビルド、コンテンツ作成を抽象化する。現在は`HugoAdapter`を使用し、従来の関数名は互換ラッパーとして維持している。
+
+`ProcessManager`はプロセス終了を明示的に待ち、世代の異なる監視処理が新しいプロセス状態を消去しないよう管理する。
+
+#### frontmatter_codec.go - Front Matter codec
+
+YAML、TOML、JSONを共通インターフェースで解析・生成する。JSON Front Matterの終了位置以降をMarkdown本文として保持し、コレクションの`format`指定を新規記事へ反映する。
 
 #### frontmatter.go - Front Matter処理
 
