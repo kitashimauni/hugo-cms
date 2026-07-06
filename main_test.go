@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -90,5 +91,19 @@ func TestPreviewFrameIsSandboxedWithoutSameOrigin(t *testing.T) {
 	}
 	if strings.Contains(template, "allow-same-origin") {
 		t.Fatal("preview iframe must not use allow-same-origin")
+	}
+}
+
+func TestHTTPServerDoesNotCapRequestBodyDuration(t *testing.T) {
+	server := newHTTPServer(http.NotFoundHandler())
+
+	if server.ReadHeaderTimeout != 10*time.Second {
+		t.Fatalf("ReadHeaderTimeout = %v, want %v", server.ReadHeaderTimeout, 10*time.Second)
+	}
+	if server.ReadTimeout != 0 {
+		t.Fatalf("ReadTimeout = %v, want no global request body deadline", server.ReadTimeout)
+	}
+	if server.WriteTimeout != 0 {
+		t.Fatalf("WriteTimeout = %v, want no global deadline that expires during uploads", server.WriteTimeout)
 	}
 }

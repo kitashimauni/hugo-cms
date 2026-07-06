@@ -133,6 +133,19 @@ func SetupRouter() (*gin.Engine, error) {
 	return r, nil
 }
 
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              ":" + config.ServerPort,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		// Request bodies are size-limited by middleware. Global read and
+		// write deadlines would make valid large uploads depend on connection
+		// speed and can prevent the final response from being written.
+		IdleTimeout:    2 * time.Minute,
+		MaxHeaderBytes: 1 << 20,
+	}
+}
+
 func main() {
 	// Initialize config
 	config.Init()
@@ -158,15 +171,7 @@ func main() {
 		slog.Error("Failed to start Hugo Server", "error", err)
 	}
 
-	srv := &http.Server{
-		Addr:              ":" + config.ServerPort,
-		Handler:           r,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      6 * time.Minute,
-		IdleTimeout:       2 * time.Minute,
-		MaxHeaderBytes:    1 << 20,
-	}
+	srv := newHTTPServer(r)
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
