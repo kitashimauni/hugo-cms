@@ -8,6 +8,7 @@ let autoSaveTimer = null;
 let lastSavedPayload = "";
 let lastQueuedPayload = "";
 let saveQueue = Promise.resolve();
+let deletingPath = "";
 
 export function getCurrentPath() {
     return currentPath;
@@ -30,6 +31,7 @@ export function initAutoSave() {
 
 function triggerAutoSave() {
     if (!currentPath) return;
+    if (currentPath === deletingPath) return;
     clearAutoSaveTimer();
 
     // Debounce 3 seconds
@@ -71,7 +73,7 @@ export async function execAutoSave() {
 }
 
 async function queueCurrentSave(statusMessage) {
-    while (currentPath) {
+    while (currentPath && currentPath !== deletingPath) {
         // Another payload may become the saved value while we wait. Read the
         // editor again afterwards so preview/publish always uses what is
         // currently visible, including a revert to an older payload.
@@ -119,6 +121,9 @@ async function queueCurrentSave(statusMessage) {
 
 export async function flushPendingSave() {
     clearAutoSaveTimer();
+    if (currentPath && currentPath === deletingPath) {
+        throw new Error("Article deletion is in progress");
+    }
     await queueCurrentSave("Saving before publish...");
 }
 
@@ -164,6 +169,9 @@ function getPayload() {
 
 export async function saveFile() {
     if (!currentPath) return UI.showToast("No file selected", "warning");
+    if (currentPath === deletingPath) {
+        return UI.showToast("Article deletion is in progress", "warning");
+    }
 
     clearAutoSaveTimer();
 
@@ -177,22 +185,45 @@ export async function saveFile() {
 
 export async function deleteFile(refreshListCb) {
     if (!currentPath) return UI.showToast("No file selected", "warning");
+    if (currentPath === deletingPath) {
+        return UI.showToast("Article deletion is already in progress", "warning");
+    }
 
     if (!confirm("Are you sure you want to delete this article?\nThis action cannot be undone.")) return;
 
+    const pathToDelete = currentPath;
+    let deleted = false;
+    clearAutoSaveTimer();
+    deletingPath = pathToDelete;
+
     try {
-        await API.deleteArticle(currentPath);
+        // Let a save that already reached the server finish, then prevent all
+        // queued saves for this path from starting before DELETE.
+        await saveQueue;
+        await API.deleteArticle(pathToDelete);
+        deleted = true;
         UI.showToast("Article deleted", "success");
 
-        currentPath = "";
-        currentData = null;
-        document.getElementById('filename-display').textContent = "Select a file...";
-        document.getElementById('editor').value = "";
-        document.getElementById('fm-container').style.display = 'none';
+        if (currentPath === pathToDelete) {
+            currentPath = "";
+            currentData = null;
+            lastSavedPayload = "";
+            lastQueuedPayload = "";
+            document.getElementById('filename-display').textContent = "Select a file...";
+            document.getElementById('editor').value = "";
+            document.getElementById('fm-container').style.display = 'none';
+        }
 
         if (refreshListCb) await refreshListCb();
     } catch (e) {
         UI.showToast("Delete failed: " + e.message, "error");
+    } finally {
+        if (deletingPath === pathToDelete) {
+            deletingPath = "";
+        }
+        if (!deleted && currentPath === pathToDelete) {
+            triggerAutoSave();
+        }
     }
 }
 

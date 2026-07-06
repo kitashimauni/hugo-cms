@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -118,18 +117,18 @@ func (*HugoAdapter) CreateContent(path string) (string, error) {
 			collFolder := filepath.Clean(collection.Folder)
 			targetFolder := filepath.Dir(relContentPath)
 
-			if strings.HasPrefix(targetFolder, collFolder) {
+			if isPathWithin(collFolder, targetFolder) {
 				content, generateErr := GenerateContentFromCollection(collection, nil)
-				if generateErr == nil {
-					if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-						return "Failed to create directory", err
-					}
-					if err := os.WriteFile(fullPath, content, 0644); err != nil {
-						return "Failed to write file", err
-					}
-					return "Created using CMS config", nil
+				if generateErr != nil {
+					return "Failed to generate content from CMS config", generateErr
 				}
-				slog.Warn("Failed to generate content from CMS config", "error", generateErr)
+				if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+					return "Failed to create directory", err
+				}
+				if err := os.WriteFile(fullPath, content, 0644); err != nil {
+					return "Failed to write file", err
+				}
+				return "Created using CMS config", nil
 			}
 		}
 	}
