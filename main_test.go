@@ -15,6 +15,7 @@ func TestSetupRouterRejectsShortSessionSecret(t *testing.T) {
 	originalMode := gin.Mode()
 	gin.SetMode(gin.TestMode)
 	t.Cleanup(func() { gin.SetMode(originalMode) })
+	t.Setenv("GIN_MODE", "")
 	t.Setenv("SESSION_SECRET", "too-short")
 
 	_, err := SetupRouter()
@@ -27,6 +28,7 @@ func TestSetupRouterRequiresSessionSecretInReleaseMode(t *testing.T) {
 	originalMode := gin.Mode()
 	gin.SetMode(gin.ReleaseMode)
 	t.Cleanup(func() { gin.SetMode(originalMode) })
+	t.Setenv("GIN_MODE", "")
 	t.Setenv("SESSION_SECRET", "")
 
 	_, err := SetupRouter()
@@ -39,6 +41,7 @@ func TestSetupRouterAcceptsStrongSessionSecret(t *testing.T) {
 	originalMode := gin.Mode()
 	gin.SetMode(gin.TestMode)
 	t.Cleanup(func() { gin.SetMode(originalMode) })
+	t.Setenv("GIN_MODE", "")
 	t.Setenv("SESSION_SECRET", strings.Repeat("s", 32))
 
 	router, err := SetupRouter()
@@ -54,6 +57,7 @@ func TestAdminSecurityHeadersAndPreviewAuthentication(t *testing.T) {
 	originalMode := gin.Mode()
 	gin.SetMode(gin.TestMode)
 	t.Cleanup(func() { gin.SetMode(originalMode) })
+	t.Setenv("GIN_MODE", "")
 	t.Setenv("SESSION_SECRET", strings.Repeat("s", 32))
 
 	router, err := SetupRouter()
@@ -105,5 +109,33 @@ func TestHTTPServerDoesNotCapRequestBodyDuration(t *testing.T) {
 	}
 	if server.WriteTimeout != 0 {
 		t.Fatalf("WriteTimeout = %v, want no global deadline that expires during uploads", server.WriteTimeout)
+	}
+}
+
+func TestSetupRouterHonorsReleaseModeFromEnvironment(t *testing.T) {
+	originalMode := gin.Mode()
+	gin.SetMode(gin.DebugMode)
+	t.Cleanup(func() { gin.SetMode(originalMode) })
+	t.Setenv("GIN_MODE", gin.ReleaseMode)
+	t.Setenv("SESSION_SECRET", "")
+
+	_, err := SetupRouter()
+	if err == nil || !strings.Contains(err.Error(), "required in release mode") {
+		t.Fatalf("SetupRouter() error = %v, want required-secret error", err)
+	}
+	if gin.Mode() != gin.ReleaseMode {
+		t.Fatalf("gin.Mode() = %q, want %q", gin.Mode(), gin.ReleaseMode)
+	}
+}
+
+func TestSetupRouterRejectsInvalidGinMode(t *testing.T) {
+	originalMode := gin.Mode()
+	t.Cleanup(func() { gin.SetMode(originalMode) })
+	t.Setenv("GIN_MODE", "production")
+	t.Setenv("SESSION_SECRET", strings.Repeat("s", 32))
+
+	_, err := SetupRouter()
+	if err == nil || !strings.Contains(err.Error(), "invalid GIN_MODE") {
+		t.Fatalf("SetupRouter() error = %v, want invalid-mode error", err)
 	}
 }

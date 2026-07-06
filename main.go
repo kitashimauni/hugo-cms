@@ -25,7 +25,26 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func configureGinMode() error {
+	mode := strings.TrimSpace(os.Getenv("GIN_MODE"))
+	if mode == "" {
+		return nil
+	}
+
+	switch mode {
+	case gin.DebugMode, gin.ReleaseMode, gin.TestMode:
+		gin.SetMode(mode)
+		return nil
+	default:
+		return fmt.Errorf("invalid GIN_MODE %q", mode)
+	}
+}
+
 func SetupRouter() (*gin.Engine, error) {
+	if err := configureGinMode(); err != nil {
+		return nil, err
+	}
+
 	appURL := config.GetAppURL()
 	r := gin.Default()
 
