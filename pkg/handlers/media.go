@@ -1,10 +1,10 @@
 package handlers
 
 import (
+	"errors"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/services"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -16,6 +16,10 @@ func ListMedia(c *gin.Context) {
 	articlePath := c.Query("path")
 	files, err := services.ListMediaFiles(mode, articlePath)
 	if err != nil {
+		if errors.Is(err, services.ErrInvalidMedia) {
+			ErrorBadRequest(c, "Invalid media request")
+			return
+		}
 		ErrorInternal(c, "Failed to list media: "+err.Error())
 		return
 	}
@@ -27,6 +31,10 @@ func UploadMedia(c *gin.Context) {
 	articlePath := c.PostForm("path")
 	file, err := c.FormFile("file")
 	if err != nil {
+		if c.Request.Body != nil && strings.Contains(err.Error(), "request body too large") {
+			RespondError(c, http.StatusRequestEntityTooLarge, ErrCodeBadRequest, "Upload request is too large")
+			return
+		}
 		ErrorBadRequest(c, "No file uploaded")
 		return
 	}
@@ -40,6 +48,10 @@ func UploadMedia(c *gin.Context) {
 
 	info, err := services.SaveMediaFile(file, mode, articlePath)
 	if err != nil {
+		if errors.Is(err, services.ErrInvalidMedia) {
+			ErrorBadRequest(c, err.Error())
+			return
+		}
 		ErrorInternal(c, "Failed to save file: "+err.Error())
 		return
 	}
@@ -62,10 +74,8 @@ func DeleteMedia(c *gin.Context) {
 		return
 	}
 
-	// Additional validation: must be within allowed directories (static or content)
-	normalizedPath := filepath.ToSlash(filepath.Clean(req.RepoPath))
-	if !strings.HasPrefix(normalizedPath, "static/") && !strings.HasPrefix(normalizedPath, "content/") {
-		ErrorBadRequest(c, "Invalid media path: must be in static/ or content/")
+	if !services.ValidateMediaRepoPath(req.RepoPath) {
+		ErrorBadRequest(c, "Invalid media path")
 		return
 	}
 
@@ -82,6 +92,10 @@ func ServeMediaRaw(c *gin.Context) {
 		ErrorBadRequest(c, "Path parameter required")
 		return
 	}
+	if !services.ValidateMediaRepoPath(targetPath) {
+		ErrorNotFound(c, "Invalid media path")
+		return
+	}
 
 	fullPath := services.SafeJoin(config.RepoPath, "", targetPath)
 	if fullPath == "" {
@@ -89,5 +103,7 @@ func ServeMediaRaw(c *gin.Context) {
 		return
 	}
 
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Cache-Control", "private, max-age=300")
 	c.File(fullPath)
 }

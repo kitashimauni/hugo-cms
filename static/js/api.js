@@ -181,7 +181,6 @@ export async function uploadMedia(file, mode, path) {
     formData.append('file', file);
     if (mode) formData.append('mode', mode);
     if (path) formData.append('path', path);
-    formData.append('csrf_token', csrfToken); // CSRF token in form data for multipart
     const res = await fetch('/admin/api/media', {
         method: 'POST',
         headers: getCSRFHeaders(),

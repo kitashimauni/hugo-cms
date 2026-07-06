@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -43,9 +44,9 @@ var (
 	GitNetworkTimeout = 5 * time.Minute  // Network operations (push, pull)
 
 	// Security settings
-	AllowedGitHubUsers = []string{} // Empty means allow all authenticated users
-	CSRFSecret         = ""
-	GitHubOAuthScopes  = []string{"public_repo"} // Default to public_repo only
+	AllowedGitHubUsers  = []string{}
+	AllowAllGitHubUsers = false
+	GitHubOAuthScopes   = []string{"public_repo"} // Default to public_repo only
 
 	// Snippet settings
 	SnippetPaths = []string{"repo/.vscode/md.code-snippets"}
@@ -83,8 +84,10 @@ func Init() {
 
 	// Max upload size (default 10MB)
 	if maxSize := os.Getenv("MAX_UPLOAD_SIZE_MB"); maxSize != "" {
-		if val, err := strconv.ParseInt(maxSize, 10, 64); err == nil && val > 0 {
+		if val, err := strconv.ParseInt(maxSize, 10, 64); err == nil && val > 0 && val <= 1024 {
 			MaxUploadSize = val * 1024 * 1024
+		} else {
+			slog.Warn("Invalid MAX_UPLOAD_SIZE_MB value; using existing default", "value", maxSize)
 		}
 	}
 
@@ -94,14 +97,24 @@ func Init() {
 	GitRemote = getEnv("GIT_REMOTE", "origin")
 
 	// Security settings
+	AllowedGitHubUsers = nil
+	AllowAllGitHubUsers = false
 	if users := os.Getenv("ALLOWED_GITHUB_USERS"); users != "" {
 		AllowedGitHubUsers = splitAndTrim(users, ",")
 	}
-	CSRFSecret = getEnv("CSRF_SECRET", "")
-
+	if allowAll := os.Getenv("ALLOW_ALL_GITHUB_USERS"); allowAll != "" {
+		val, err := strconv.ParseBool(allowAll)
+		if err != nil {
+			slog.Warn("Invalid ALLOW_ALL_GITHUB_USERS value; defaulting to false", "value", allowAll)
+		} else {
+			AllowAllGitHubUsers = val
+		}
+	}
 	if cc := os.Getenv("CACHE_CONCURRENCY"); cc != "" {
-		if val, err := strconv.Atoi(cc); err == nil {
+		if val, err := strconv.Atoi(cc); err == nil && val >= 1 && val <= 256 {
 			CacheConcurrency = val
+		} else {
+			slog.Warn("Invalid CACHE_CONCURRENCY value; using existing default", "value", cc)
 		}
 	}
 
@@ -123,6 +136,17 @@ func Init() {
 		Endpoint:     github.Endpoint,
 		RedirectURL:  redirectURL,
 	}
+}
+
+// ValidateSecurityConfig rejects insecure authorization defaults.
+func ValidateSecurityConfig() error {
+	if AllowAllGitHubUsers && strings.EqualFold(strings.TrimSpace(os.Getenv("GIN_MODE")), "release") {
+		return fmt.Errorf("ALLOW_ALL_GITHUB_USERS cannot be enabled when GIN_MODE=release")
+	}
+	if len(AllowedGitHubUsers) == 0 && !AllowAllGitHubUsers {
+		return fmt.Errorf("ALLOWED_GITHUB_USERS must contain at least one user; set ALLOW_ALL_GITHUB_USERS=true only for explicit development use")
+	}
+	return nil
 }
 
 func GetAppURL() string {
@@ -149,7 +173,7 @@ func splitAndTrim(s, sep string) []string {
 // IsUserAllowed checks if a GitHub username is in the allowed list
 func IsUserAllowed(username string) bool {
 	if len(AllowedGitHubUsers) == 0 {
-		return true // No restriction if list is empty
+		return AllowAllGitHubUsers
 	}
 	for _, u := range AllowedGitHubUsers {
 		if strings.EqualFold(u, username) {

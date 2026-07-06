@@ -309,7 +309,7 @@ Hugoサーバーを再起動します。
 ]
 ```
 
-### POST /admin/api/media/upload
+### POST /admin/api/media
 
 メディアファイルをアップロードします。
 
@@ -322,7 +322,8 @@ Hugoサーバーを再起動します。
 
 **制限**:
 - 最大サイズ: `MAX_UPLOAD_SIZE_MB` (デフォルト10MB)
-- 許可される拡張子: `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.svg`, `.mp4`, `.webm`, `.pdf`
+- 許可される拡張子: `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.mp4`, `.webm`, `.pdf`
+- 拡張子と実際のContent-Typeが一致しないファイル、および実行可能コンテンツを含められるSVGは拒否
 
 **レスポンス**:
 ```json
@@ -344,7 +345,7 @@ Hugoサーバーを再起動します。
 }
 ```
 
-### DELETE /admin/api/media
+### POST /admin/api/media/delete
 
 メディアファイルを削除します。
 

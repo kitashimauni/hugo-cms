@@ -18,14 +18,14 @@ GitHub OAuth Appの認証情報です。
 
 #### `SESSION_SECRET`
 
-セッションCookieの暗号化に使用するキーです。
+セッションCookieの署名鍵と暗号化鍵の導出に使用する、32文字以上の秘密値です。
 
 ```bash
 # 生成例
 openssl rand -base64 32
 ```
 
-**注意**: 設定しない場合、起動時にランダムなキーが生成されますが、サーバー再起動でセッションが無効になります。
+**注意**: `GIN_MODE=release`では必須です。開発モードで設定しない場合は起動時にランダムなキーを生成するため、サーバー再起動でセッションが無効になります。
 
 ### 認証・セキュリティ
 
@@ -37,9 +37,17 @@ CMSへのアクセスを許可するGitHubユーザー名のリスト(カンマ�
 # 特定のユーザーのみ許可
 ALLOWED_GITHUB_USERS=user1,user2,user3
 
-# 空の場合は全認証ユーザーを許可 (非推奨)
-ALLOWED_GITHUB_USERS=
+# 1人以上のユーザー指定が必須
+ALLOWED_GITHUB_USERS=user1
 ```
+
+未設定または空の場合、CMSは安全のため起動を拒否します。ローカル開発で全GitHubユーザーを明示的に許可する場合だけ、次を設定できます。
+
+```env
+ALLOW_ALL_GITHUB_USERS=true
+```
+
+この設定を本番環境で使用してはいけません。
 
 #### `GITHUB_OAUTH_SCOPES`
 
@@ -56,10 +64,6 @@ GITHUB_OAUTH_SCOPES=repo
 ```
 
 **重要**: スコープを変更した場合、既存ユーザーは再ログインが必要です。
-
-#### `CSRF_SECRET`
-
-CSRFトークン生成用のシークレット。設定しない場合は自動生成されます。
 
 ### アプリケーション設定
 
@@ -180,6 +184,8 @@ GIT_USER_EMAIL="bot@hugo-cms.local"
 
 リモートリポジトリ名。デフォルト: `origin`
 
+指定したリモートのURLは`https://github.com/owner/repository.git`形式である必要があります。SSH形式や認証情報を埋め込んだURLは、ログインユーザー以外の認証情報利用やトークン送信先のすり替えを防ぐため拒否されます。
+
 ## タイムアウト設定
 
 以下のタイムアウトはソースコード内で定義されています:
@@ -200,6 +206,7 @@ GIT_USER_EMAIL="bot@hugo-cms.local"
 GITHUB_CLIENT_ID=Iv1.xxxxxxxx
 GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxx
 SESSION_SECRET=dev-secret-key-change-in-production
+ALLOWED_GITHUB_USERS=your-username
 
 PORT=8080
 APP_URL=http://localhost:8080
@@ -213,10 +220,9 @@ HUGO_SERVER_PORT=1314
 ```env
 GITHUB_CLIENT_ID=Iv1.xxxxxxxx
 GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxx
-SESSION_SECRET=長くてランダムな文字列
+SESSION_SECRET=32文字以上のランダムな文字列
 
 ALLOWED_GITHUB_USERS=your-username
-CSRF_SECRET=別のランダム文字列
 
 PORT=8080
 APP_URL=https://cms.example.com
@@ -236,7 +242,8 @@ GIT_BRANCH=main
 ```env
 GITHUB_CLIENT_ID=Iv1.xxxxxxxx
 GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxx
-SESSION_SECRET=docker-secret
+SESSION_SECRET=replace-with-at-least-32-random-characters
+ALLOWED_GITHUB_USERS=your-username
 
 PORT=8080
 APP_URL=http://localhost:8080

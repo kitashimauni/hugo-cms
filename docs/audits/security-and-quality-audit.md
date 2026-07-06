@@ -1,18 +1,18 @@
 # セキュリティ・品質監査
 
-最終確認日: 2026-07-05
+最終確認日: 2026-07-06
 
 ## 概要
 
 Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレビュー、および開発・デプロイ手順を確認した結果をまとめる。
 
-現時点では、特に認可、SSHリモート利用時のGit認証、メディアパス検証に本番運用前の対応が必要である。
+初回監査では、特に認可、SSHリモート利用時のGit認証、メディアパス検証を本番運用前の必須対応として確認した。各項目の現在の対応状態は以下に記録する。
 
 ## 優先度: 重大
 
 ### 1. 許可リスト未設定時にすべてのGitHubユーザーを許可する
 
-- 状態: 未対応
+- 状態: 対応済み
 - 該当箇所:
   - `pkg/config/config.go` の `AllowedGitHubUsers`
   - `pkg/config/config.go` の `IsUserAllowed`
@@ -29,7 +29,7 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 
 ### 2. SSHリモートではログインユーザーのOAuth権限で公開されない
 
-- 状態: 未対応
+- 状態: 対応済み
 - 該当箇所: `pkg/services/git.go` の `ExecuteGitWithToken`
 - 影響:
   - OAuthトークンを使う処理はHTTPSリモートを前提としている。
@@ -40,10 +40,12 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
   - ユーザーのOAuth権限で公開する場合はHTTPSリモートのみを許可し、起動時に検証する。
   - SSH鍵で公開する設計にする場合は、その事実を明示し、OAuthログインとは別に厳格なCMS認可を行う。
   - リモート名のハードコードを廃止し、すべて`config.GitRemote`を使用する。
+  - 実装では`github.com`のHTTPSリモートだけを許可し、credential helperを無効化してログインユーザーのOAuthトークンを使用する。
+  - 既存のSSH形式リモートはHTTPS形式へ移行する必要がある。
 
 ### 3. メディアアップロード先がリポジトリ外へ脱出できる
 
-- 状態: 未対応
+- 状態: 対応済み
 - 該当箇所:
   - `pkg/handlers/media.go`
   - `pkg/services/media.go` の `ListMediaFiles`
@@ -60,7 +62,7 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 
 ### 4. GitHubアクセストークンがCookie内で暗号化されていない
 
-- 状態: 未対応
+- 状態: 対応済み（暗号化Cookie。サーバー側セッションストアへの移行は将来改善）
 - 該当箇所:
   - `main.go` のCookie Store初期化
   - `pkg/handlers/auth.go` の`access_token`保存
@@ -115,7 +117,7 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 
 ### 8. Hugoプレビューと管理画面が同一オリジンである
 
-- 状態: 未対応
+- 状態: 対応済み（別オリジンへの分離は将来改善）
 - 該当箇所:
   - `main.go` のHugoリバースプロキシ
   - `templates/index.html` のプレビューiframe
@@ -125,6 +127,8 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 - 推奨対応:
   - プレビューを管理画面とは異なるオリジンへ分離する。
   - 分離できない場合はiframeの`sandbox`と厳格なContent Security Policyを導入する。ただし、必要なプレビュー機能との互換性を検証する。
+  - 現在はiframeを`sandbox="allow-forms allow-scripts"`でopaque originとして扱い、`allow-same-origin`、トップレベル遷移、ポップアップを許可していない。
+  - プレビューへの直接アクセスにも管理画面と同じ認証・トークン再検証を適用している。
 
 ## 優先度: 中
 
@@ -142,7 +146,7 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 
 ### 10. `CACHE_CONCURRENCY`の値によって停止またはpanicする
 
-- 状態: 未対応
+- 状態: 対応済み
 - 該当箇所:
   - `pkg/config/config.go`
   - `pkg/services/cache.go`
@@ -183,16 +187,9 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 
 ## その他の改善点
 
-- `http.Server`に`ReadHeaderTimeout`、`ReadTimeout`、`WriteTimeout`、`IdleTimeout`が設定されていない。
-- メディアアップロードは解析前のリクエストボディ上限がなく、認証済みユーザーによるディスク・メモリ消費を十分に防げない。
-- `GET /ready`がリポジトリの実パス、メモリ使用量、goroutine数を公開している。
 - 記事取得APIのパスをフロントエンド側でURLエンコードしていないため、`&`、`#`、`?`などを含むファイル名を正しく扱えない。
 - Git statusのporcelain出力を文字列操作で解析しており、リネームや引用された日本語ファイル名のdirty判定を誤る可能性がある。
-- `SafeJoin`は字句上の親ディレクトリ参照を防ぐが、シンボリックリンク後の実パスまでは検証しない。
 - 複数タブや並行リクエスト間の更新競合を検出するバージョン番号・ETag・排他制御がなく、後勝ちで記事を上書きする。
-- `CSRF_SECRET`は設定として読み込まれるが、トークン生成には使用されていない。
-- `.env.example`のOAuth callback URLコメントが実際の`/admin/auth/callback`と一致していない。
-- `hugo-cms.exe`が`.gitignore`対象外で、未追跡の大容量バイナリとして残っている。
 - 複数のGoファイルが`gofmt`未適用である。
 
 ## 検証結果

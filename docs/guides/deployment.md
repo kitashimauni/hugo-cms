@@ -42,7 +42,7 @@ vim .env
 
 3. Hugoリポジトリを準備:
 ```bash
-git clone git@github.com:username/hugo-site.git /opt/hugo-cms/repo
+git clone https://github.com/username/hugo-site.git /opt/hugo-cms/repo
 ```
 
 4. systemdサービスを作成:
@@ -192,11 +192,11 @@ cms.example.com {
 # 必須
 GITHUB_CLIENT_ID=本番用のClient ID
 GITHUB_CLIENT_SECRET=本番用のClient Secret
-SESSION_SECRET=長くてランダムな文字列
+SESSION_SECRET=32文字以上のランダムな文字列
 
 # セキュリティ
 ALLOWED_GITHUB_USERS=your-username
-CSRF_SECRET=別のランダム文字列
+ALLOW_ALL_GITHUB_USERS=false
 
 # アプリケーション
 PORT=8080
@@ -217,19 +217,19 @@ GIN_MODE=release
    - **Homepage URL**: `https://cms.example.com`
    - **Authorization callback URL**: `https://cms.example.com/admin/auth/callback`
 
-### SSH鍵の設定
+### Gitリモートの設定
 
-Gitのpush/pullにはGitHub OAuth トークンを使用しますが、
-初回クローンにはSSH鍵またはHTTPS認証が必要です:
+Gitのpush/pullは、ログインユーザーのGitHub OAuthトークンを使用します。認証主体がサーバーのSSH鍵へ切り替わることを防ぐため、リモートURLには`https://github.com/`形式だけを使用してください。
 
 ```bash
-# SSHの場合
-ssh-keygen -t ed25519 -C "hugo-cms@server"
-cat ~/.ssh/id_ed25519.pub
-# GitHubのDeploy Keysに追加
-
-# HTTPS の場合
 git clone https://github.com/username/hugo-site.git repo
+git -C repo remote get-url origin
+```
+
+SSH、scp形式、GitHub以外のHTTPSホスト、認証情報を埋め込んだURLはCMSからの同期・公開時に拒否されます。既存リポジトリがSSH形式の場合は次のように変更します。
+
+```bash
+git -C repo remote set-url origin https://github.com/username/hugo-site.git
 ```
 
 ## 監視とログ
@@ -344,9 +344,9 @@ LOG_LEVEL=debug
 ## セキュリティチェックリスト
 
 - [ ] HTTPS (SSL/TLS) が有効
-- [ ] `SESSION_SECRET` がランダムな値
-- [ ] `CSRF_SECRET` がランダムな値
+- [ ] `SESSION_SECRET` が32文字以上のランダムな値
 - [ ] `ALLOWED_GITHUB_USERS` で許可ユーザーを制限
+- [ ] `ALLOW_ALL_GITHUB_USERS=false` を設定
 - [ ] `GIN_MODE=release` を設定
 - [ ] ファイアウォールで不要なポートを閉じる
 - [ ] 定期的なセキュリティアップデート

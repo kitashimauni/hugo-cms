@@ -47,6 +47,9 @@ func CheckSemanticDiff(relPath string) (bool, error) {
 }
 
 func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
+	if token == "" {
+		return "GitHub token is required", fmt.Errorf("empty GitHub token")
+	}
 	start := time.Now()
 	defer func() {
 		slog.Debug("Git command executed", "args", args, "duration", time.Since(start))
@@ -61,27 +64,20 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	// We need to ensure the remote URL in the command triggers ASKPASS.
 	// Typically, https://username@host/repo... works, asking for password.
 
-	cmdGetUrl := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
-	cmdGetUrl.Dir = dir
-	outUrl, err := cmdGetUrl.Output()
+	remoteUrl, err := readRawRemoteURL(ctx, dir, config.GitRemote)
 	if err != nil {
 		return "Failed to get remote url", err
 	}
-	remoteUrl := strings.TrimSpace(string(outUrl))
-	u, err := url.Parse(remoteUrl)
+	authenticatedUrl, err := authenticatedGitHubURL(remoteUrl)
 	if err != nil {
-		return "Invalid remote url", err
+		return "Remote URL must use HTTPS on github.com", err
 	}
-
-	// Set generic username "oauth2" and remove password to force prompt
-	u.User = url.User("oauth2")
-	authenticatedUrl := u.String()
 
 	// 2. Prepare Arguments
 	newArgs := make([]string, len(args))
 	copy(newArgs, args)
 	for i, v := range newArgs {
-		if v == "origin" {
+		if v == config.GitRemote {
 			newArgs[i] = authenticatedUrl
 		}
 	}
@@ -97,12 +93,7 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	cmd.Dir = dir
 
 	// 4. Set Environment
-	env := os.Environ()
-	env = append(env,
-		"GIT_ASKPASS="+scriptPath,
-		"GIT_TOKEN="+token,
-		"GIT_TERMINAL_PROMPT=0", // Disable interactive prompt fallback
-	)
+	env := gitAuthEnvironment(os.Environ(), scriptPath, token, authenticatedUrl)
 	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
@@ -114,6 +105,70 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	safeLog = strings.ReplaceAll(safeLog, authenticatedUrl, remoteUrl)
 
 	return safeLog, err
+}
+
+func readRawRemoteURL(ctx context.Context, dir, remote string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "config", "--local", "--get", "remote."+remote+".url")
+	cmd.Dir = dir
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("read configured remote URL: %w", err)
+	}
+
+	remoteURL := strings.TrimSpace(string(output))
+	if remoteURL == "" {
+		return "", fmt.Errorf("configured remote URL is empty")
+	}
+	return remoteURL, nil
+}
+
+func gitAuthEnvironment(base []string, scriptPath, token, authenticatedURL string) []string {
+	env := make([]string, 0, len(base)+9)
+	for _, entry := range base {
+		key, _, _ := strings.Cut(entry, "=")
+		upperKey := strings.ToUpper(key)
+		if upperKey == "GIT_ASKPASS" ||
+			upperKey == "GIT_TOKEN" ||
+			upperKey == "GIT_TERMINAL_PROMPT" ||
+			upperKey == "GIT_CONFIG_COUNT" ||
+			strings.HasPrefix(upperKey, "GIT_CONFIG_KEY_") ||
+			strings.HasPrefix(upperKey, "GIT_CONFIG_VALUE_") {
+			continue
+		}
+		env = append(env, entry)
+	}
+
+	return append(env,
+		"GIT_ASKPASS="+scriptPath,
+		"GIT_TOKEN="+token,
+		"GIT_TERMINAL_PROMPT=0", // Disable interactive prompt fallback
+		"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_KEY_0=credential.helper",
+		"GIT_CONFIG_VALUE_0=",
+		// An exact self-rewrite wins over broader global insteadOf rules and
+		// keeps the validated GitHub HTTPS URL as the actual network target.
+		"GIT_CONFIG_KEY_1=url."+authenticatedURL+".insteadOf",
+		"GIT_CONFIG_VALUE_1="+authenticatedURL,
+	)
+}
+
+func authenticatedGitHubURL(remoteURL string) (string, error) {
+	u, err := url.Parse(remoteURL)
+	if err != nil {
+		return "", fmt.Errorf("parse remote URL: %w", err)
+	}
+	if !strings.EqualFold(u.Scheme, "https") || !strings.EqualFold(u.Hostname(), "github.com") {
+		return "", fmt.Errorf("unsupported Git remote %q", remoteURL)
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("Git remote must not contain embedded credentials")
+	}
+	if u.Path == "" || u.Path == "/" {
+		return "", fmt.Errorf("Git remote repository path is missing")
+	}
+
+	u.User = url.User("oauth2")
+	return u.String(), nil
 }
 
 func createAskPassScript() (string, error) {

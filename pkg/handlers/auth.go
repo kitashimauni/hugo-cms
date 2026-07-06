@@ -3,10 +3,11 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"math/big"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -27,8 +28,15 @@ type GitHubUser struct {
 
 func AuthRequired(c *gin.Context) {
 	session := sessions.Default(c)
-	token := session.Get("access_token")
-	if token == nil {
+	token, tokenOK := session.Get("access_token").(string)
+	username, userOK := session.Get("github_user").(string)
+	if !tokenOK || token == "" || !userOK || username == "" || !config.IsUserAllowed(username) {
+		if tokenOK || userOK {
+			session.Clear()
+			if err := session.Save(); err != nil {
+				slog.Error("Failed to clear unauthorized session", "error", err)
+			}
+		}
 		if strings.HasPrefix(c.Request.URL.Path, "/admin/api/") {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		} else {
@@ -44,20 +52,26 @@ func LoginPage(c *gin.Context) {
 	c.HTML(http.StatusOK, "login.html", nil)
 }
 
-func generateStateOauth() string {
+func generateStateOauth() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback to time-based state (less secure but functional)
-		return base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+		return "", fmt.Errorf("generate OAuth state: %w", err)
 	}
-	return base64.URLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 func GithubLogin(c *gin.Context) {
-	state := generateStateOauth()
+	state, err := generateStateOauth()
+	if err != nil {
+		ErrorInternal(c, "Failed to start OAuth login")
+		return
+	}
 	session := sessions.Default(c)
 	session.Set("oauth_state", state)
-	session.Save()
+	if err := session.Save(); err != nil {
+		ErrorInternal(c, "Failed to persist OAuth session")
+		return
+	}
 
 	url := config.OauthConf.AuthCodeURL(state, oauth2.AccessTypeOffline)
 	c.Redirect(http.StatusTemporaryRedirect, url)
@@ -65,21 +79,30 @@ func GithubLogin(c *gin.Context) {
 
 func AuthCallback(c *gin.Context) {
 	session := sessions.Default(c)
-	retrievedState := session.Get("oauth_state")
+	retrievedState, ok := session.Get("oauth_state").(string)
 	queryState := c.Query("state")
 
-	if retrievedState != queryState {
+	if !ok || retrievedState == "" || queryState == "" ||
+		subtle.ConstantTimeCompare([]byte(retrievedState), []byte(queryState)) != 1 {
 		c.String(http.StatusBadRequest, "Invalid OAuth State")
 		return
 	}
 
 	// Remove state from session
 	session.Delete("oauth_state")
+	if err := session.Save(); err != nil {
+		ErrorInternal(c, "Failed to update OAuth session")
+		return
+	}
 
 	// Use request context for proper cancellation propagation
 	ctx := c.Request.Context()
 
 	code := c.Query("code")
+	if code == "" {
+		c.String(http.StatusBadRequest, "Missing OAuth Code")
+		return
+	}
 	token, err := config.OauthConf.Exchange(ctx, code)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "OAuth Exchange Failed")
@@ -103,7 +126,11 @@ func AuthCallback(c *gin.Context) {
 
 	session.Set("access_token", token.AccessToken)
 	session.Set("github_user", user.Login)
-	session.Save()
+	session.Set("token_validated_at", time.Now().Unix())
+	if err := session.Save(); err != nil {
+		ErrorInternal(c, "Failed to persist login session")
+		return
+	}
 
 	c.Redirect(http.StatusFound, "/admin/")
 }
@@ -190,7 +217,9 @@ func TokenValidation(c *gin.Context) {
 		if !validateGitHubToken(ctx, token) {
 			// Token is invalid, clear session
 			session.Clear()
-			session.Save()
+			if err := session.Save(); err != nil {
+				slog.Error("Failed to clear expired session", "error", err)
+			}
 
 			if strings.HasPrefix(c.Request.URL.Path, "/admin/api/") {
 				ErrorUnauthorized(c, "Session expired. Please login again.")
@@ -204,7 +233,9 @@ func TokenValidation(c *gin.Context) {
 
 		// Update validation timestamp
 		session.Set("token_validated_at", now)
-		session.Save()
+		if err := session.Save(); err != nil {
+			slog.Error("Failed to persist token validation time", "error", err)
+		}
 	}
 
 	c.Next()
@@ -213,20 +244,40 @@ func TokenValidation(c *gin.Context) {
 func Logout(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Clear()
-	session.Save()
+	if err := session.Save(); err != nil {
+		ErrorInternal(c, "Failed to clear session")
+		return
+	}
 	c.Redirect(http.StatusFound, "/admin/login")
 }
 
 // GetCSRFToken returns the CSRF token for the current session
 func GetCSRFToken(c *gin.Context) {
 	session := sessions.Default(c)
-	token := session.Get("csrf_token")
-	if token == nil {
-		token = generateCSRFToken()
+	token, ok := session.Get("csrf_token").(string)
+	if !ok || token == "" {
+		var err error
+		token, err = generateCSRFToken()
+		if err != nil {
+			ErrorInternal(c, "Failed to generate CSRF token")
+			return
+		}
 		session.Set("csrf_token", token)
-		session.Save()
+		if err := session.Save(); err != nil {
+			ErrorInternal(c, "Failed to persist CSRF token")
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"csrf_token": token})
+}
+
+func RequestBodyLimit(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		}
+		c.Next()
+	}
 }
 
 // CSRFProtection middleware validates CSRF tokens on POST/PUT/DELETE requests
@@ -238,8 +289,8 @@ func CSRFProtection(c *gin.Context) {
 	}
 
 	session := sessions.Default(c)
-	sessionToken := session.Get("csrf_token")
-	if sessionToken == nil {
+	sessionToken, ok := session.Get("csrf_token").(string)
+	if !ok || sessionToken == "" {
 		// Generate a new token if none exists (for better UX)
 		// Client should retry after getting new token
 		ErrorForbidden(c, "CSRF token expired. Please refresh and try again.")
@@ -247,11 +298,9 @@ func CSRFProtection(c *gin.Context) {
 		return
 	}
 
-	// Check header first, then form
+	// Require the header so multipart bodies are not parsed before the upload
+	// handler has applied its request-size limit.
 	requestToken := c.GetHeader("X-CSRF-Token")
-	if requestToken == "" {
-		requestToken = c.PostForm("csrf_token")
-	}
 
 	if requestToken == "" {
 		ErrorForbidden(c, "CSRF token missing from request")
@@ -259,7 +308,7 @@ func CSRFProtection(c *gin.Context) {
 		return
 	}
 
-	if requestToken != sessionToken.(string) {
+	if subtle.ConstantTimeCompare([]byte(requestToken), []byte(sessionToken)) != 1 {
 		ErrorForbidden(c, "CSRF token mismatch. Please refresh and try again.")
 		c.Abort()
 		return
@@ -268,12 +317,10 @@ func CSRFProtection(c *gin.Context) {
 	c.Next()
 }
 
-func generateCSRFToken() string {
+func generateCSRFToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback to time-based token with random component
-		n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
-		return base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%d-%d", time.Now().UnixNano(), n)))
+		return "", fmt.Errorf("generate CSRF token: %w", err)
 	}
-	return base64.URLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

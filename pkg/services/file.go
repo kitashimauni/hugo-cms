@@ -14,26 +14,86 @@ import (
 )
 
 func SafeJoin(root, sub, target string) string {
-	// Prevent absolute paths from bypassing the root
-	if filepath.IsAbs(target) {
+	if root == "" || filepath.IsAbs(sub) || filepath.IsAbs(target) {
 		return ""
 	}
 
-	intendedRoot := filepath.Join(root, sub)
-	finalPath := filepath.Join(intendedRoot, target)
-
-	// Verify that finalPath is inside intendedRoot using filepath.Rel
-	rel, err := filepath.Rel(intendedRoot, finalPath)
+	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		return ""
 	}
-
-	// Check if the relative path indicates traversal (starts with "..")
-	if strings.HasPrefix(rel, "..") || rel == ".." {
+	intendedRoot := filepath.Join(rootAbs, sub)
+	if !isPathWithin(rootAbs, intendedRoot) {
 		return ""
 	}
 
-	return finalPath
+	finalPath := filepath.Join(intendedRoot, target)
+	if !isPathWithin(intendedRoot, finalPath) {
+		return ""
+	}
+
+	if !isResolvedPathWithin(rootAbs, finalPath) {
+		return ""
+	}
+	return filepath.Join(root, sub, target)
+}
+
+func isPathWithin(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil || filepath.IsAbs(rel) {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
+}
+
+// isResolvedPathWithin prevents existing symlinks below a target root from
+// escaping it. Missing suffixes are allowed for new files.
+func isResolvedPathWithin(root, target string) bool {
+	rootInfo, err := os.Lstat(root)
+	if err != nil {
+		return os.IsNotExist(err)
+	}
+
+	rootBoundary := root
+	if rootInfo.Mode()&os.ModeSymlink != 0 {
+		rootBoundary, err = filepath.EvalSymlinks(root)
+		if err != nil {
+			return false
+		}
+	}
+
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	current := root
+	for _, component := range strings.Split(rel, string(os.PathSeparator)) {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, statErr := os.Lstat(current)
+		if os.IsNotExist(statErr) {
+			return true
+		}
+		if statErr != nil {
+			return false
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			if rootBoundary == root {
+				rootBoundary, err = filepath.EvalSymlinks(root)
+				if err != nil {
+					return false
+				}
+			}
+			current, err = filepath.EvalSymlinks(current)
+			if err != nil || !isPathWithin(rootBoundary, current) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func DeleteFile(targetPath string) error {
