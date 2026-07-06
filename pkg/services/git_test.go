@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"hugo-cms/pkg/config"
 	"os"
 	"os/exec"
@@ -185,22 +186,34 @@ func TestPublishChangesDoesNotPushWhenCommitFails(t *testing.T) {
 	}
 }
 
-func TestPublishChangesSkipsPushWhenNothingIsStaged(t *testing.T) {
+func TestPublishChangesPushesExistingCommitsWhenNothingIsStaged(t *testing.T) {
 	setupPublishRepository(t)
 
 	pushCalled := false
 	log, err := publishChanges("token", "", func(string, string, ...string) (string, error) {
 		pushCalled = true
-		return "unexpected push", nil
+		return "pushed", nil
 	})
 	if err != nil {
 		t.Fatalf("publishChanges() unexpected error: %v", err)
 	}
-	if pushCalled {
-		t.Fatal("publishChanges() pushed without staged changes")
+	if !pushCalled {
+		t.Fatal("publishChanges() must push to retry previously committed changes")
 	}
-	if !strings.Contains(log, "No changes to publish") {
+	if !strings.Contains(log, "No new changes to commit") {
 		t.Fatalf("publishChanges() log = %q, want no-change result", log)
+	}
+}
+
+func TestPublishChangesReturnsPushErrorWhenNothingIsStaged(t *testing.T) {
+	setupPublishRepository(t)
+	pushErr := errors.New("temporary push failure")
+
+	_, err := publishChanges("token", "", func(string, string, ...string) (string, error) {
+		return "push failed", pushErr
+	})
+	if !errors.Is(err, pushErr) {
+		t.Fatalf("publishChanges() error = %v, want %v", err, pushErr)
 	}
 }
 

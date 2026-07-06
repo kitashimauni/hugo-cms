@@ -71,42 +71,50 @@ export async function execAutoSave() {
 }
 
 async function queueCurrentSave(statusMessage) {
-    if (!currentPath) return false;
-
-    const payloadObj = getPayload();
-    const payloadStr = JSON.stringify(payloadObj);
-
-    if (payloadStr === lastSavedPayload || payloadStr === lastQueuedPayload) {
-        await saveQueue;
-        return false;
-    }
-
-    lastQueuedPayload = payloadStr;
-    const operation = saveQueue.catch(() => {
-        // A newer payload should still be allowed to save after an earlier
-        // request failed.
-    }).then(async () => {
-        updateSaveStatus(statusMessage, "saving");
-        try {
-            await API.saveArticle(payloadObj);
-            lastSavedPayload = payloadStr;
-            console.log("[AutoSave] Saved:", payloadObj.path);
-            updateSaveStatus("Saved", "saved");
-            reloadPreviewIfNeeded();
-            return true;
-        } catch (e) {
-            console.error("[AutoSave] Failed:", e);
-            updateSaveStatus("Save Failed", "error");
-            throw e;
-        } finally {
-            if (lastQueuedPayload === payloadStr) {
-                lastQueuedPayload = "";
-            }
+    while (currentPath) {
+        // Another payload may become the saved value while we wait. Read the
+        // editor again afterwards so preview/publish always uses what is
+        // currently visible, including a revert to an older payload.
+        if (lastQueuedPayload !== "") {
+            await saveQueue;
+            continue;
         }
-    });
 
-    saveQueue = operation;
-    return operation;
+        const payloadObj = getPayload();
+        const payloadStr = JSON.stringify(payloadObj);
+
+        if (payloadStr === lastSavedPayload) {
+            return false;
+        }
+
+        lastQueuedPayload = payloadStr;
+        const operation = saveQueue.catch(() => {
+            // A newer payload should still be allowed to save after an earlier
+            // request failed.
+        }).then(async () => {
+            updateSaveStatus(statusMessage, "saving");
+            try {
+                await API.saveArticle(payloadObj);
+                lastSavedPayload = payloadStr;
+                console.log("[AutoSave] Saved:", payloadObj.path);
+                updateSaveStatus("Saved", "saved");
+                reloadPreviewIfNeeded();
+                return true;
+            } catch (e) {
+                console.error("[AutoSave] Failed:", e);
+                updateSaveStatus("Save Failed", "error");
+                throw e;
+            } finally {
+                if (lastQueuedPayload === payloadStr) {
+                    lastQueuedPayload = "";
+                }
+            }
+        });
+
+        saveQueue = operation;
+        return operation;
+    }
+    return false;
 }
 
 export async function flushPendingSave() {

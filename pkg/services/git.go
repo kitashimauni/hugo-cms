@@ -276,24 +276,23 @@ func publishChanges(token, path string, push gitPushFunc) (string, error) {
 
 	stagedDiffCmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet", "--exit-code")
 	stagedDiffCmd.Dir = config.RepoPath
-	if err := stagedDiffCmd.Run(); err == nil {
-		return "--- Git Add ---\n(Success)\n\n--- Git Commit ---\nNo changes to publish", nil
-	} else {
+	commitLog := "No new changes to commit; checking whether existing commits need to be pushed."
+	if err := stagedDiffCmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
 			return "Failed to inspect staged changes", err
 		}
+
+		commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", msg)
+		commitCmd.Dir = config.RepoPath
+		commitOut, commitErr := commitCmd.CombinedOutput()
+		if commitErr != nil {
+			return fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\nCommit failed: %s\nOutput: %s",
+				commitErr.Error(), string(commitOut)), commitErr
+		}
+		commitLog = string(commitOut)
 	}
 
-	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", msg)
-	commitCmd.Dir = config.RepoPath
-	commitOut, commitErr := commitCmd.CombinedOutput()
-	if commitErr != nil {
-		return fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\nCommit failed: %s\nOutput: %s",
-			commitErr.Error(), string(commitOut)), commitErr
-	}
-
-	commitLog := string(commitOut)
 	pushLog, err := push(config.RepoPath, token, "push", config.GitRemote, config.GitBranch)
 
 	// Invalidate cache after successful publish to refresh dirty status
