@@ -64,13 +64,10 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	// We need to ensure the remote URL in the command triggers ASKPASS.
 	// Typically, https://username@host/repo... works, asking for password.
 
-	cmdGetUrl := exec.CommandContext(ctx, "git", "remote", "get-url", config.GitRemote)
-	cmdGetUrl.Dir = dir
-	outUrl, err := cmdGetUrl.Output()
+	remoteUrl, err := readRawRemoteURL(ctx, dir, config.GitRemote)
 	if err != nil {
 		return "Failed to get remote url", err
 	}
-	remoteUrl := strings.TrimSpace(string(outUrl))
 	authenticatedUrl, err := authenticatedGitHubURL(remoteUrl)
 	if err != nil {
 		return "Remote URL must use HTTPS on github.com", err
@@ -96,7 +93,7 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	cmd.Dir = dir
 
 	// 4. Set Environment
-	env := gitAuthEnvironment(os.Environ(), scriptPath, token)
+	env := gitAuthEnvironment(os.Environ(), scriptPath, token, authenticatedUrl)
 	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
@@ -110,8 +107,23 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	return safeLog, err
 }
 
-func gitAuthEnvironment(base []string, scriptPath, token string) []string {
-	env := make([]string, 0, len(base)+6)
+func readRawRemoteURL(ctx context.Context, dir, remote string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "config", "--local", "--get", "remote."+remote+".url")
+	cmd.Dir = dir
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("read configured remote URL: %w", err)
+	}
+
+	remoteURL := strings.TrimSpace(string(output))
+	if remoteURL == "" {
+		return "", fmt.Errorf("configured remote URL is empty")
+	}
+	return remoteURL, nil
+}
+
+func gitAuthEnvironment(base []string, scriptPath, token, authenticatedURL string) []string {
+	env := make([]string, 0, len(base)+9)
 	for _, entry := range base {
 		key, _, _ := strings.Cut(entry, "=")
 		upperKey := strings.ToUpper(key)
@@ -130,9 +142,13 @@ func gitAuthEnvironment(base []string, scriptPath, token string) []string {
 		"GIT_ASKPASS="+scriptPath,
 		"GIT_TOKEN="+token,
 		"GIT_TERMINAL_PROMPT=0", // Disable interactive prompt fallback
-		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_COUNT=2",
 		"GIT_CONFIG_KEY_0=credential.helper",
 		"GIT_CONFIG_VALUE_0=",
+		// An exact self-rewrite wins over broader global insteadOf rules and
+		// keeps the validated GitHub HTTPS URL as the actual network target.
+		"GIT_CONFIG_KEY_1=url."+authenticatedURL+".insteadOf",
+		"GIT_CONFIG_VALUE_1="+authenticatedURL,
 	)
 }
 

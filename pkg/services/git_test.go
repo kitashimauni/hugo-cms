@@ -1,7 +1,12 @@
 package services
 
 import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -74,16 +79,19 @@ func TestGitAuthEnvironmentRemovesInheritedGitAuthentication(t *testing.T) {
 		"GIT_CONFIG_VALUE_1=Authorization: secret",
 	}
 
-	got := gitAuthEnvironment(base, "/safe/askpass", "new-token")
+	authenticatedURL := "https://oauth2@github.com/example/site.git"
+	got := gitAuthEnvironment(base, "/safe/askpass", "new-token", authenticatedURL)
 
 	wantPresent := []string{
 		"PATH=/usr/bin",
 		"GIT_ASKPASS=/safe/askpass",
 		"GIT_TOKEN=new-token",
 		"GIT_TERMINAL_PROMPT=0",
-		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_COUNT=2",
 		"GIT_CONFIG_KEY_0=credential.helper",
 		"GIT_CONFIG_VALUE_0=",
+		"GIT_CONFIG_KEY_1=url." + authenticatedURL + ".insteadOf",
+		"GIT_CONFIG_VALUE_1=" + authenticatedURL,
 	}
 	for _, entry := range wantPresent {
 		if !slices.Contains(got, entry) {
@@ -98,5 +106,53 @@ func TestGitAuthEnvironmentRemovesInheritedGitAuthentication(t *testing.T) {
 			entry == "GIT_CONFIG_VALUE_1=Authorization: secret" {
 			t.Errorf("gitAuthEnvironment() preserved inherited authentication setting %q", entry)
 		}
+	}
+}
+
+func TestReadRawRemoteURLIgnoresInsteadOfRewrite(t *testing.T) {
+	repoPath := t.TempDir()
+	runGitForTest(t, repoPath, "init")
+	runGitForTest(t, repoPath, "remote", "add", "origin", "https://github.com/example/site.git")
+
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "url.git@github.com:.insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_0", "https://github.com/")
+
+	got, err := readRawRemoteURL(context.Background(), repoPath, "origin")
+	if err != nil {
+		t.Fatalf("readRawRemoteURL() unexpected error: %v", err)
+	}
+	if got != "https://github.com/example/site.git" {
+		t.Fatalf("readRawRemoteURL() = %q, want raw configured URL", got)
+	}
+}
+
+func TestGitAuthEnvironmentPreventsURLRewrite(t *testing.T) {
+	authenticatedURL := "https://oauth2@github.com/example/site.git"
+	globalConfig := filepath.Join(t.TempDir(), "gitconfig")
+	configContent := "[url \"ssh://attacker.invalid/\"]\n\tinsteadOf = https://\n"
+	if err := os.WriteFile(globalConfig, []byte(configContent), 0600); err != nil {
+		t.Fatalf("write global Git config: %v", err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
+
+	cmd := exec.Command("git", "ls-remote", "--get-url", authenticatedURL)
+	cmd.Env = gitAuthEnvironment(os.Environ(), filepath.Join(t.TempDir(), "askpass"), "token", authenticatedURL)
+
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git URL expansion failed: %v", err)
+	}
+	if got := strings.TrimSpace(string(output)); got != authenticatedURL {
+		t.Fatalf("expanded URL = %q, want %q", got, authenticatedURL)
+	}
+}
+
+func runGitForTest(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, output)
 	}
 }

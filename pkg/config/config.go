@@ -140,7 +140,7 @@ func Init() {
 
 // ValidateSecurityConfig rejects insecure authorization defaults.
 func ValidateSecurityConfig() error {
-	if AllowAllGitHubUsers && strings.EqualFold(os.Getenv("GIN_MODE"), "release") {
+	if AllowAllGitHubUsers && strings.EqualFold(strings.TrimSpace(os.Getenv("GIN_MODE")), "release") {
 		return fmt.Errorf("ALLOW_ALL_GITHUB_USERS cannot be enabled when GIN_MODE=release")
 	}
 	if len(AllowedGitHubUsers) == 0 && !AllowAllGitHubUsers {

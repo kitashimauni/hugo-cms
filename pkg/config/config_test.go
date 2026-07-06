@@ -32,6 +32,12 @@ func TestValidateSecurityConfig(t *testing.T) {
 			wantErr:  true,
 		},
 		{
+			name:     "rejects allow-all when release mode has whitespace",
+			allowAll: true,
+			ginMode:  " release ",
+			wantErr:  true,
+		},
+		{
 			name:  "allows a configured user",
 			users: []string{"octocat"},
 		},
