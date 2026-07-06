@@ -6,6 +6,8 @@ let currentData = null;
 let cmsConfig = null;
 let autoSaveTimer = null;
 let lastSavedPayload = "";
+let lastQueuedPayload = "";
+let saveQueue = Promise.resolve();
 
 export function getCurrentPath() {
     return currentPath;
@@ -28,10 +30,23 @@ export function initAutoSave() {
 
 function triggerAutoSave() {
     if (!currentPath) return;
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    clearAutoSaveTimer();
 
     // Debounce 3 seconds
-    autoSaveTimer = setTimeout(execAutoSave, 3000);
+    autoSaveTimer = setTimeout(() => {
+        autoSaveTimer = null;
+        execAutoSave().catch(() => {
+            // The editor status already reports the failure. Avoid an
+            // unhandled rejection from the timer callback.
+        });
+    }, 3000);
+}
+
+function clearAutoSaveTimer() {
+    if (autoSaveTimer) {
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+    }
 }
 
 function updateSaveStatus(msg, type) {
@@ -52,31 +67,59 @@ function reloadPreviewIfNeeded() {
 }
 
 export async function execAutoSave() {
-    if (!currentPath) return;
+    return queueCurrentSave("Auto Saving...");
+}
+
+async function queueCurrentSave(statusMessage) {
+    if (!currentPath) return false;
 
     const payloadObj = getPayload();
     const payloadStr = JSON.stringify(payloadObj);
 
-    if (payloadStr === lastSavedPayload) {
-        return; // No changes
+    if (payloadStr === lastSavedPayload || payloadStr === lastQueuedPayload) {
+        await saveQueue;
+        return false;
     }
 
-    updateSaveStatus("Auto Saving...", "saving");
+    lastQueuedPayload = payloadStr;
+    const operation = saveQueue.catch(() => {
+        // A newer payload should still be allowed to save after an earlier
+        // request failed.
+    }).then(async () => {
+        updateSaveStatus(statusMessage, "saving");
+        try {
+            await API.saveArticle(payloadObj);
+            lastSavedPayload = payloadStr;
+            console.log("[AutoSave] Saved:", payloadObj.path);
+            updateSaveStatus("Saved", "saved");
+            reloadPreviewIfNeeded();
+            return true;
+        } catch (e) {
+            console.error("[AutoSave] Failed:", e);
+            updateSaveStatus("Save Failed", "error");
+            throw e;
+        } finally {
+            if (lastQueuedPayload === payloadStr) {
+                lastQueuedPayload = "";
+            }
+        }
+    });
 
-    try {
-        await API.saveArticle(payloadObj);
-        lastSavedPayload = payloadStr;
-        console.log("[AutoSave] Saved:", currentPath);
-        updateSaveStatus("Saved", "saved");
-        reloadPreviewIfNeeded();
-    } catch (e) {
-        console.error("[AutoSave] Failed:", e);
-        updateSaveStatus("Save Failed", "error");
-    }
+    saveQueue = operation;
+    return operation;
+}
+
+export async function flushPendingSave() {
+    clearAutoSaveTimer();
+    await queueCurrentSave("Saving before publish...");
+    await saveQueue;
 }
 
 export async function loadFile(path) {
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    clearAutoSaveTimer();
+    await saveQueue.catch(() => {
+        // Loading another file remains possible after a failed save.
+    });
 
     currentPath = path;
     const display = document.getElementById('filename-display');
@@ -90,6 +133,7 @@ export async function loadFile(path) {
         UI.updateEditorContent(data, path, cmsConfig);
 
         lastSavedPayload = JSON.stringify(getPayload());
+        lastQueuedPayload = "";
         UI.setPreviewUrl(path);
 
     } catch (e) {
@@ -114,20 +158,13 @@ function getPayload() {
 export async function saveFile() {
     if (!currentPath) return UI.showToast("No file selected", "warning");
 
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
-
-    updateSaveStatus("Saving...", "saving");
+    clearAutoSaveTimer();
 
     try {
-        const payload = getPayload();
-        await API.saveArticle(payload);
-        lastSavedPayload = JSON.stringify(payload);
-        updateSaveStatus("Saved", "saved");
+        await queueCurrentSave("Saving...");
         UI.showToast("File saved successfully", "success");
-        reloadPreviewIfNeeded();
     } catch (e) {
         UI.showToast("Error saving: " + e.message, "error");
-        updateSaveStatus("Error", "error");
     }
 }
 

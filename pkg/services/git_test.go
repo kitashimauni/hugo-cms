@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"hugo-cms/pkg/config"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -155,4 +156,122 @@ func runGitForTest(t *testing.T, dir string, args ...string) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, output)
 	}
+}
+
+func TestPublishChangesDoesNotPushWhenCommitFails(t *testing.T) {
+	repoPath := setupPublishRepository(t)
+	if err := os.WriteFile(filepath.Join(repoPath, "content", "post.md"), []byte("changed\n"), 0644); err != nil {
+		t.Fatalf("modify content: %v", err)
+	}
+
+	hookPath := filepath.Join(repoPath, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatalf("write pre-commit hook: %v", err)
+	}
+
+	pushCalled := false
+	log, err := publishChanges("token", "content/post.md", func(string, string, ...string) (string, error) {
+		pushCalled = true
+		return "unexpected push", nil
+	})
+	if err == nil {
+		t.Fatal("publishChanges() should return the commit error")
+	}
+	if pushCalled {
+		t.Fatal("publishChanges() pushed after the commit failed")
+	}
+	if !strings.Contains(log, "Commit failed") {
+		t.Fatalf("publishChanges() log = %q, want commit failure", log)
+	}
+}
+
+func TestPublishChangesSkipsPushWhenNothingIsStaged(t *testing.T) {
+	setupPublishRepository(t)
+
+	pushCalled := false
+	log, err := publishChanges("token", "", func(string, string, ...string) (string, error) {
+		pushCalled = true
+		return "unexpected push", nil
+	})
+	if err != nil {
+		t.Fatalf("publishChanges() unexpected error: %v", err)
+	}
+	if pushCalled {
+		t.Fatal("publishChanges() pushed without staged changes")
+	}
+	if !strings.Contains(log, "No changes to publish") {
+		t.Fatalf("publishChanges() log = %q, want no-change result", log)
+	}
+}
+
+func TestPublishChangesCommitsBeforePush(t *testing.T) {
+	repoPath := setupPublishRepository(t)
+	if err := os.WriteFile(filepath.Join(repoPath, "content", "post.md"), []byte("changed\n"), 0644); err != nil {
+		t.Fatalf("modify content: %v", err)
+	}
+
+	pushCalled := false
+	_, err := publishChanges("token", "content/post.md", func(string, string, ...string) (string, error) {
+		pushCalled = true
+		return "pushed", nil
+	})
+	if err != nil {
+		t.Fatalf("publishChanges() unexpected error: %v", err)
+	}
+	if !pushCalled {
+		t.Fatal("publishChanges() did not push after a successful commit")
+	}
+
+	output := runGitOutputForTest(t, repoPath, "show", "HEAD:content/post.md")
+	if string(output) != "changed\n" {
+		t.Fatalf("committed content = %q, want changed content", output)
+	}
+}
+
+func setupPublishRepository(t *testing.T) string {
+	t.Helper()
+	repoPath := t.TempDir()
+	runGitForTest(t, repoPath, "init")
+	if err := os.MkdirAll(filepath.Join(repoPath, "content"), 0755); err != nil {
+		t.Fatalf("create content directory: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoPath, "static"), 0755); err != nil {
+		t.Fatalf("create static directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "content", "post.md"), []byte("initial\n"), 0644); err != nil {
+		t.Fatalf("write initial content: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "static", ".gitkeep"), nil, 0644); err != nil {
+		t.Fatalf("write static placeholder: %v", err)
+	}
+	runGitForTest(t, repoPath, "add", ".")
+	runGitForTest(t, repoPath,
+		"-c", "user.name=Test User",
+		"-c", "user.email=test@example.com",
+		"commit", "-m", "initial",
+	)
+
+	originalRepoPath := config.RepoPath
+	originalGitName := config.GitUserName
+	originalGitEmail := config.GitUserEmail
+	config.RepoPath = repoPath
+	config.GitUserName = "Test User"
+	config.GitUserEmail = "test@example.com"
+	t.Cleanup(func() {
+		config.RepoPath = originalRepoPath
+		config.GitUserName = originalGitName
+		config.GitUserEmail = originalGitEmail
+	})
+	return repoPath
+}
+
+func runGitOutputForTest(t *testing.T, dir string, args ...string) []byte {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v failed: %v", args, err)
+	}
+	return output
 }

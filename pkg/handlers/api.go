@@ -147,6 +147,9 @@ func SaveArticle(c *gin.Context) {
 		return
 	}
 
+	unlock := services.LockRepositoryOperation()
+	defer unlock()
+
 	var finalContent []byte
 	var err error
 
@@ -180,6 +183,9 @@ func CreateArticle(c *gin.Context) {
 		ErrorBadRequest(c, "Invalid JSON")
 		return
 	}
+
+	unlock := services.LockRepositoryOperation()
+	defer unlock()
 
 	// New logic: Collection-based creation
 	if req.Collection != "" {
@@ -375,6 +381,9 @@ func DeleteArticle(c *gin.Context) {
 		return
 	}
 
+	unlock := services.LockRepositoryOperation()
+	defer unlock()
+
 	if err := services.DeleteFile(req.Path); err != nil {
 		ErrorInternal(c, "Delete failed: "+err.Error())
 		return
@@ -408,7 +417,7 @@ func GetSnippets(c *gin.Context) {
 	for _, path := range config.SnippetPaths {
 		// Clean the path
 		path = filepath.Clean(path)
-		
+
 		content, err := os.ReadFile(path)
 		if err != nil {
 			// Skip missing or unreadable files
@@ -454,7 +463,7 @@ func sanitizeJSONC(src string) string {
 	var out []rune
 	var inString bool
 	var escaped bool
-	
+
 	// Convert to runes for iteration
 	runes := []rune(src)
 	length := len(runes)
@@ -503,16 +512,16 @@ func sanitizeJSONC(src string) string {
 
 		out = append(out, c)
 	}
-	
+
 	res := string(out)
-	
+
 	// Remove trailing commas using Regex
 	// We matched comment-stripped text. Now we remove commas before closing braces.
 	// We must avoid matching inside strings.
 	// But we already preserved strings in `out`.
 	// Since we are doing a quick fix and valid JSON rarely has `,\s*}` inside a string,
 	// we will use regex. A robust parser is better but complex.
-	
+
 	// Regex to remove trailing commas: ,(?:\s*)([}\]])
 	re := regexp.MustCompile(`,(\s*[}\]])`)
 	return re.ReplaceAllString(res, "$1")

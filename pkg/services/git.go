@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"log/slog"
@@ -202,6 +203,9 @@ func createAskPassScript() (string, error) {
 }
 
 func SyncRepo(token string) (string, error) {
+	unlock := LockRepositoryOperation()
+	defer unlock()
+
 	log, err := ExecuteGitWithToken(config.RepoPath, token, "pull", config.GitRemote, config.GitBranch)
 	if err == nil {
 		InvalidateCache()
@@ -210,6 +214,14 @@ func SyncRepo(token string) (string, error) {
 }
 
 func PublishChanges(token, path string) (string, error) {
+	unlock := LockRepositoryOperation()
+	defer unlock()
+	return publishChanges(token, path, ExecuteGitWithToken)
+}
+
+type gitPushFunc func(dir, token string, args ...string) (string, error)
+
+func publishChanges(token, path string, push gitPushFunc) (string, error) {
 	// Create context with timeout for local git operations
 	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
 	defer cancel()
@@ -217,16 +229,16 @@ func PublishChanges(token, path string) (string, error) {
 	// Ensure Git Identity
 	// We set this locally for the repo so it doesn't affect global config
 
-	cmdConfigEmail := exec.CommandContext(ctx, "git", "config", "user.email", config.GitUserEmail)
+	cmdConfigEmail := exec.CommandContext(ctx, "git", "config", "--local", "user.email", config.GitUserEmail)
 	cmdConfigEmail.Dir = config.RepoPath
-	if err := cmdConfigEmail.Run(); err != nil {
-		slog.Warn("Failed to set git user.email", "error", err)
+	if output, err := cmdConfigEmail.CombinedOutput(); err != nil {
+		return fmt.Sprintf("Failed to set git user.email: %s", output), err
 	}
 
-	cmdConfigName := exec.CommandContext(ctx, "git", "config", "user.name", config.GitUserName)
+	cmdConfigName := exec.CommandContext(ctx, "git", "config", "--local", "user.name", config.GitUserName)
 	cmdConfigName.Dir = config.RepoPath
-	if err := cmdConfigName.Run(); err != nil {
-		slog.Warn("Failed to set git user.name", "error", err)
+	if output, err := cmdConfigName.CombinedOutput(); err != nil {
+		return fmt.Sprintf("Failed to set git user.name: %s", output), err
 	}
 
 	var filesToAdd []string
@@ -255,23 +267,34 @@ func PublishChanges(token, path string) (string, error) {
 	}
 
 	// Prepare arguments for git add
-	gitAddArgs := append([]string{"add"}, filesToAdd...)
+	gitAddArgs := append([]string{"add", "--"}, filesToAdd...)
 	addCmd := exec.CommandContext(ctx, "git", gitAddArgs...)
 	addCmd.Dir = config.RepoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Sprintf("Git Add Failed: %s\nOutput: %s", err.Error(), string(out)), err
 	}
 
+	stagedDiffCmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet", "--exit-code")
+	stagedDiffCmd.Dir = config.RepoPath
+	if err := stagedDiffCmd.Run(); err == nil {
+		return "--- Git Add ---\n(Success)\n\n--- Git Commit ---\nNo changes to publish", nil
+	} else {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return "Failed to inspect staged changes", err
+		}
+	}
+
 	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", msg)
 	commitCmd.Dir = config.RepoPath
 	commitOut, commitErr := commitCmd.CombinedOutput()
-
-	commitLog := string(commitOut)
 	if commitErr != nil {
-		commitLog = fmt.Sprintf("Commit Warning/Error: %s\nOutput: %s", commitErr.Error(), commitLog)
+		return fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\nCommit failed: %s\nOutput: %s",
+			commitErr.Error(), string(commitOut)), commitErr
 	}
 
-	pushLog, err := ExecuteGitWithToken(config.RepoPath, token, "push", config.GitRemote, config.GitBranch)
+	commitLog := string(commitOut)
+	pushLog, err := push(config.RepoPath, token, "push", config.GitRemote, config.GitBranch)
 
 	// Invalidate cache after successful publish to refresh dirty status
 	if err == nil {

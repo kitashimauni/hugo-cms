@@ -161,6 +161,9 @@ func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 }
 
 func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*MediaFile, error) {
+	unlock := LockRepositoryOperation()
+	defer unlock()
+
 	src, err := header.Open()
 	if err != nil {
 		return nil, err
@@ -286,6 +289,9 @@ func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*Med
 }
 
 func DeleteMediaFile(repoPath string) error {
+	unlock := LockRepositoryOperation()
+	defer unlock()
+
 	if !ValidateMediaRepoPath(repoPath) {
 		return fmt.Errorf("%w: invalid media path", ErrInvalidMedia)
 	}
