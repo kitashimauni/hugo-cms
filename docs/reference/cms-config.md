@@ -60,7 +60,7 @@ collections:
     extension: "md"
     
     # Front Matterのフォーマット
-    format: "yaml-frontmatter"  # yaml-frontmatter, toml-frontmatter, json
+    format: "yaml-frontmatter"  # yaml-frontmatter, toml-frontmatter, json-frontmatter
     
     # コレクション固有のメディアフォルダ
     media_folder: "{{dirname}}/images"

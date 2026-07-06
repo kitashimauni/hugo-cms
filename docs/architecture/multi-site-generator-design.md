@@ -325,11 +325,13 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 
 ## 移行計画
 
-### Phase 1: 現行Hugo処理の抽象化
+### Phase 1: 現行Hugo処理の抽象化（実装済み）
 
 - `GeneratorAdapter`を導入する。
 - 現在のHugo起動・ビルド処理を`HugoAdapter`へ移す。
 - 動作とAPIは変更しない。
+
+`pkg/services/generator.go`に共通インターフェースと互換ラッパーを置き、`pkg/services/hugo_adapter.go`へHugo固有処理を分離した。プレビューのプロセス状態は`ProcessManager`が終了を待ってから更新する。
 
 ### Phase 2: マルチサイト対応
 
