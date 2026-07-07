@@ -65,10 +65,10 @@ func HandlePublish(c *gin.Context) {
 		// e.g. "posts/abc.md" -> "content/posts/abc.md"
 		// We use Join to be OS agnostic, but git expects forward slashes.
 		// git.go's PublishChanges might need to handle ToSlash, but let's do it here.
-		gitPath = filepath.ToSlash(filepath.Join("content", req.Path))
+		gitPath = filepath.ToSlash(filepath.Join(config.ContentDir, req.Path))
 
 		// Verify file exists before passing to git
-		fullPath := services.SafeJoin(config.RepoPath, "content", req.Path)
+		fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, req.Path)
 		if fullPath == "" {
 			ErrorBadRequest(c, "Invalid path")
 			return
@@ -103,7 +103,7 @@ func GetArticle(c *gin.Context) {
 		return
 	}
 
-	fullPath := services.SafeJoin(config.RepoPath, "content", targetPath)
+	fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, targetPath)
 	if fullPath == "" {
 		ErrorBadRequest(c, "Invalid path")
 		return
@@ -141,7 +141,7 @@ func SaveArticle(c *gin.Context) {
 		return
 	}
 
-	fullPath := services.SafeJoin(config.RepoPath, "content", art.Path)
+	fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, art.Path)
 	if fullPath == "" {
 		ErrorBadRequest(c, "Invalid path")
 		return
@@ -265,7 +265,7 @@ func CreateArticle(c *gin.Context) {
 		// `targetCollection.Folder` usually includes `content/`.
 		// Let's deduce the content-relative path.
 
-		contentRelPath, _ := filepath.Rel(filepath.Join(config.RepoPath, "content"), fullPath)
+		contentRelPath, _ := filepath.Rel(filepath.Join(config.RepoPath, config.ContentDir), fullPath)
 		// normalize slashes
 		contentRelPath = filepath.ToSlash(contentRelPath)
 
@@ -306,7 +306,7 @@ func GetDiff(c *gin.Context) {
 		return
 	}
 
-	fullPath := services.SafeJoin(config.RepoPath, "content", art.Path)
+	fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, art.Path)
 	if fullPath == "" {
 		ErrorBadRequest(c, "Invalid path")
 		return
@@ -318,7 +318,7 @@ func GetDiff(c *gin.Context) {
 	}
 
 	// Apply defaults for normalization
-	collectionPath := filepath.Join("content", art.Path)
+	collectionPath := filepath.Join(config.ContentDir, art.Path)
 	collection, _ := services.GetCollectionForPath(collectionPath)
 	currentContent = services.NormalizeContent(currentContent, collection)
 
@@ -361,7 +361,7 @@ func GetDiff(c *gin.Context) {
 	f1.Close()
 	f2.Close()
 
-	relPath := filepath.Join("content", art.Path)
+	relPath := filepath.Join(config.ContentDir, art.Path)
 	diffStr, diffType := services.Diff(f1.Name(), f2.Name(), relPath)
 
 	c.JSON(http.StatusOK, gin.H{"diff": diffStr, "type": diffType})
@@ -402,6 +402,13 @@ func GetConfig(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, cfg)
+}
+
+func ListSites(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"default_site": config.DefaultSiteID,
+		"sites":        config.Sites,
+	})
 }
 
 type SnippetDef struct {

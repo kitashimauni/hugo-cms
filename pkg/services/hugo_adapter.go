@@ -37,6 +37,7 @@ func (adapter *HugoAdapter) StartPreview() error {
 			"-D",
 			"-F",
 		)
+		cmd.Env = generatorProcessEnvironment()
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return &execManagedProcess{cmd: cmd}
@@ -81,12 +82,13 @@ func (*HugoAdapter) Build() (string, error) {
 
 	cmd := exec.CommandContext(ctx, "hugo",
 		"--source", config.RepoPath,
-		"--destination", "public",
+		"--destination", config.PublicDir,
 		"--baseURL", config.GetAppURL()+config.PreviewURL,
 		"--cleanDestinationDir",
 		"-D",
 		"-F",
 	)
+	cmd.Env = generatorProcessEnvironment()
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return string(output), fmt.Errorf("hugo build timed out after 5 minutes")
@@ -100,7 +102,7 @@ func (*HugoAdapter) CreateContent(path string) (string, error) {
 		slog.Info("Hugo new content", "path", path, "duration", time.Since(start))
 	}()
 
-	fullPath := SafeJoin(config.RepoPath, "content", path)
+	fullPath := SafeJoin(config.RepoPath, config.ContentDir, path)
 	if fullPath == "" {
 		return "Invalid path", fmt.Errorf("invalid path: %s", path)
 	}
@@ -111,7 +113,7 @@ func (*HugoAdapter) CreateContent(path string) (string, error) {
 
 	cmsConfig, err := GetCMSConfig()
 	if err == nil {
-		relContentPath := filepath.Join("content", path)
+		relContentPath := filepath.Join(config.ContentDir, path)
 
 		for _, collection := range cmsConfig.Collections {
 			collFolder := filepath.Clean(collection.Folder)
@@ -136,8 +138,9 @@ func (*HugoAdapter) CreateContent(path string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "hugo", "new", "content", path)
+	cmd := exec.CommandContext(ctx, "hugo", "new", filepath.ToSlash(filepath.Join(config.ContentDir, path)))
 	cmd.Dir = config.RepoPath
+	cmd.Env = generatorProcessEnvironment()
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return string(output), fmt.Errorf("hugo new timed out")

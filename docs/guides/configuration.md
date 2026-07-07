@@ -95,6 +95,73 @@ REPO_PATH=./repo
 REPO_PATH=/var/www/my-hugo-site
 ```
 
+#### `SITE_GENERATOR`
+
+対象サイトのジェネレーター。デフォルトは`hugo`です。
+
+```env
+SITE_GENERATOR=hugo
+# または
+SITE_GENERATOR=eleventy
+```
+
+`eleventy`を指定する場合、対象リポジトリには`package.json`とlockファイル
+（`package-lock.json`、`pnpm-lock.yaml`、`yarn.lock`など）が必要です。
+CMSは初期対応として任意のnpm scriptではなく、ローカル依存のEleventyを`npm exec -- eleventy`で実行します。
+
+#### `CONTENT_DIR` / `STATIC_DIR` / `PUBLIC_DIR`
+
+対象リポジトリ内の主要ディレクトリ。Hugoの標準構成では変更不要です。
+
+```env
+CONTENT_DIR=content
+STATIC_DIR=static
+PUBLIC_DIR=public
+```
+
+Eleventyなどで入力・出力ディレクトリが異なる場合は明示します。
+
+```env
+SITE_GENERATOR=eleventy
+CONTENT_DIR=src
+STATIC_DIR=public-assets
+PUBLIC_DIR=_site
+```
+
+#### `SITES_CONFIG_PATH`
+
+複数サイト対応へ向けたSite Registry設定ファイル。未指定の場合は従来通り、環境変数で定義した単一のdefault siteだけを使います。
+
+```env
+SITES_CONFIG_PATH=./sites.yml
+```
+
+設定例:
+
+```yaml
+default_site: techblog
+sites:
+  - id: techblog
+    name: Tech Blog
+    repo_path: D:/sites/techblog
+    generator: hugo
+    content_dir: content
+    static_dir: static
+    public_dir: public
+    hugo_server_port: "1314"
+
+  - id: notes
+    name: Notes
+    repo_path: D:/sites/notes
+    generator: eleventy
+    content_dir: src
+    static_dir: public-assets
+    public_dir: _site
+    hugo_server_port: "1315"
+```
+
+現時点ではdefault siteを既存APIへ適用し、`GET /admin/api/sites`で読み込まれたSite Registryを確認できます。UI上のサイト切替とsiteId付きAPIは次段階で追加します。
+
 ### スニペット設定
 
 #### `SNIPPET_PATHS`

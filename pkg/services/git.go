@@ -248,8 +248,8 @@ func publishChanges(token, path string, push gitPushFunc) (string, error) {
 		// Single file publish
 		msg = fmt.Sprintf("Update %s via HomeCMS", path)
 
-		// Always add static
-		filesToAdd = append(filesToAdd, "static")
+		// Always add static/media changes that may be referenced by the article.
+		filesToAdd = append(filesToAdd, config.StaticDir)
 
 		// Check for Page Bundle
 		if strings.HasSuffix(path, "index.md") || strings.HasSuffix(path, "_index.md") {

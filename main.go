@@ -126,6 +126,7 @@ func SetupRouter() (*gin.Engine, error) {
 				api.POST("/delete", handlers.DeleteArticle)
 				api.POST("/diff", handlers.GetDiff)
 				api.GET("/config", handlers.GetConfig)
+				api.GET("/sites", handlers.ListSites)
 				api.GET("/snippets", handlers.GetSnippets)
 				api.POST("/sync", handlers.HandleSync)
 				api.POST("/publish", handlers.HandlePublish)
@@ -170,6 +171,10 @@ func main() {
 	config.Init()
 	if err := config.ValidateSecurityConfig(); err != nil {
 		slog.Error("Invalid security configuration", "error", err)
+		os.Exit(1)
+	}
+	if err := services.ConfigureGeneratorAdapterFromConfig(); err != nil {
+		slog.Error("Invalid generator configuration", "error", err)
 		os.Exit(1)
 	}
 

@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestValidateSecurityConfig(t *testing.T) {
 	originalUsers := AllowedGitHubUsers
@@ -80,5 +84,91 @@ func TestIsUserAllowed(t *testing.T) {
 	AllowAllGitHubUsers = false
 	if !IsUserAllowed("octocat") {
 		t.Fatal("IsUserAllowed() should compare usernames case-insensitively")
+	}
+}
+
+func TestLoadSiteRegistryAppliesDefaultSite(t *testing.T) {
+	originalSites := Sites
+	originalDefaultSiteID := DefaultSiteID
+	originalRepoPath := RepoPath
+	originalGenerator := SiteGenerator
+	originalContentDir := ContentDir
+	originalStaticDir := StaticDir
+	originalPublicDir := PublicDir
+	originalPreviewURL := PreviewURL
+	originalPort := HugoServerPort
+	originalBind := HugoServerBind
+	originalSitesConfigPath := SitesConfigPath
+	t.Cleanup(func() {
+		Sites = originalSites
+		DefaultSiteID = originalDefaultSiteID
+		RepoPath = originalRepoPath
+		SiteGenerator = originalGenerator
+		ContentDir = originalContentDir
+		StaticDir = originalStaticDir
+		PublicDir = originalPublicDir
+		PreviewURL = originalPreviewURL
+		HugoServerPort = originalPort
+		HugoServerBind = originalBind
+		SitesConfigPath = originalSitesConfigPath
+	})
+
+	configPath := filepath.Join(t.TempDir(), "sites.yml")
+	err := os.WriteFile(configPath, []byte(`
+default_site: notes
+sites:
+  - id: blog
+    repo_path: C:/sites/blog
+    generator: hugo
+  - id: notes
+    repo_path: C:/sites/notes
+    generator: eleventy
+    content_dir: src
+    static_dir: public-assets
+    public_dir: _site
+    preview_url: /preview/
+    hugo_server_port: "1320"
+`), 0644)
+	if err != nil {
+		t.Fatalf("write registry config: %v", err)
+	}
+
+	DefaultSiteID = "default"
+	SitesConfigPath = configPath
+	loadSiteRegistry()
+
+	if DefaultSiteID != "notes" {
+		t.Fatalf("DefaultSiteID = %q, want notes", DefaultSiteID)
+	}
+	if RepoPath != "C:/sites/notes" {
+		t.Fatalf("RepoPath = %q, want notes path", RepoPath)
+	}
+	if SiteGenerator != "eleventy" {
+		t.Fatalf("SiteGenerator = %q, want eleventy", SiteGenerator)
+	}
+	if ContentDir != "src" || StaticDir != "public-assets" || PublicDir != "_site" {
+		t.Fatalf("content/static/public dirs = %q/%q/%q, want src/public-assets/_site", ContentDir, StaticDir, PublicDir)
+	}
+	if HugoServerPort != "1320" {
+		t.Fatalf("HugoServerPort = %q, want 1320", HugoServerPort)
+	}
+}
+
+func TestNormalizeSiteConfigRejectsUnsafeDirs(t *testing.T) {
+	site := normalizeSiteConfig(SiteConfig{
+		ID:         "unsafe",
+		ContentDir: "../content",
+		StaticDir:  "/tmp/static",
+		PublicDir:  ".",
+	})
+
+	if site.ContentDir != "content" {
+		t.Fatalf("ContentDir = %q, want fallback content", site.ContentDir)
+	}
+	if site.StaticDir != "static" {
+		t.Fatalf("StaticDir = %q, want fallback static", site.StaticDir)
+	}
+	if site.PublicDir != "public" {
+		t.Fatalf("PublicDir = %q, want fallback public", site.PublicDir)
 	}
 }

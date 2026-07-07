@@ -53,8 +53,10 @@ func ValidateMediaRepoPath(repoPath string) bool {
 		return false
 	}
 	normalized := filepath.ToSlash(filepath.Clean(repoPath))
+	staticPrefix := filepath.ToSlash(filepath.Clean(config.StaticDir)) + "/"
+	contentPrefix := filepath.ToSlash(filepath.Clean(config.ContentDir)) + "/"
 	if normalized == "." ||
-		(!strings.HasPrefix(normalized, "static/") && !strings.HasPrefix(normalized, "content/")) {
+		(!strings.HasPrefix(normalized, staticPrefix) && !strings.HasPrefix(normalized, contentPrefix)) {
 		return false
 	}
 	return SafeJoin(config.RepoPath, "", normalized) != ""
@@ -69,7 +71,7 @@ func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 	// Determine search roots based on mode
 	if mode == "static" {
 		// List all files in repo/static/{StaticMediaDir}
-		staticDir := SafeJoin(config.RepoPath, "static", config.StaticMediaDir)
+		staticDir := SafeJoin(config.RepoPath, config.StaticDir, config.StaticMediaDir)
 		if staticDir == "" {
 			return nil, fmt.Errorf("%w: invalid static media directory", ErrInvalidMedia)
 		}
@@ -80,7 +82,7 @@ func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 		if articlePath == "" {
 			return nil, nil // No article context, return empty
 		}
-		fullArticlePath := SafeJoin(config.RepoPath, "content", articlePath)
+		fullArticlePath := SafeJoin(config.RepoPath, config.ContentDir, articlePath)
 		if fullArticlePath == "" || strings.ToLower(filepath.Ext(fullArticlePath)) != ".md" {
 			return nil, fmt.Errorf("%w: invalid article path", ErrInvalidMedia)
 		}
@@ -124,7 +126,7 @@ func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
 					// BUT usually Hugo static files are served at root.
 					// So if StaticMediaDir is "uploads", path is repo/static/uploads/img.png
 					// Usage path: /uploads/img.png
-					staticRel, relErr := filepath.Rel(filepath.Join(config.RepoPath, "static"), path)
+					staticRel, relErr := filepath.Rel(filepath.Join(config.RepoPath, config.StaticDir), path)
 					if relErr != nil {
 						return relErr
 					}
@@ -189,13 +191,13 @@ func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*Med
 	var targetDir string
 
 	if mode == "static" {
-		targetDir = SafeJoin(config.RepoPath, "static", config.StaticMediaDir)
+		targetDir = SafeJoin(config.RepoPath, config.StaticDir, config.StaticMediaDir)
 	} else if mode == "content" {
 		// Content mode
 		if articlePath == "" {
 			return nil, fmt.Errorf("%w: article path required for content upload", ErrInvalidMedia)
 		}
-		fullArticlePath := SafeJoin(config.RepoPath, "content", articlePath)
+		fullArticlePath := SafeJoin(config.RepoPath, config.ContentDir, articlePath)
 		if fullArticlePath == "" || strings.ToLower(filepath.Ext(fullArticlePath)) != ".md" {
 			return nil, fmt.Errorf("%w: invalid article path", ErrInvalidMedia)
 		}
@@ -260,7 +262,7 @@ func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*Med
 
 	usagePath := ""
 	if mode == "static" {
-		staticRel, relErr := filepath.Rel(filepath.Join(config.RepoPath, "static"), fullMediaPath)
+		staticRel, relErr := filepath.Rel(filepath.Join(config.RepoPath, config.StaticDir), fullMediaPath)
 		if relErr != nil {
 			return nil, relErr
 		}
@@ -271,7 +273,7 @@ func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*Med
 		// We need path relative to bundle root.
 		// Bundle root is targetDir without subDir (if subDir is relative)
 		// Actually simpler:
-		bundleRoot := filepath.Dir(SafeJoin(config.RepoPath, "content", articlePath))
+		bundleRoot := filepath.Dir(SafeJoin(config.RepoPath, config.ContentDir, articlePath))
 		bundleRel, relErr := filepath.Rel(bundleRoot, fullMediaPath)
 		if relErr != nil {
 			return nil, relErr

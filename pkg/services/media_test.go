@@ -38,17 +38,23 @@ func withMediaConfig(t *testing.T, repoPath string) {
 	t.Helper()
 
 	originalRepoPath := config.RepoPath
+	originalContentDir := config.ContentDir
+	originalStaticRoot := config.StaticDir
 	originalStaticDir := config.StaticMediaDir
 	originalArticleDir := config.ArticleMediaDir
 	originalMaxSize := config.MaxUploadSize
 	t.Cleanup(func() {
 		config.RepoPath = originalRepoPath
+		config.ContentDir = originalContentDir
+		config.StaticDir = originalStaticRoot
 		config.StaticMediaDir = originalStaticDir
 		config.ArticleMediaDir = originalArticleDir
 		config.MaxUploadSize = originalMaxSize
 	})
 
 	config.RepoPath = repoPath
+	config.ContentDir = "content"
+	config.StaticDir = "static"
 	config.StaticMediaDir = "images"
 	config.ArticleMediaDir = "images"
 	config.MaxUploadSize = 1024 * 1024

@@ -102,6 +102,11 @@ mise run dev
 | `PORT` | サーバーポート | `8080` |
 | `APP_URL` | アプリケーションURL | `http://localhost:8080` |
 | `REPO_PATH` | Hugoリポジトリのパス | `./repo` |
+| `SITE_GENERATOR` | サイトジェネレーター (`hugo` / `eleventy`) | `hugo` |
+| `CONTENT_DIR` | リポジトリ内の記事ディレクトリ | `content` |
+| `STATIC_DIR` | リポジトリ内の静的ファイルディレクトリ | `static` |
+| `PUBLIC_DIR` | リポジトリ内のビルド出力ディレクトリ | `public` |
+| `SITES_CONFIG_PATH` | 複数サイト設定ファイルのパス | (空) |
 | `SNIPPET_PATHS` | スニペットファイルのパス(カンマ区切り) | `repo/.vscode/md.code-snippets` |
 | `MAX_UPLOAD_SIZE_MB` | 最大アップロードサイズ(MB) | `10` |
 | `ARTICLE_MEDIA_DIR` | 記事バンドル内の画像ディレクトリ | (空) |
