@@ -44,3 +44,43 @@ func TestHugoAdapterCreateContentReturnsMatchedCollectionFormatError(t *testing.
 		t.Fatalf("CreateContent() unexpectedly created the file: %v", statErr)
 	}
 }
+
+func TestHugoArgsIncludeConfiguredContentDir(t *testing.T) {
+	originalRepoPath := config.RepoPath
+	originalContentDir := config.ContentDir
+	originalPublicDir := config.PublicDir
+	originalPort := config.HugoServerPort
+	originalBind := config.HugoServerBind
+	t.Cleanup(func() {
+		config.RepoPath = originalRepoPath
+		config.ContentDir = originalContentDir
+		config.PublicDir = originalPublicDir
+		config.HugoServerPort = originalPort
+		config.HugoServerBind = originalBind
+	})
+
+	config.RepoPath = "repo"
+	config.ContentDir = "src"
+	config.PublicDir = "_site"
+	config.HugoServerPort = "1320"
+	config.HugoServerBind = "127.0.0.1"
+
+	if got := argValue(hugoServerArgs(), "--contentDir"); got != "src" {
+		t.Fatalf("hugoServerArgs contentDir = %q, want src", got)
+	}
+	if got := argValue(hugoBuildArgs(), "--contentDir"); got != "src" {
+		t.Fatalf("hugoBuildArgs contentDir = %q, want src", got)
+	}
+	if got := argValue(hugoBuildArgs(), "--destination"); got != "_site" {
+		t.Fatalf("hugoBuildArgs destination = %q, want _site", got)
+	}
+}
+
+func argValue(args []string, flag string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
+}

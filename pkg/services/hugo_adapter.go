@@ -27,16 +27,7 @@ func (adapter *HugoAdapter) StartPreview() error {
 	slog.Info("Starting Hugo server", "port", config.HugoServerPort)
 
 	err := adapter.preview.Start(func() managedProcess {
-		cmd := exec.Command("hugo", "server",
-			"--source", config.RepoPath,
-			"--bind", config.HugoServerBind,
-			"--port", config.HugoServerPort,
-			"--baseURL", config.GetAppURL()+config.PreviewURL,
-			"--appendPort=false",
-			"--disableLiveReload",
-			"-D",
-			"-F",
-		)
+		cmd := exec.Command("hugo", hugoServerArgs()...)
 		cmd.Env = generatorProcessEnvironment()
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -80,20 +71,40 @@ func (*HugoAdapter) Build() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "hugo",
-		"--source", config.RepoPath,
-		"--destination", config.PublicDir,
-		"--baseURL", config.GetAppURL()+config.PreviewURL,
-		"--cleanDestinationDir",
-		"-D",
-		"-F",
-	)
+	cmd := exec.CommandContext(ctx, "hugo", hugoBuildArgs()...)
 	cmd.Env = generatorProcessEnvironment()
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return string(output), fmt.Errorf("hugo build timed out after 5 minutes")
 	}
 	return string(output), err
+}
+
+func hugoServerArgs() []string {
+	return []string{
+		"server",
+		"--source", config.RepoPath,
+		"--contentDir", config.ContentDir,
+		"--bind", config.HugoServerBind,
+		"--port", config.HugoServerPort,
+		"--baseURL", config.GetAppURL() + config.PreviewURL,
+		"--appendPort=false",
+		"--disableLiveReload",
+		"-D",
+		"-F",
+	}
+}
+
+func hugoBuildArgs() []string {
+	return []string{
+		"--source", config.RepoPath,
+		"--contentDir", config.ContentDir,
+		"--destination", config.PublicDir,
+		"--baseURL", config.GetAppURL() + config.PreviewURL,
+		"--cleanDestinationDir",
+		"-D",
+		"-F",
+	}
 }
 
 func (*HugoAdapter) CreateContent(path string) (string, error) {

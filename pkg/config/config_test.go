@@ -172,3 +172,59 @@ func TestNormalizeSiteConfigRejectsUnsafeDirs(t *testing.T) {
 		t.Fatalf("PublicDir = %q, want fallback public", site.PublicDir)
 	}
 }
+
+func TestInitSanitizesSingleSiteDirectoryOverrides(t *testing.T) {
+	originalSites := Sites
+	originalDefaultSiteID := DefaultSiteID
+	originalRepoPath := RepoPath
+	originalPublicPath := PublicPath
+	originalContentDir := ContentDir
+	originalStaticDir := StaticDir
+	originalPublicDir := PublicDir
+	originalArticleMediaDir := ArticleMediaDir
+	originalStaticMediaDir := StaticMediaDir
+	originalSitesConfigPath := SitesConfigPath
+	t.Cleanup(func() {
+		Sites = originalSites
+		DefaultSiteID = originalDefaultSiteID
+		RepoPath = originalRepoPath
+		PublicPath = originalPublicPath
+		ContentDir = originalContentDir
+		StaticDir = originalStaticDir
+		PublicDir = originalPublicDir
+		ArticleMediaDir = originalArticleMediaDir
+		StaticMediaDir = originalStaticMediaDir
+		SitesConfigPath = originalSitesConfigPath
+	})
+
+	t.Setenv("REPO_PATH", "./repo")
+	t.Setenv("PUBLIC_PATH", "")
+	t.Setenv("CONTENT_DIR", "../content")
+	t.Setenv("STATIC_DIR", "/tmp/static")
+	t.Setenv("PUBLIC_DIR", ".")
+	t.Setenv("ARTICLE_MEDIA_DIR", "../images")
+	t.Setenv("STATIC_MEDIA_DIR", "\\uploads")
+	t.Setenv("SITES_CONFIG_PATH", "")
+	t.Setenv("DEFAULT_SITE_ID", "default")
+
+	Init()
+
+	if ContentDir != "content" {
+		t.Fatalf("ContentDir = %q, want fallback content", ContentDir)
+	}
+	if StaticDir != "static" {
+		t.Fatalf("StaticDir = %q, want fallback static", StaticDir)
+	}
+	if PublicDir != "public" {
+		t.Fatalf("PublicDir = %q, want fallback public", PublicDir)
+	}
+	if ArticleMediaDir != "" {
+		t.Fatalf("ArticleMediaDir = %q, want empty fallback", ArticleMediaDir)
+	}
+	if StaticMediaDir != "" {
+		t.Fatalf("StaticMediaDir = %q, want empty fallback", StaticMediaDir)
+	}
+	if len(Sites) != 1 || Sites[0].ContentDir != "content" || Sites[0].StaticDir != "static" || Sites[0].PublicDir != "public" {
+		t.Fatalf("Sites = %#v, want sanitized default site", Sites)
+	}
+}

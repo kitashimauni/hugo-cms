@@ -101,9 +101,9 @@ func Init() {
 
 	// Load Configs
 	RepoPath = getEnv("REPO_PATH", "./repo")
-	ContentDir = getEnv("CONTENT_DIR", "content")
-	StaticDir = getEnv("STATIC_DIR", "static")
-	PublicDir = getEnv("PUBLIC_DIR", "public")
+	ContentDir = cleanRelativeDir(getEnv("CONTENT_DIR", "content"), "content")
+	StaticDir = cleanRelativeDir(getEnv("STATIC_DIR", "static"), "static")
+	PublicDir = cleanRelativeDir(getEnv("PUBLIC_DIR", "public"), "public")
 	PublicPath = getEnv("PUBLIC_PATH", filepath.Join(RepoPath, PublicDir))
 	PreviewURL = getEnv("PREVIEW_URL", "/")
 	SiteGenerator = strings.ToLower(getEnv("SITE_GENERATOR", "hugo"))
@@ -115,8 +115,8 @@ func Init() {
 
 	ServerPort = getEnv("PORT", "8080")
 
-	ArticleMediaDir = getEnv("ARTICLE_MEDIA_DIR", "")
-	StaticMediaDir = getEnv("STATIC_MEDIA_DIR", "")
+	ArticleMediaDir = cleanOptionalRelativeDir(getEnv("ARTICLE_MEDIA_DIR", ""))
+	StaticMediaDir = cleanOptionalRelativeDir(getEnv("STATIC_MEDIA_DIR", ""))
 
 	// Max upload size (default 10MB)
 	if maxSize := os.Getenv("MAX_UPLOAD_SIZE_MB"); maxSize != "" {
