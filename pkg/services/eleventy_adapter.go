@@ -50,7 +50,7 @@ func (adapter *EleventyAdapter) StartPreview() error {
 		cmd.Env = generatorProcessEnvironment("NODE_ENV=development")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		return &execManagedProcess{cmd: cmd}
+		return newExecManagedProcess(cmd)
 	}, func(err error) {
 		slog.Info("Eleventy server stopped", "error", err)
 	})

@@ -31,7 +31,7 @@ func (adapter *HugoAdapter) StartPreview() error {
 		cmd.Env = generatorProcessEnvironment()
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		return &execManagedProcess{cmd: cmd}
+		return newExecManagedProcess(cmd)
 	}, func(err error) {
 		slog.Info("Hugo server stopped", "error", err)
 	})
@@ -149,7 +149,7 @@ func (*HugoAdapter) CreateContent(path string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "hugo", "new", filepath.ToSlash(filepath.Join(config.ContentDir, path)))
+	cmd := exec.CommandContext(ctx, "hugo", hugoNewContentArgs(path)...)
 	cmd.Dir = config.RepoPath
 	cmd.Env = generatorProcessEnvironment()
 	output, err := cmd.CombinedOutput()
@@ -157,6 +157,15 @@ func (*HugoAdapter) CreateContent(path string) (string, error) {
 		return string(output), fmt.Errorf("hugo new timed out")
 	}
 	return string(output), err
+}
+
+func hugoNewContentArgs(path string) []string {
+	return []string{
+		"new",
+		"content",
+		"--contentDir", config.ContentDir,
+		filepath.ToSlash(path),
+	}
 }
 
 var _ GeneratorAdapter = (*HugoAdapter)(nil)

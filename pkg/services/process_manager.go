@@ -19,6 +19,11 @@ type execManagedProcess struct {
 	cmd *exec.Cmd
 }
 
+func newExecManagedProcess(cmd *exec.Cmd) *execManagedProcess {
+	configureManagedCommand(cmd)
+	return &execManagedProcess{cmd: cmd}
+}
+
 func (process *execManagedProcess) Start() error {
 	return process.cmd.Start()
 }
@@ -31,7 +36,7 @@ func (process *execManagedProcess) Kill() error {
 	if process.cmd.Process == nil {
 		return os.ErrProcessDone
 	}
-	return process.cmd.Process.Kill()
+	return killManagedProcessTree(process.cmd)
 }
 
 type ProcessManager struct {
