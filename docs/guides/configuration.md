@@ -107,7 +107,7 @@ SITE_GENERATOR=eleventy
 
 `eleventy`を指定する場合、対象リポジトリには`package.json`とlockファイル
 （`package-lock.json`、`pnpm-lock.yaml`、`yarn.lock`など）が必要です。
-CMSは初期対応として任意のnpm scriptではなく、ローカル依存のEleventyを`npm exec -- eleventy`で実行します。
+CMSは初期対応として任意のnpm scriptではなく、lockfileに対応するpackage managerでローカル依存のEleventyを実行します。
 
 #### `CONTENT_DIR` / `STATIC_DIR` / `PUBLIC_DIR`
 

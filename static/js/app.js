@@ -48,14 +48,9 @@ async function init() {
     window.insertImage = () => {
         const currentPath = Editor.getCurrentPath();
         let collectionName = null;
-        if (currentPath && cmsConfig && cmsConfig.collections) {
-            for (const col of cmsConfig.collections) {
-                const colFolder = col.folder.replace(/^content\//, '');
-                if (currentPath.startsWith(colFolder + "/") || currentPath === colFolder) {
-                    collectionName = col.name;
-                    break;
-                }
-            }
+        const collection = UI.getCollectionForPath(currentPath, cmsConfig);
+        if (collection) {
+            collectionName = collection.name;
         }
 
         UI.showMediaLibrary((file) => {

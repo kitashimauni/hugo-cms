@@ -401,6 +401,16 @@ func GetConfig(c *gin.Context) {
 		ErrorInternal(c, "Failed to parse config")
 		return
 	}
+	if cfg == nil {
+		cfg = map[string]interface{}{}
+	}
+	cfg["_cms"] = gin.H{
+		"content_dir":    config.ContentDir,
+		"static_dir":     config.StaticDir,
+		"public_dir":     config.PublicDir,
+		"site_generator": config.SiteGenerator,
+		"default_site":   config.DefaultSiteID,
+	}
 	c.JSON(http.StatusOK, cfg)
 }
 

@@ -108,8 +108,7 @@ export function renderFileList(files, config) {
         let matched = false;
         if (config && config.collections) {
             for (const col of config.collections) {
-                const colFolder = col.folder.replace(/^content\//, '');
-                if (f.path.startsWith(colFolder + "/") || f.path === colFolder) {
+                if (pathMatchesCollection(f.path, col, config)) {
                     grouped[col.name].files.push(f);
                     matched = true;
                     break;
@@ -182,11 +181,37 @@ function renderCollectionGroup(container, label, files) {
     container.appendChild(details);
 }
 
-function getCollectionForPath(path, config) {
+function normalizePath(path) {
+    return (path || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+}
+
+function getConfiguredContentDir(config) {
+    return normalizePath(config?._cms?.content_dir || config?.content_dir || 'content');
+}
+
+function collectionFolderForArticlePaths(collection, config) {
+    const folder = normalizePath(collection.folder);
+    const contentDir = getConfiguredContentDir(config);
+    if (contentDir && folder === contentDir) return '';
+    if (contentDir && folder.startsWith(contentDir + '/')) {
+        return folder.slice(contentDir.length + 1);
+    }
+    // Backward compatibility for configs loaded before server-side metadata
+    // existed, and for the default Hugo content directory.
+    return folder.replace(/^content\//, '');
+}
+
+function pathMatchesCollection(path, collection, config) {
+    const normalizedPath = normalizePath(path);
+    const colFolder = collectionFolderForArticlePaths(collection, config);
+    if (colFolder === '') return normalizedPath !== '';
+    return normalizedPath.startsWith(colFolder + "/") || normalizedPath === colFolder;
+}
+
+export function getCollectionForPath(path, config) {
     if (!config || !config.collections) return null;
     for (const col of config.collections) {
-        const colFolder = col.folder.replace(/^content\//, '');
-        if (path.startsWith(colFolder + "/")) {
+        if (pathMatchesCollection(path, col, config)) {
             return col;
         }
     }
@@ -1004,16 +1029,8 @@ function renderMediaGrid(container, files, mode, currentPath, onSelect) {
 
         body.appendChild(form);
 
-    
-
         // Focus first input
-
         if (variables.length > 0) {
-
             inputs[variables[0].id].el.focus();
-
         }
-
     }
-
-    

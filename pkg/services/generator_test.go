@@ -60,6 +60,94 @@ func TestValidateEleventyProjectRequiresPackageAndLock(t *testing.T) {
 	}
 }
 
+func TestValidateEleventyProjectRequiresDeclaredDependency(t *testing.T) {
+	repoPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoPath, "package.json"), []byte(`{"devDependencies":{}}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0644); err != nil {
+		t.Fatalf("write lock file: %v", err)
+	}
+
+	if err := validateEleventyProject(repoPath); err == nil {
+		t.Fatal("validateEleventyProject() should require @11ty/eleventy dependency")
+	}
+}
+
+func TestDetectEleventyPackageManagerMatchesLockfile(t *testing.T) {
+	tests := []struct {
+		name     string
+		lockfile string
+		wantName string
+		wantBin  string
+		wantArgs []string
+	}{
+		{
+			name:     "npm package lock",
+			lockfile: "package-lock.json",
+			wantName: "npm",
+			wantBin:  "npm",
+			wantArgs: []string{"exec", "--", "eleventy"},
+		},
+		{
+			name:     "pnpm lock",
+			lockfile: "pnpm-lock.yaml",
+			wantName: "pnpm",
+			wantBin:  "pnpm",
+			wantArgs: []string{"exec", "eleventy"},
+		},
+		{
+			name:     "yarn lock",
+			lockfile: "yarn.lock",
+			wantName: "yarn",
+			wantBin:  "yarn",
+			wantArgs: []string{"exec", "eleventy"},
+		},
+		{
+			name:     "bun text lock",
+			lockfile: "bun.lock",
+			wantName: "bun",
+			wantBin:  "bunx",
+			wantArgs: []string{"eleventy"},
+		},
+		{
+			name:     "bun binary lock",
+			lockfile: "bun.lockb",
+			wantName: "bun",
+			wantBin:  "bunx",
+			wantArgs: []string{"eleventy"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath := t.TempDir()
+			if err := os.WriteFile(filepath.Join(repoPath, "package.json"), []byte(`{"devDependencies":{"@11ty/eleventy":"^3.0.0"}}`), 0644); err != nil {
+				t.Fatalf("write package.json: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(repoPath, tt.lockfile), []byte(`lock`), 0644); err != nil {
+				t.Fatalf("write lock file: %v", err)
+			}
+
+			pm, err := detectEleventyPackageManager(repoPath)
+			if err != nil {
+				t.Fatalf("detectEleventyPackageManager() error = %v", err)
+			}
+			if pm.Name != tt.wantName || pm.Bin != tt.wantBin {
+				t.Fatalf("package manager = %#v, want name %q bin %q", pm, tt.wantName, tt.wantBin)
+			}
+			if len(pm.Args) != len(tt.wantArgs) {
+				t.Fatalf("args = %#v, want %#v", pm.Args, tt.wantArgs)
+			}
+			for i := range pm.Args {
+				if pm.Args[i] != tt.wantArgs[i] {
+					t.Fatalf("args = %#v, want %#v", pm.Args, tt.wantArgs)
+				}
+			}
+		})
+	}
+}
+
 func TestGeneratorProcessEnvironmentDropsSecrets(t *testing.T) {
 	t.Setenv("SESSION_SECRET", "super-secret")
 	t.Setenv("GITHUB_CLIENT_SECRET", "oauth-secret")

@@ -374,7 +374,7 @@ Hugo/Eleventyの子プロセスへ渡す環境変数をallowlist方式にし、`
 - YAML/JSON Front MatterとMarkdown本文を対応する。
 - JavaScript Front Matterはraw編集に限定する。
 
-初期版の`EleventyAdapter`を追加した。`package.json`とlockファイルを必須とし、ローカル依存のEleventyを`npm exec -- eleventy`で起動・ビルドする。新規記事はCMS configのcollectionに一致する場合だけFront Matter codec経由で生成する。
+初期版の`EleventyAdapter`を追加した。`package.json`とlockファイルを必須とし、lockfileに対応するpackage managerでローカル依存のEleventyを起動・ビルドする。新規記事はCMS configのcollectionに一致する場合だけFront Matter codec経由で生成する。
 
 未実装:
 

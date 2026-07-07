@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"log/slog"
@@ -15,6 +16,12 @@ type EleventyAdapter struct {
 	preview *ProcessManager
 }
 
+type eleventyPackageManager struct {
+	Name string
+	Bin  string
+	Args []string
+}
+
 func NewEleventyAdapter() *EleventyAdapter {
 	return &EleventyAdapter{preview: &ProcessManager{}}
 }
@@ -24,18 +31,21 @@ func (*EleventyAdapter) Name() string {
 }
 
 func (adapter *EleventyAdapter) StartPreview() error {
-	if err := validateEleventyProject(config.RepoPath); err != nil {
+	pm, err := detectEleventyPackageManager(config.RepoPath)
+	if err != nil {
 		return err
 	}
-	slog.Info("Starting Eleventy server", "port", config.HugoServerPort)
+	slog.Info("Starting Eleventy server", "port", config.HugoServerPort, "package_manager", pm.Name)
 
-	err := adapter.preview.Start(func() managedProcess {
-		cmd := exec.Command("npm", "exec", "--", "eleventy",
+	err = adapter.preview.Start(func() managedProcess {
+		args := append([]string{}, pm.Args...)
+		args = append(args,
 			"--serve",
 			"--port", config.HugoServerPort,
 			"--input", config.ContentDir,
 			"--output", config.PublicDir,
 		)
+		cmd := exec.Command(pm.Bin, args...)
 		cmd.Dir = config.RepoPath
 		cmd.Env = generatorProcessEnvironment("NODE_ENV=development")
 		cmd.Stdout = os.Stdout
@@ -72,22 +82,25 @@ func (adapter *EleventyAdapter) IsPreviewRunning() bool {
 }
 
 func (*EleventyAdapter) Build() (string, error) {
-	if err := validateEleventyProject(config.RepoPath); err != nil {
+	pm, err := detectEleventyPackageManager(config.RepoPath)
+	if err != nil {
 		return "", err
 	}
 
 	start := time.Now()
 	defer func() {
-		slog.Info("Eleventy build completed", "duration", time.Since(start))
+		slog.Info("Eleventy build completed", "duration", time.Since(start), "package_manager", pm.Name)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "npm", "exec", "--", "eleventy",
+	args := append([]string{}, pm.Args...)
+	args = append(args,
 		"--input", config.ContentDir,
 		"--output", config.PublicDir,
 	)
+	cmd := exec.CommandContext(ctx, pm.Bin, args...)
 	cmd.Dir = config.RepoPath
 	cmd.Env = generatorProcessEnvironment("NODE_ENV=production")
 	output, err := cmd.CombinedOutput()
@@ -141,15 +154,54 @@ func (*EleventyAdapter) CreateContent(path string) (string, error) {
 }
 
 func validateEleventyProject(repoPath string) error {
-	if _, err := os.Stat(filepath.Join(repoPath, "package.json")); err != nil {
-		return fmt.Errorf("eleventy project requires package.json: %w", err)
+	_, err := detectEleventyPackageManager(repoPath)
+	return err
+}
+
+func detectEleventyPackageManager(repoPath string) (eleventyPackageManager, error) {
+	packageJSONPath := filepath.Join(repoPath, "package.json")
+	content, err := os.ReadFile(packageJSONPath)
+	if err != nil {
+		return eleventyPackageManager{}, fmt.Errorf("eleventy project requires package.json: %w", err)
 	}
-	for _, name := range []string{"package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb"} {
-		if _, err := os.Stat(filepath.Join(repoPath, name)); err == nil {
-			return nil
+	if !packageJSONDeclaresEleventy(content) {
+		return eleventyPackageManager{}, fmt.Errorf("eleventy project must declare @11ty/eleventy in package.json dependencies")
+	}
+
+	lockFiles := []struct {
+		File string
+		PM   eleventyPackageManager
+	}{
+		{File: "package-lock.json", PM: eleventyPackageManager{Name: "npm", Bin: "npm", Args: []string{"exec", "--", "eleventy"}}},
+		{File: "npm-shrinkwrap.json", PM: eleventyPackageManager{Name: "npm", Bin: "npm", Args: []string{"exec", "--", "eleventy"}}},
+		{File: "pnpm-lock.yaml", PM: eleventyPackageManager{Name: "pnpm", Bin: "pnpm", Args: []string{"exec", "eleventy"}}},
+		{File: "yarn.lock", PM: eleventyPackageManager{Name: "yarn", Bin: "yarn", Args: []string{"exec", "eleventy"}}},
+		{File: "bun.lock", PM: eleventyPackageManager{Name: "bun", Bin: "bunx", Args: []string{"eleventy"}}},
+		{File: "bun.lockb", PM: eleventyPackageManager{Name: "bun", Bin: "bunx", Args: []string{"eleventy"}}},
+	}
+	for _, lock := range lockFiles {
+		if _, err := os.Stat(filepath.Join(repoPath, lock.File)); err == nil {
+			return lock.PM, nil
 		}
 	}
-	return fmt.Errorf("eleventy project requires a committed lock file")
+	return eleventyPackageManager{}, fmt.Errorf("eleventy project requires a committed lock file")
+}
+
+func packageJSONDeclaresEleventy(content []byte) bool {
+	var pkg struct {
+		Dependencies         map[string]interface{} `json:"dependencies"`
+		DevDependencies      map[string]interface{} `json:"devDependencies"`
+		OptionalDependencies map[string]interface{} `json:"optionalDependencies"`
+	}
+	if err := json.Unmarshal(content, &pkg); err != nil {
+		return false
+	}
+	for _, deps := range []map[string]interface{}{pkg.Dependencies, pkg.DevDependencies, pkg.OptionalDependencies} {
+		if _, ok := deps["@11ty/eleventy"]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 var _ GeneratorAdapter = (*EleventyAdapter)(nil)
