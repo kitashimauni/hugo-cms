@@ -307,6 +307,27 @@ func GetSite(id string) (SiteConfig, bool) {
 }
 
 func applyDefaultSite(site SiteConfig) {
+	ApplySiteRuntime(site)
+}
+
+func RuntimeSiteConfig() SiteConfig {
+	return SiteConfig{
+		ID:              DefaultSiteID,
+		Name:            "Current",
+		RepoPath:        RepoPath,
+		Generator:       SiteGenerator,
+		ContentDir:      ContentDir,
+		StaticDir:       StaticDir,
+		PublicDir:       PublicDir,
+		PreviewURL:      PreviewURL,
+		HugoServerPort:  HugoServerPort,
+		HugoServerBind:  HugoServerBind,
+		ArticleMediaDir: ArticleMediaDir,
+		StaticMediaDir:  StaticMediaDir,
+	}
+}
+
+func ApplySiteRuntime(site SiteConfig) {
 	RepoPath = site.RepoPath
 	SiteGenerator = site.Generator
 	ContentDir = site.ContentDir

@@ -79,9 +79,17 @@ func IsHugoServerRunning() bool {
 }
 
 func BuildSite() (string, error) {
-	return CurrentGeneratorAdapter().Build()
+	adapter, err := NewGeneratorAdapter(config.SiteGenerator)
+	if err != nil {
+		return "", err
+	}
+	return adapter.Build()
 }
 
 func CreateContent(path string) (string, error) {
-	return CurrentGeneratorAdapter().CreateContent(path)
+	adapter, err := NewGeneratorAdapter(config.SiteGenerator)
+	if err != nil {
+		return "", err
+	}
+	return adapter.CreateContent(path)
 }

@@ -18,6 +18,34 @@ export function setConfig(cfg) {
     cmsConfig = cfg;
 }
 
+export function clearEditor() {
+    clearAutoSaveTimer();
+    currentPath = "";
+    currentData = null;
+    lastSavedPayload = "";
+    lastQueuedPayload = "";
+    deletingPath = "";
+
+    const display = document.getElementById('filename-display');
+    if (display) display.textContent = "Select a file...";
+
+    const editor = document.getElementById('editor');
+    if (editor) {
+        editor.value = "";
+        editor.placeholder = "Select a file to edit...";
+        editor.disabled = false;
+    }
+
+    const fmContainer = document.getElementById('fm-container');
+    if (fmContainer) {
+        fmContainer.innerHTML = "";
+        fmContainer.style.display = 'none';
+    }
+
+    const frame = document.getElementById('preview-frame');
+    if (frame) frame.src = "";
+}
+
 export function initAutoSave() {
     const editor = document.getElementById('editor');
     const fmContainer = document.getElementById('fm-container');

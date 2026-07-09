@@ -1,5 +1,38 @@
 // CSRF Token Management
 let csrfToken = null;
+let currentSite = window.localStorage.getItem('hugo-cms:site') || "";
+
+export function getCurrentSite() {
+    return currentSite;
+}
+
+export function setCurrentSite(siteID) {
+    currentSite = siteID || "";
+    if (currentSite) {
+        window.localStorage.setItem('hugo-cms:site', currentSite);
+    } else {
+        window.localStorage.removeItem('hugo-cms:site');
+    }
+}
+
+export function initializeCurrentSite(registry) {
+    const sites = registry?.sites || [];
+    const siteExists = currentSite && sites.some(site => site.id === currentSite);
+    if (!siteExists) {
+        setCurrentSite(registry?.default_site || sites[0]?.id || "");
+    }
+}
+
+function withSite(url) {
+    if (!currentSite) return url;
+    const parsed = new URL(url, window.location.origin);
+    parsed.searchParams.set('site', currentSite);
+    return parsed.pathname + parsed.search;
+}
+
+function siteHeaders() {
+    return currentSite ? { 'X-CMS-Site': currentSite } : {};
+}
 
 async function ensureCSRFToken(forceRefresh = false) {
     if (csrfToken && !forceRefresh) return csrfToken;
@@ -20,13 +53,19 @@ function resetCSRFToken() {
 }
 
 export async function fetchConfig() {
-    const res = await fetch('/admin/api/config');
+    const res = await fetch(withSite('/admin/api/config'), { headers: siteHeaders() });
     if (!res.ok) throw new Error("Config fetch failed");
     return await res.json();
 }
 
+export async function fetchSites() {
+    const res = await fetch('/admin/api/sites');
+    if (!res.ok) throw new Error("Sites fetch failed");
+    return await res.json();
+}
+
 export async function fetchArticles() {
-    const res = await fetch('/admin/api/articles');
+    const res = await fetch(withSite('/admin/api/articles'), { headers: siteHeaders() });
     if (res.status === 401) {
         window.location.href = "/admin/login";
         return null;
@@ -36,17 +75,18 @@ export async function fetchArticles() {
 
 export async function fetchArticle(path) {
     const params = new URLSearchParams({ path });
-    const res = await fetch(`/admin/api/article?${params.toString()}`);
+    const res = await fetch(withSite(`/admin/api/article?${params.toString()}`), { headers: siteHeaders() });
     if (!res.ok) throw new Error("Failed to load article");
     return await res.json();
 }
 
 export async function saveArticle(payload) {
     await ensureCSRFToken();
-    const res = await fetch('/admin/api/article', {
+    const res = await fetch(withSite('/admin/api/article'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
+            ...siteHeaders(),
             ...getCSRFHeaders()
         },
         body: JSON.stringify(payload)
@@ -55,10 +95,11 @@ export async function saveArticle(payload) {
     if (res.status === 403) {
         resetCSRFToken();
         await ensureCSRFToken(true);
-        const retryRes = await fetch('/admin/api/article', {
+        const retryRes = await fetch(withSite('/admin/api/article'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                ...siteHeaders(),
                 ...getCSRFHeaders()
             },
             body: JSON.stringify(payload)
@@ -79,10 +120,11 @@ export async function createArticle(arg1, arg2) {
         body = { path: arg1, content: arg2 };
     }
 
-    const res = await fetch('/admin/api/create', {
+    const res = await fetch(withSite('/admin/api/create'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
+            ...siteHeaders(),
             ...getCSRFHeaders()
         },
         body: JSON.stringify(body)
@@ -96,10 +138,11 @@ export async function createArticle(arg1, arg2) {
 
 export async function deleteArticle(path) {
     await ensureCSRFToken();
-    const res = await fetch('/admin/api/delete', {
+    const res = await fetch(withSite('/admin/api/delete'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
+            ...siteHeaders(),
             ...getCSRFHeaders()
         },
         body: JSON.stringify({ path })
@@ -113,10 +156,11 @@ export async function deleteArticle(path) {
 
 export async function getDiff(payload) {
     await ensureCSRFToken();
-    const res = await fetch('/admin/api/diff', {
+    const res = await fetch(withSite('/admin/api/diff'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
+            ...siteHeaders(),
             ...getCSRFHeaders()
         },
         body: JSON.stringify(payload)
@@ -126,27 +170,36 @@ export async function getDiff(payload) {
 
 export async function runBuild() {
     await ensureCSRFToken();
-    const res = await fetch('/admin/api/build', {
+    const res = await fetch(withSite('/admin/api/build'), {
         method: 'POST',
-        headers: getCSRFHeaders()
+        headers: {
+            ...siteHeaders(),
+            ...getCSRFHeaders()
+        }
     });
     return await res.json();
 }
 
 export async function restartHugo() {
     await ensureCSRFToken();
-    const res = await fetch('/admin/api/build/restart', {
+    const res = await fetch(withSite('/admin/api/build/restart'), {
         method: 'POST',
-        headers: getCSRFHeaders()
+        headers: {
+            ...siteHeaders(),
+            ...getCSRFHeaders()
+        }
     });
     return await res.json();
 }
 
 export async function runSync() {
     await ensureCSRFToken();
-    const res = await fetch('/admin/api/sync', {
+    const res = await fetch(withSite('/admin/api/sync'), {
         method: 'POST',
-        headers: getCSRFHeaders()
+        headers: {
+            ...siteHeaders(),
+            ...getCSRFHeaders()
+        }
     });
     return await res.json();
 }
@@ -155,23 +208,27 @@ export async function runPublish(path = null) {
     await ensureCSRFToken();
     const options = {
         method: 'POST',
-        headers: getCSRFHeaders()
+        headers: {
+            ...siteHeaders(),
+            ...getCSRFHeaders()
+        }
     };
     if (path) {
         options.headers = {
             'Content-Type': 'application/json',
+            ...siteHeaders(),
             ...getCSRFHeaders()
         };
         options.body = JSON.stringify({ path });
     }
-    const res = await fetch('/admin/api/publish', options);
+    const res = await fetch(withSite('/admin/api/publish'), options);
     return await res.json();
 }
 
 export async function fetchMedia(mode, path) {
     let url = `/admin/api/media?mode=${mode}`;
     if (path) url += `&path=${encodeURIComponent(path)}`;
-    const res = await fetch(url);
+    const res = await fetch(withSite(url), { headers: siteHeaders() });
     if (!res.ok) throw new Error("Failed to fetch media");
     return await res.json();
 }
@@ -182,9 +239,12 @@ export async function uploadMedia(file, mode, path) {
     formData.append('file', file);
     if (mode) formData.append('mode', mode);
     if (path) formData.append('path', path);
-    const res = await fetch('/admin/api/media', {
+    const res = await fetch(withSite('/admin/api/media'), {
         method: 'POST',
-        headers: getCSRFHeaders(),
+        headers: {
+            ...siteHeaders(),
+            ...getCSRFHeaders()
+        },
         body: formData
     });
     if (!res.ok) throw new Error("Upload failed");
@@ -193,10 +253,11 @@ export async function uploadMedia(file, mode, path) {
 
 export async function deleteMedia(repoPath) {
     await ensureCSRFToken();
-    const res = await fetch('/admin/api/media/delete', {
+    const res = await fetch(withSite('/admin/api/media/delete'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
+            ...siteHeaders(),
             ...getCSRFHeaders()
         },
         body: JSON.stringify({ repo_path: repoPath })
@@ -206,7 +267,7 @@ export async function deleteMedia(repoPath) {
 }
 
 export async function fetchSnippets() {
-    const res = await fetch('/admin/api/snippets');
+    const res = await fetch(withSite('/admin/api/snippets'), { headers: siteHeaders() });
     if (!res.ok) throw new Error("Failed to fetch snippets");
     return await res.json();
 }

@@ -4,6 +4,7 @@ import * as Editor from './editor.js';
 
 // Global State
 let cmsConfig = null;
+let siteRegistry = null;
 let publishInProgress = false;
 
 // Initialization
@@ -11,14 +12,15 @@ init();
 
 async function init() {
     try {
-        cmsConfig = await API.fetchConfig();
-        Editor.setConfig(cmsConfig);
+        siteRegistry = await API.fetchSites();
+        API.initializeCurrentSite(siteRegistry);
+        UI.renderSiteSelector(siteRegistry, API.getCurrentSite(), switchSite);
+        await loadSiteData();
     } catch (e) {
-        console.error("Config fetch failed", e);
-        UI.showToast("Failed to load configuration", "error");
+        console.error("Initial load failed", e);
+        UI.showToast("Failed to load site configuration", "error");
     }
 
-    await refreshFileList();
     Editor.initAutoSave();
 
     // --- Expose functions to Global Scope for HTML onclick handlers ---
@@ -121,6 +123,43 @@ async function init() {
     };
 
     console.log("Hugo CMS Initialized");
+}
+
+async function loadSiteData() {
+    cmsConfig = await API.fetchConfig();
+    Editor.setConfig(cmsConfig);
+    await refreshFileList();
+}
+
+async function switchSite(siteID) {
+    const previousSiteID = API.getCurrentSite();
+    if (!siteID || siteID === previousSiteID) return;
+
+    try {
+        await Editor.flushPendingSave();
+    } catch (e) {
+        UI.showToast("Site switch cancelled: save failed", "error");
+        UI.renderSiteSelector(siteRegistry, previousSiteID, switchSite);
+        return;
+    }
+
+    API.setCurrentSite(siteID);
+    Editor.clearEditor();
+    try {
+        await loadSiteData();
+        UI.renderSiteSelector(siteRegistry, siteID, switchSite);
+        const site = siteRegistry?.sites?.find(s => s.id === siteID);
+        UI.showToast(`Switched to ${site?.name || siteID}`, "success");
+    } catch (e) {
+        API.setCurrentSite(previousSiteID);
+        UI.renderSiteSelector(siteRegistry, previousSiteID, switchSite);
+        try {
+            await loadSiteData();
+        } catch (reloadErr) {
+            console.error("Failed to reload previous site", reloadErr);
+        }
+        UI.showToast("Failed to switch site: " + e.message, "error");
+    }
 }
 
 async function refreshFileList() {

@@ -55,6 +55,37 @@ export function toggleSidebar() {
     }
 }
 
+export function renderSiteSelector(registry, selectedSiteID, onChange) {
+    const container = document.getElementById('site-selector-container');
+    if (!container) return;
+
+    const sites = registry?.sites || [];
+    container.innerHTML = '';
+    if (sites.length <= 1) {
+        container.classList.add('hidden');
+        return;
+    }
+    container.classList.remove('hidden');
+
+    const label = document.createElement('label');
+    label.setAttribute('for', 'site-selector');
+    label.textContent = 'Site';
+
+    const select = document.createElement('select');
+    select.id = 'site-selector';
+    sites.forEach(site => {
+        const option = document.createElement('option');
+        option.value = site.id;
+        option.textContent = site.name || site.id;
+        if (site.id === selectedSiteID) option.selected = true;
+        select.appendChild(option);
+    });
+    select.onchange = () => onChange(select.value);
+
+    container.appendChild(label);
+    container.appendChild(select);
+}
+
 export async function showLoadingEditor() {
     const fmContainer = document.getElementById('fm-container');
     const editor = document.getElementById('editor');

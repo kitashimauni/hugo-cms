@@ -23,6 +23,10 @@ func ListMedia(c *gin.Context) {
 		ErrorInternal(c, "Failed to list media: "+err.Error())
 		return
 	}
+	siteID := currentSiteID(c)
+	for i := range files {
+		files[i].URL = addSiteQuery(files[i].URL, siteID)
+	}
 	c.JSON(http.StatusOK, files)
 }
 
@@ -55,6 +59,7 @@ func UploadMedia(c *gin.Context) {
 		ErrorInternal(c, "Failed to save file: "+err.Error())
 		return
 	}
+	info.URL = addSiteQuery(info.URL, currentSiteID(c))
 
 	c.JSON(http.StatusOK, info)
 }
