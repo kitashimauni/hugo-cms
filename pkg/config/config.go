@@ -83,7 +83,7 @@ type SiteRegistryConfig struct {
 	Sites       []SiteConfig `yaml:"sites"`
 }
 
-func Init() {
+func Init() error {
 	if err := godotenv.Load(); err != nil {
 		slog.Info("No .env file found or error loading", "error", err)
 	}
@@ -157,7 +157,9 @@ func Init() {
 	if snippets := os.Getenv("SNIPPET_PATHS"); snippets != "" {
 		SnippetPaths = splitAndTrim(snippets, ",")
 	}
-	loadSiteRegistry()
+	if err := loadSiteRegistry(); err != nil {
+		return err
+	}
 
 	// OAuth scopes configuration
 	// Use GITHUB_OAUTH_SCOPES env var to override (comma-separated)
@@ -173,24 +175,23 @@ func Init() {
 		Endpoint:     github.Endpoint,
 		RedirectURL:  redirectURL,
 	}
+	return nil
 }
 
-func loadSiteRegistry() {
+func loadSiteRegistry() error {
 	Sites = []SiteConfig{defaultSiteFromGlobals()}
 	if SitesConfigPath == "" {
-		return
+		return nil
 	}
 
 	content, err := os.ReadFile(SitesConfigPath)
 	if err != nil {
-		slog.Warn("Failed to read site registry config; using default site", "path", SitesConfigPath, "error", err)
-		return
+		return fmt.Errorf("read site registry config %q: %w", SitesConfigPath, err)
 	}
 
 	var registry SiteRegistryConfig
 	if err := yaml.Unmarshal(content, &registry); err != nil {
-		slog.Warn("Failed to parse site registry config; using default site", "path", SitesConfigPath, "error", err)
-		return
+		return fmt.Errorf("parse site registry config %q: %w", SitesConfigPath, err)
 	}
 
 	normalized := make([]SiteConfig, 0, len(registry.Sites))
@@ -203,8 +204,7 @@ func loadSiteRegistry() {
 		normalized = append(normalized, site)
 	}
 	if len(normalized) == 0 {
-		slog.Warn("Site registry config contains no usable sites; using default site", "path", SitesConfigPath)
-		return
+		return fmt.Errorf("site registry config %q contains no usable sites", SitesConfigPath)
 	}
 
 	Sites = normalized
@@ -214,11 +214,10 @@ func loadSiteRegistry() {
 
 	defaultSite, ok := GetSite(DefaultSiteID)
 	if !ok {
-		slog.Warn("Default site not found in registry; using first site", "default_site", DefaultSiteID)
-		defaultSite = Sites[0]
-		DefaultSiteID = defaultSite.ID
+		return fmt.Errorf("default site %q is not defined in site registry %q", DefaultSiteID, SitesConfigPath)
 	}
 	applyDefaultSite(defaultSite)
+	return nil
 }
 
 func defaultSiteFromGlobals() SiteConfig {

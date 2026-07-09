@@ -168,7 +168,10 @@ func newHTTPServer(handler http.Handler) *http.Server {
 
 func main() {
 	// Initialize config
-	config.Init()
+	if err := config.Init(); err != nil {
+		slog.Error("Invalid configuration", "error", err)
+		os.Exit(1)
+	}
 	if err := config.ValidateSecurityConfig(); err != nil {
 		slog.Error("Invalid security configuration", "error", err)
 		os.Exit(1)

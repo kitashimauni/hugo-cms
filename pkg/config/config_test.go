@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -135,7 +136,9 @@ sites:
 
 	DefaultSiteID = "default"
 	SitesConfigPath = configPath
-	loadSiteRegistry()
+	if err := loadSiteRegistry(); err != nil {
+		t.Fatalf("loadSiteRegistry() error = %v", err)
+	}
 
 	if DefaultSiteID != "notes" {
 		t.Fatalf("DefaultSiteID = %q, want notes", DefaultSiteID)
@@ -151,6 +154,46 @@ sites:
 	}
 	if HugoServerPort != "1320" {
 		t.Fatalf("HugoServerPort = %q, want 1320", HugoServerPort)
+	}
+}
+
+func TestLoadSiteRegistryRejectsUnknownDefaultSite(t *testing.T) {
+	originalSites := Sites
+	originalDefaultSiteID := DefaultSiteID
+	originalRepoPath := RepoPath
+	originalSitesConfigPath := SitesConfigPath
+	t.Cleanup(func() {
+		Sites = originalSites
+		DefaultSiteID = originalDefaultSiteID
+		RepoPath = originalRepoPath
+		SitesConfigPath = originalSitesConfigPath
+	})
+
+	configPath := filepath.Join(t.TempDir(), "sites.yml")
+	err := os.WriteFile(configPath, []byte(`
+default_site: missing
+sites:
+  - id: blog
+    repo_path: C:/sites/blog
+    generator: hugo
+`), 0644)
+	if err != nil {
+		t.Fatalf("write registry config: %v", err)
+	}
+
+	DefaultSiteID = "default"
+	RepoPath = "./repo"
+	SitesConfigPath = configPath
+
+	err = loadSiteRegistry()
+	if err == nil {
+		t.Fatal("loadSiteRegistry() should reject an unknown default site")
+	}
+	if !strings.Contains(err.Error(), `default site "missing"`) {
+		t.Fatalf("loadSiteRegistry() error = %v, want unknown default site", err)
+	}
+	if RepoPath != "./repo" {
+		t.Fatalf("RepoPath = %q, should not switch to another site after invalid default", RepoPath)
 	}
 }
 
@@ -207,7 +250,9 @@ func TestInitSanitizesSingleSiteDirectoryOverrides(t *testing.T) {
 	t.Setenv("SITES_CONFIG_PATH", "")
 	t.Setenv("DEFAULT_SITE_ID", "default")
 
-	Init()
+	if err := Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
 
 	if ContentDir != "content" {
 		t.Fatalf("ContentDir = %q, want fallback content", ContentDir)
