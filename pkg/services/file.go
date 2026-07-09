@@ -237,13 +237,44 @@ func GetCollectionForPath(relPath string) (*models.Collection, error) {
 		return nil, err
 	}
 
-	relPath = filepath.ToSlash(relPath)
+	relPath = filepath.ToSlash(filepath.Clean(relPath))
 
-	for _, col := range cfg.Collections {
-		colFolder := filepath.ToSlash(filepath.Clean(col.Folder))
-		if strings.HasPrefix(relPath, colFolder) {
-			return &col, nil
+	for i := range cfg.Collections {
+		col := &cfg.Collections[i]
+		colFolder, err := CollectionFolderWithinContent(*col)
+		if err != nil {
+			continue
+		}
+		if relPath == colFolder || strings.HasPrefix(relPath, colFolder+"/") {
+			return col, nil
 		}
 	}
 	return nil, fmt.Errorf("no collection found")
+}
+
+func CollectionFolderWithinContent(collection models.Collection) (string, error) {
+	folder := filepath.ToSlash(filepath.Clean(collection.Folder))
+	contentDir := filepath.ToSlash(filepath.Clean(config.ContentDir))
+	if folder == "." || filepath.IsAbs(folder) || strings.HasPrefix(folder, "/") || strings.HasPrefix(folder, "../") || folder == ".." {
+		return "", fmt.Errorf("Invalid collection folder")
+	}
+	if contentDir == "." || filepath.IsAbs(contentDir) || strings.HasPrefix(contentDir, "/") || strings.HasPrefix(contentDir, "../") || contentDir == ".." {
+		return "", fmt.Errorf("Invalid content directory")
+	}
+
+	if folder == contentDir || strings.HasPrefix(folder, contentDir+"/") {
+		return folder, nil
+	}
+
+	const legacyContentDir = "content"
+	if contentDir != legacyContentDir {
+		if folder == legacyContentDir {
+			return contentDir, nil
+		}
+		if strings.HasPrefix(folder, legacyContentDir+"/") {
+			return filepath.ToSlash(filepath.Join(contentDir, strings.TrimPrefix(folder, legacyContentDir+"/"))), nil
+		}
+	}
+
+	return "", fmt.Errorf("Collection folder must be under %s", config.ContentDir)
 }

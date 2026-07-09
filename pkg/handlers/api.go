@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/models"
 	"hugo-cms/pkg/services"
@@ -216,7 +215,7 @@ func CreateArticle(c *gin.Context) {
 			return
 		}
 
-		collectionFolder, err := collectionFolderWithinContent(*targetCollection)
+		collectionFolder, err := services.CollectionFolderWithinContent(*targetCollection)
 		if err != nil {
 			ErrorBadRequest(c, err.Error())
 			return
@@ -277,33 +276,6 @@ func CreateArticle(c *gin.Context) {
 
 	services.UpdateCache(req.Path)
 	c.JSON(http.StatusOK, gin.H{"status": "created", "log": log})
-}
-
-func collectionFolderWithinContent(collection models.Collection) (string, error) {
-	folder := filepath.ToSlash(filepath.Clean(collection.Folder))
-	contentDir := filepath.ToSlash(filepath.Clean(config.ContentDir))
-	if folder == "." || filepath.IsAbs(folder) || strings.HasPrefix(folder, "/") || strings.HasPrefix(folder, "../") || folder == ".." {
-		return "", fmt.Errorf("Invalid collection folder")
-	}
-	if contentDir == "." || filepath.IsAbs(contentDir) || strings.HasPrefix(contentDir, "/") || strings.HasPrefix(contentDir, "../") || contentDir == ".." {
-		return "", fmt.Errorf("Invalid content directory")
-	}
-
-	if folder == contentDir || strings.HasPrefix(folder, contentDir+"/") {
-		return folder, nil
-	}
-
-	const legacyContentDir = "content"
-	if contentDir != legacyContentDir {
-		if folder == legacyContentDir {
-			return contentDir, nil
-		}
-		if strings.HasPrefix(folder, legacyContentDir+"/") {
-			return filepath.ToSlash(filepath.Join(contentDir, strings.TrimPrefix(folder, legacyContentDir+"/"))), nil
-		}
-	}
-
-	return "", fmt.Errorf("Collection folder must be under %s", config.ContentDir)
 }
 
 func GetDiff(c *gin.Context) {

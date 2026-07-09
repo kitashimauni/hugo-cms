@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/models"
+	"hugo-cms/pkg/services"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,7 +86,7 @@ collections:
 func TestCollectionFolderWithinContentRejectsOutsideFolder(t *testing.T) {
 	restoreArticleCreateConfig(t, t.TempDir(), "src", "static")
 
-	if _, err := collectionFolderWithinContent(models.Collection{Folder: "assets/posts"}); err == nil {
+	if _, err := services.CollectionFolderWithinContent(models.Collection{Folder: "assets/posts"}); err == nil {
 		t.Fatal("collectionFolderWithinContent() should reject folders outside configured content dir")
 	}
 }
