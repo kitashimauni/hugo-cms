@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/models"
 	"hugo-cms/pkg/services"
@@ -215,16 +216,12 @@ func CreateArticle(c *gin.Context) {
 			return
 		}
 
-		// Prepend collection folder if ResolvePath returned relative path without it?
-		// ResolvePath returns path relative to collection folder? No, I implemented it to just return the filename/subpath based on pattern.
-		// Wait, `GenerateContentFromCollection` returns content.
-		// I need to join collection folder with resolved path.
-		// `ResolvePath` implementation: just replaces {{...}} in `collection.Path`.
-		// `collection.Path` in config example: `{{year}}.../index`.
-		// `collection.Folder` is `content/posts`.
-		// So full path is `content/posts/{{year}}.../index.md`.
-
-		fullPath := services.SafeJoin(config.RepoPath, targetCollection.Folder, relPath)
+		collectionFolder, err := collectionFolderWithinContent(*targetCollection)
+		if err != nil {
+			ErrorBadRequest(c, err.Error())
+			return
+		}
+		fullPath := services.SafeJoin(config.RepoPath, collectionFolder, relPath)
 		if fullPath == "" {
 			ErrorBadRequest(c, "Invalid resolved path")
 			return
@@ -254,19 +251,7 @@ func CreateArticle(c *gin.Context) {
 			return
 		}
 
-		// Update Cache (we need the path relative to content dir for cache update usually?
-		// services.UpdateCache takes "path". Existing CreateContent calls UpdateCache(req.Path).
-		// CreateContent receives path relative to `content` usually?
-		// `hugo new content path/to/file`.
-		// Here `relPath` is relative to `collection.Folder`.
-		// `collection.Folder` is e.g. `content/posts`.
-		// So cache path should be `posts/` + `relPath`?
-		// `SafeJoin` combined `config.RepoPath`, `targetCollection.Folder`, `relPath`.
-		// `targetCollection.Folder` usually includes `content/`.
-		// Let's deduce the content-relative path.
-
 		contentRelPath, _ := filepath.Rel(filepath.Join(config.RepoPath, config.ContentDir), fullPath)
-		// normalize slashes
 		contentRelPath = filepath.ToSlash(contentRelPath)
 
 		services.UpdateCache(contentRelPath)
@@ -292,6 +277,33 @@ func CreateArticle(c *gin.Context) {
 
 	services.UpdateCache(req.Path)
 	c.JSON(http.StatusOK, gin.H{"status": "created", "log": log})
+}
+
+func collectionFolderWithinContent(collection models.Collection) (string, error) {
+	folder := filepath.ToSlash(filepath.Clean(collection.Folder))
+	contentDir := filepath.ToSlash(filepath.Clean(config.ContentDir))
+	if folder == "." || filepath.IsAbs(folder) || strings.HasPrefix(folder, "/") || strings.HasPrefix(folder, "../") || folder == ".." {
+		return "", fmt.Errorf("Invalid collection folder")
+	}
+	if contentDir == "." || filepath.IsAbs(contentDir) || strings.HasPrefix(contentDir, "/") || strings.HasPrefix(contentDir, "../") || contentDir == ".." {
+		return "", fmt.Errorf("Invalid content directory")
+	}
+
+	if folder == contentDir || strings.HasPrefix(folder, contentDir+"/") {
+		return folder, nil
+	}
+
+	const legacyContentDir = "content"
+	if contentDir != legacyContentDir {
+		if folder == legacyContentDir {
+			return contentDir, nil
+		}
+		if strings.HasPrefix(folder, legacyContentDir+"/") {
+			return filepath.ToSlash(filepath.Join(contentDir, strings.TrimPrefix(folder, legacyContentDir+"/"))), nil
+		}
+	}
+
+	return "", fmt.Errorf("Collection folder must be under %s", config.ContentDir)
 }
 
 func GetDiff(c *gin.Context) {
