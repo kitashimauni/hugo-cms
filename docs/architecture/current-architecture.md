@@ -132,11 +132,13 @@ GIT_TOKEN=xxx
 
 保存、同期、公開はリポジトリ操作ロックで直列化される。公開処理はステージ済み変更を確認し、commitが成功した場合だけpushする。
 
-#### generator.go / hugo_adapter.go - ジェネレーター管理
+#### generator.go / hugo_adapter.go / eleventy_adapter.go - ジェネレーター管理
 
-`GeneratorAdapter`がプレビュー起動・停止・再起動、ビルド、コンテンツ作成を抽象化する。現在は`HugoAdapter`を使用し、従来の関数名は互換ラッパーとして維持している。
+`GeneratorAdapter`がプレビュー起動・停止・再起動、ビルド、コンテンツ作成を抽象化する。`SITE_GENERATOR`またはSite Registryのdefault site設定から`HugoAdapter`または`EleventyAdapter`を選択する。従来の関数名は互換ラッパーとして維持している。
 
 `ProcessManager`はプロセス終了を明示的に待ち、世代の異なる監視処理が新しいプロセス状態を消去しないよう管理する。
+
+Hugo/Eleventyなどのサイトジェネレーター子プロセスにはallowlist化した環境変数だけを渡し、CMSのセッション秘密鍵やGitHub OAuth secretを継承させない。
 
 #### frontmatter_codec.go - Front Matter codec
 
@@ -161,11 +163,17 @@ YAML、TOML、JSONを共通インターフェースで解析・生成する。JS
 ```go
 var (
     RepoPath          = "./repo"
+    ContentDir        = "content"
+    StaticDir         = "static"
+    PublicDir         = "public"
+    SiteGenerator     = "hugo"
     MaxUploadSize     = int64(10 * 1024 * 1024)
     GitCommandTimeout = 60 * time.Second
     // ...
 )
 ```
+
+`SITES_CONFIG_PATH`を指定するとSite Registryを読み込み、default siteの設定を既存APIに適用する。読み込み結果は`GET /admin/api/sites`で確認できる。
 
 ### pkg/models/ - データモデル
 

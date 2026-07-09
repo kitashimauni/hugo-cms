@@ -333,12 +333,21 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 
 `pkg/services/generator.go`に共通インターフェースと互換ラッパーを置き、`pkg/services/hugo_adapter.go`へHugo固有処理を分離した。プレビューのプロセス状態は`ProcessManager`が終了を待ってから更新する。
 
-### Phase 2: マルチサイト対応
+### Phase 2: マルチサイト対応（一部実装）
 
 - `Site Registry`を追加する。
 - APIへサイトIDを導入する。
 - プレビューをサイト単位のプロセス管理へ変更する。
 - サイトごとのmise環境でHugoを起動する。
+
+`SITES_CONFIG_PATH`からSite Registryを読み込み、default siteの`repo_path`、`generator`、`content_dir`、`static_dir`、`public_dir`を既存APIへ適用できるようにした。`GET /admin/api/sites`で読み込み結果を確認できる。
+
+未実装:
+
+- UI上のサイト切替
+- `/admin/sites/{siteID}/api/...`形式のsiteId付きAPI
+- サイト単位のプレビューProcessManager
+- サイトごとのmise実行
 
 ### Phase 3: コンテンツとメディアの共通化
 
@@ -347,6 +356,8 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 - Front Matter codecを分離する。
 - プレビューURL解決をアダプター化する。
 
+`CONTENT_DIR`、`STATIC_DIR`、`PUBLIC_DIR`を追加し、記事、メディア、Hugo build/newの主要パスを設定値へ寄せた。`.homecms.yml`とプレビューURL解決の完全なアダプター化は未実装。
+
 ### Phase 4: 実行環境の隔離
 
 - 子プロセスの環境変数を最小化する。
@@ -354,12 +365,23 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 - プレビューを別オリジンに分離する。
 - 依存関係の準備処理を管理者操作として追加する。
 
+Hugo/Eleventyの子プロセスへ渡す環境変数をallowlist方式にし、`SESSION_SECRET`やGitHub OAuth secretなどCMS側の秘密情報を継承しないようにした。リソース制限、別オリジン配信、依存関係準備フローは未実装。
+
 ### Phase 5: Eleventy対応
 
 - Node.jsとlockファイルの検証を追加する。
 - `EleventyAdapter`を実装する。
 - YAML/JSON Front MatterとMarkdown本文を対応する。
 - JavaScript Front Matterはraw編集に限定する。
+
+初期版の`EleventyAdapter`を追加した。`package.json`とlockファイルを必須とし、lockfileに対応するpackage managerでローカル依存のEleventyを起動・ビルドする。新規記事はCMS configのcollectionに一致する場合だけFront Matter codec経由で生成する。
+
+未実装:
+
+- UIからのgenerator差分表示
+- siteId単位のEleventyプレビュー
+- JavaScript Front Matterのraw編集表示
+- Eleventy Data Cascadeの実効値表示
 
 ## 未決事項
 

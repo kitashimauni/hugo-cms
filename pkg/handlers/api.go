@@ -65,10 +65,10 @@ func HandlePublish(c *gin.Context) {
 		// e.g. "posts/abc.md" -> "content/posts/abc.md"
 		// We use Join to be OS agnostic, but git expects forward slashes.
 		// git.go's PublishChanges might need to handle ToSlash, but let's do it here.
-		gitPath = filepath.ToSlash(filepath.Join("content", req.Path))
+		gitPath = filepath.ToSlash(filepath.Join(config.ContentDir, req.Path))
 
 		// Verify file exists before passing to git
-		fullPath := services.SafeJoin(config.RepoPath, "content", req.Path)
+		fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, req.Path)
 		if fullPath == "" {
 			ErrorBadRequest(c, "Invalid path")
 			return
@@ -103,7 +103,7 @@ func GetArticle(c *gin.Context) {
 		return
 	}
 
-	fullPath := services.SafeJoin(config.RepoPath, "content", targetPath)
+	fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, targetPath)
 	if fullPath == "" {
 		ErrorBadRequest(c, "Invalid path")
 		return
@@ -141,7 +141,7 @@ func SaveArticle(c *gin.Context) {
 		return
 	}
 
-	fullPath := services.SafeJoin(config.RepoPath, "content", art.Path)
+	fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, art.Path)
 	if fullPath == "" {
 		ErrorBadRequest(c, "Invalid path")
 		return
@@ -215,16 +215,12 @@ func CreateArticle(c *gin.Context) {
 			return
 		}
 
-		// Prepend collection folder if ResolvePath returned relative path without it?
-		// ResolvePath returns path relative to collection folder? No, I implemented it to just return the filename/subpath based on pattern.
-		// Wait, `GenerateContentFromCollection` returns content.
-		// I need to join collection folder with resolved path.
-		// `ResolvePath` implementation: just replaces {{...}} in `collection.Path`.
-		// `collection.Path` in config example: `{{year}}.../index`.
-		// `collection.Folder` is `content/posts`.
-		// So full path is `content/posts/{{year}}.../index.md`.
-
-		fullPath := services.SafeJoin(config.RepoPath, targetCollection.Folder, relPath)
+		collectionFolder, err := services.CollectionFolderWithinContent(*targetCollection)
+		if err != nil {
+			ErrorBadRequest(c, err.Error())
+			return
+		}
+		fullPath := services.SafeJoin(config.RepoPath, collectionFolder, relPath)
 		if fullPath == "" {
 			ErrorBadRequest(c, "Invalid resolved path")
 			return
@@ -254,19 +250,7 @@ func CreateArticle(c *gin.Context) {
 			return
 		}
 
-		// Update Cache (we need the path relative to content dir for cache update usually?
-		// services.UpdateCache takes "path". Existing CreateContent calls UpdateCache(req.Path).
-		// CreateContent receives path relative to `content` usually?
-		// `hugo new content path/to/file`.
-		// Here `relPath` is relative to `collection.Folder`.
-		// `collection.Folder` is e.g. `content/posts`.
-		// So cache path should be `posts/` + `relPath`?
-		// `SafeJoin` combined `config.RepoPath`, `targetCollection.Folder`, `relPath`.
-		// `targetCollection.Folder` usually includes `content/`.
-		// Let's deduce the content-relative path.
-
-		contentRelPath, _ := filepath.Rel(filepath.Join(config.RepoPath, "content"), fullPath)
-		// normalize slashes
+		contentRelPath, _ := filepath.Rel(filepath.Join(config.RepoPath, config.ContentDir), fullPath)
 		contentRelPath = filepath.ToSlash(contentRelPath)
 
 		services.UpdateCache(contentRelPath)
@@ -306,7 +290,7 @@ func GetDiff(c *gin.Context) {
 		return
 	}
 
-	fullPath := services.SafeJoin(config.RepoPath, "content", art.Path)
+	fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, art.Path)
 	if fullPath == "" {
 		ErrorBadRequest(c, "Invalid path")
 		return
@@ -318,7 +302,7 @@ func GetDiff(c *gin.Context) {
 	}
 
 	// Apply defaults for normalization
-	collectionPath := filepath.Join("content", art.Path)
+	collectionPath := filepath.Join(config.ContentDir, art.Path)
 	collection, _ := services.GetCollectionForPath(collectionPath)
 	currentContent = services.NormalizeContent(currentContent, collection)
 
@@ -361,7 +345,7 @@ func GetDiff(c *gin.Context) {
 	f1.Close()
 	f2.Close()
 
-	relPath := filepath.Join("content", art.Path)
+	relPath := filepath.Join(config.ContentDir, art.Path)
 	diffStr, diffType := services.Diff(f1.Name(), f2.Name(), relPath)
 
 	c.JSON(http.StatusOK, gin.H{"diff": diffStr, "type": diffType})
@@ -401,7 +385,24 @@ func GetConfig(c *gin.Context) {
 		ErrorInternal(c, "Failed to parse config")
 		return
 	}
+	if cfg == nil {
+		cfg = map[string]interface{}{}
+	}
+	cfg["_cms"] = gin.H{
+		"content_dir":    config.ContentDir,
+		"static_dir":     config.StaticDir,
+		"public_dir":     config.PublicDir,
+		"site_generator": config.SiteGenerator,
+		"default_site":   config.DefaultSiteID,
+	}
 	c.JSON(http.StatusOK, cfg)
+}
+
+func ListSites(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"default_site": config.DefaultSiteID,
+		"sites":        config.Sites,
+	})
 }
 
 type SnippetDef struct {

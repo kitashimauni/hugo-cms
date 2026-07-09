@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -11,12 +12,20 @@ import (
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
+	"gopkg.in/yaml.v3"
 )
 
 var (
-	RepoPath   = "./repo"
-	PublicPath = "./repo/public"
-	PreviewURL = "/"
+	RepoPath        = "./repo"
+	PublicPath      = "./repo/public"
+	PreviewURL      = "/"
+	ContentDir      = "content"
+	StaticDir       = "static"
+	PublicDir       = "public"
+	SiteGenerator   = "hugo"
+	DefaultSiteID   = "default"
+	SitesConfigPath = ""
+	Sites           = []SiteConfig{}
 
 	// Hugo Server settings
 	HugoServerPort = "1314"
@@ -54,7 +63,27 @@ var (
 
 var OauthConf *oauth2.Config
 
-func Init() {
+type SiteConfig struct {
+	ID              string `yaml:"id" json:"id"`
+	Name            string `yaml:"name" json:"name"`
+	RepoPath        string `yaml:"repo_path" json:"repo_path"`
+	Generator       string `yaml:"generator" json:"generator"`
+	ContentDir      string `yaml:"content_dir" json:"content_dir"`
+	StaticDir       string `yaml:"static_dir" json:"static_dir"`
+	PublicDir       string `yaml:"public_dir" json:"public_dir"`
+	PreviewURL      string `yaml:"preview_url" json:"preview_url"`
+	HugoServerPort  string `yaml:"hugo_server_port" json:"hugo_server_port"`
+	HugoServerBind  string `yaml:"hugo_server_bind" json:"hugo_server_bind"`
+	ArticleMediaDir string `yaml:"article_media_dir" json:"article_media_dir"`
+	StaticMediaDir  string `yaml:"static_media_dir" json:"static_media_dir"`
+}
+
+type SiteRegistryConfig struct {
+	DefaultSite string       `yaml:"default_site"`
+	Sites       []SiteConfig `yaml:"sites"`
+}
+
+func Init() error {
 	if err := godotenv.Load(); err != nil {
 		slog.Info("No .env file found or error loading", "error", err)
 	}
@@ -72,15 +101,22 @@ func Init() {
 
 	// Load Configs
 	RepoPath = getEnv("REPO_PATH", "./repo")
-	PublicPath = getEnv("PUBLIC_PATH", RepoPath+"/public")
+	ContentDir = cleanRelativeDir(getEnv("CONTENT_DIR", "content"), "content")
+	StaticDir = cleanRelativeDir(getEnv("STATIC_DIR", "static"), "static")
+	PublicDir = cleanRelativeDir(getEnv("PUBLIC_DIR", "public"), "public")
+	PublicPath = getEnv("PUBLIC_PATH", filepath.Join(RepoPath, PublicDir))
+	PreviewURL = getEnv("PREVIEW_URL", "/")
+	SiteGenerator = strings.ToLower(getEnv("SITE_GENERATOR", "hugo"))
+	DefaultSiteID = getEnv("DEFAULT_SITE_ID", "default")
+	SitesConfigPath = getEnv("SITES_CONFIG_PATH", "")
 
 	HugoServerPort = getEnv("HUGO_SERVER_PORT", "1314")
 	HugoServerBind = getEnv("HUGO_SERVER_BIND", "127.0.0.1")
 
 	ServerPort = getEnv("PORT", "8080")
 
-	ArticleMediaDir = getEnv("ARTICLE_MEDIA_DIR", "")
-	StaticMediaDir = getEnv("STATIC_MEDIA_DIR", "")
+	ArticleMediaDir = cleanOptionalRelativeDir(getEnv("ARTICLE_MEDIA_DIR", ""))
+	StaticMediaDir = cleanOptionalRelativeDir(getEnv("STATIC_MEDIA_DIR", ""))
 
 	// Max upload size (default 10MB)
 	if maxSize := os.Getenv("MAX_UPLOAD_SIZE_MB"); maxSize != "" {
@@ -121,6 +157,9 @@ func Init() {
 	if snippets := os.Getenv("SNIPPET_PATHS"); snippets != "" {
 		SnippetPaths = splitAndTrim(snippets, ",")
 	}
+	if err := loadSiteRegistry(); err != nil {
+		return err
+	}
 
 	// OAuth scopes configuration
 	// Use GITHUB_OAUTH_SCOPES env var to override (comma-separated)
@@ -136,6 +175,149 @@ func Init() {
 		Endpoint:     github.Endpoint,
 		RedirectURL:  redirectURL,
 	}
+	return nil
+}
+
+func loadSiteRegistry() error {
+	Sites = []SiteConfig{defaultSiteFromGlobals()}
+	if SitesConfigPath == "" {
+		return nil
+	}
+
+	content, err := os.ReadFile(SitesConfigPath)
+	if err != nil {
+		return fmt.Errorf("read site registry config %q: %w", SitesConfigPath, err)
+	}
+
+	var registry SiteRegistryConfig
+	if err := yaml.Unmarshal(content, &registry); err != nil {
+		return fmt.Errorf("parse site registry config %q: %w", SitesConfigPath, err)
+	}
+
+	normalized := make([]SiteConfig, 0, len(registry.Sites))
+	for _, site := range registry.Sites {
+		site = normalizeSiteConfig(site)
+		if site.ID == "" {
+			slog.Warn("Skipping site registry entry without id")
+			continue
+		}
+		normalized = append(normalized, site)
+	}
+	if len(normalized) == 0 {
+		return fmt.Errorf("site registry config %q contains no usable sites", SitesConfigPath)
+	}
+
+	Sites = normalized
+	if strings.TrimSpace(registry.DefaultSite) != "" {
+		DefaultSiteID = strings.TrimSpace(registry.DefaultSite)
+	}
+
+	defaultSite, ok := GetSite(DefaultSiteID)
+	if !ok {
+		return fmt.Errorf("default site %q is not defined in site registry %q", DefaultSiteID, SitesConfigPath)
+	}
+	applyDefaultSite(defaultSite)
+	return nil
+}
+
+func defaultSiteFromGlobals() SiteConfig {
+	return normalizeSiteConfig(SiteConfig{
+		ID:              DefaultSiteID,
+		Name:            "Default",
+		RepoPath:        RepoPath,
+		Generator:       SiteGenerator,
+		ContentDir:      ContentDir,
+		StaticDir:       StaticDir,
+		PublicDir:       PublicDir,
+		PreviewURL:      PreviewURL,
+		HugoServerPort:  HugoServerPort,
+		HugoServerBind:  HugoServerBind,
+		ArticleMediaDir: ArticleMediaDir,
+		StaticMediaDir:  StaticMediaDir,
+	})
+}
+
+func normalizeSiteConfig(site SiteConfig) SiteConfig {
+	site.ID = strings.TrimSpace(site.ID)
+	site.Name = strings.TrimSpace(site.Name)
+	site.RepoPath = strings.TrimSpace(site.RepoPath)
+	site.Generator = strings.ToLower(strings.TrimSpace(site.Generator))
+	site.ContentDir = cleanRelativeDir(site.ContentDir, "content")
+	site.StaticDir = cleanRelativeDir(site.StaticDir, "static")
+	site.PublicDir = cleanRelativeDir(site.PublicDir, "public")
+	site.PreviewURL = strings.TrimSpace(site.PreviewURL)
+	site.HugoServerPort = strings.TrimSpace(site.HugoServerPort)
+	site.HugoServerBind = strings.TrimSpace(site.HugoServerBind)
+	site.ArticleMediaDir = cleanOptionalRelativeDir(site.ArticleMediaDir)
+	site.StaticMediaDir = cleanOptionalRelativeDir(site.StaticMediaDir)
+
+	if site.Name == "" {
+		site.Name = site.ID
+	}
+	if site.RepoPath == "" {
+		site.RepoPath = "./repo"
+	}
+	if site.Generator == "" {
+		site.Generator = "hugo"
+	}
+	if site.PreviewURL == "" {
+		site.PreviewURL = "/"
+	}
+	if site.HugoServerPort == "" {
+		site.HugoServerPort = "1314"
+	}
+	if site.HugoServerBind == "" {
+		site.HugoServerBind = "127.0.0.1"
+	}
+	return site
+}
+
+func cleanRelativeDir(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || filepath.IsAbs(value) || strings.HasPrefix(value, "/") || strings.HasPrefix(value, `\`) {
+		return fallback
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(value))
+	if cleaned == "." || strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+		return fallback
+	}
+	return cleaned
+}
+
+func cleanOptionalRelativeDir(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || filepath.IsAbs(value) || strings.HasPrefix(value, "/") || strings.HasPrefix(value, `\`) {
+		return ""
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(value))
+	if cleaned == "." || strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+		return ""
+	}
+	return cleaned
+}
+
+func GetSite(id string) (SiteConfig, bool) {
+	id = strings.TrimSpace(id)
+	for _, site := range Sites {
+		if site.ID == id {
+			return site, true
+		}
+	}
+	return SiteConfig{}, false
+}
+
+func applyDefaultSite(site SiteConfig) {
+	RepoPath = site.RepoPath
+	SiteGenerator = site.Generator
+	ContentDir = site.ContentDir
+	StaticDir = site.StaticDir
+	PublicDir = site.PublicDir
+	PublicPath = filepath.Join(site.RepoPath, site.PublicDir)
+	PreviewURL = site.PreviewURL
+	HugoServerPort = site.HugoServerPort
+	HugoServerBind = site.HugoServerBind
+	ArticleMediaDir = site.ArticleMediaDir
+	StaticMediaDir = site.StaticMediaDir
 }
 
 // ValidateSecurityConfig rejects insecure authorization defaults.

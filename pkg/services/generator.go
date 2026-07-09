@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"hugo-cms/pkg/config"
 	"sync"
 )
 
@@ -38,6 +39,25 @@ func SetGeneratorAdapter(adapter GeneratorAdapter) error {
 	}
 	generatorAdapter = adapter
 	return nil
+}
+
+func ConfigureGeneratorAdapterFromConfig() error {
+	adapter, err := NewGeneratorAdapter(config.SiteGenerator)
+	if err != nil {
+		return err
+	}
+	return SetGeneratorAdapter(adapter)
+}
+
+func NewGeneratorAdapter(name string) (GeneratorAdapter, error) {
+	switch name {
+	case "", "hugo":
+		return NewHugoAdapter(), nil
+	case "eleventy", "11ty":
+		return NewEleventyAdapter(), nil
+	default:
+		return nil, fmt.Errorf("unsupported site generator %q", name)
+	}
 }
 
 // Compatibility wrappers keep the existing API stable while generator-specific

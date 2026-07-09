@@ -35,7 +35,8 @@ export async function fetchArticles() {
 }
 
 export async function fetchArticle(path) {
-    const res = await fetch(`/admin/api/article?path=${path}`);
+    const params = new URLSearchParams({ path });
+    const res = await fetch(`/admin/api/article?${params.toString()}`);
     if (!res.ok) throw new Error("Failed to load article");
     return await res.json();
 }

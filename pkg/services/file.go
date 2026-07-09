@@ -97,7 +97,7 @@ func isResolvedPathWithin(root, target string) bool {
 }
 
 func DeleteFile(targetPath string) error {
-	fullPath := SafeJoin(config.RepoPath, "content", targetPath)
+	fullPath := SafeJoin(config.RepoPath, config.ContentDir, targetPath)
 	if fullPath == "" {
 		return fmt.Errorf("invalid path")
 	}
@@ -108,7 +108,7 @@ func DeleteFile(targetPath string) error {
 	// Try to remove empty parent directories (e.g. bundle folders)
 	// But ensure we don't remove top-level collection folders (e.g. content/posts)
 	dir := filepath.Dir(fullPath)
-	contentRoot := filepath.Join(config.RepoPath, "content")
+	contentRoot := filepath.Join(config.RepoPath, config.ContentDir)
 
 	rel, err := filepath.Rel(contentRoot, dir)
 	if err != nil {
@@ -130,7 +130,7 @@ func DeleteFile(targetPath string) error {
 }
 
 func GetConfig() (map[string]interface{}, error) {
-	configPath := filepath.Join(config.RepoPath, "static/admin/config.yml")
+	configPath := filepath.Join(config.RepoPath, config.StaticDir, "admin", "config.yml")
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func GetConfig() (map[string]interface{}, error) {
 }
 
 func GetCMSConfig() (*models.CMSConfig, error) {
-	configPath := filepath.Join(config.RepoPath, "static/admin/config.yml")
+	configPath := filepath.Join(config.RepoPath, config.StaticDir, "admin", "config.yml")
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, err
@@ -237,13 +237,44 @@ func GetCollectionForPath(relPath string) (*models.Collection, error) {
 		return nil, err
 	}
 
-	relPath = filepath.ToSlash(relPath)
+	relPath = filepath.ToSlash(filepath.Clean(relPath))
 
-	for _, col := range cfg.Collections {
-		colFolder := filepath.ToSlash(filepath.Clean(col.Folder))
-		if strings.HasPrefix(relPath, colFolder) {
-			return &col, nil
+	for i := range cfg.Collections {
+		col := &cfg.Collections[i]
+		colFolder, err := CollectionFolderWithinContent(*col)
+		if err != nil {
+			continue
+		}
+		if relPath == colFolder || strings.HasPrefix(relPath, colFolder+"/") {
+			return col, nil
 		}
 	}
 	return nil, fmt.Errorf("no collection found")
+}
+
+func CollectionFolderWithinContent(collection models.Collection) (string, error) {
+	folder := filepath.ToSlash(filepath.Clean(collection.Folder))
+	contentDir := filepath.ToSlash(filepath.Clean(config.ContentDir))
+	if folder == "." || filepath.IsAbs(folder) || strings.HasPrefix(folder, "/") || strings.HasPrefix(folder, "../") || folder == ".." {
+		return "", fmt.Errorf("Invalid collection folder")
+	}
+	if contentDir == "." || filepath.IsAbs(contentDir) || strings.HasPrefix(contentDir, "/") || strings.HasPrefix(contentDir, "../") || contentDir == ".." {
+		return "", fmt.Errorf("Invalid content directory")
+	}
+
+	if folder == contentDir || strings.HasPrefix(folder, contentDir+"/") {
+		return folder, nil
+	}
+
+	const legacyContentDir = "content"
+	if contentDir != legacyContentDir {
+		if folder == legacyContentDir {
+			return contentDir, nil
+		}
+		if strings.HasPrefix(folder, legacyContentDir+"/") {
+			return filepath.ToSlash(filepath.Join(contentDir, strings.TrimPrefix(folder, legacyContentDir+"/"))), nil
+		}
+	}
+
+	return "", fmt.Errorf("Collection folder must be under %s", config.ContentDir)
 }

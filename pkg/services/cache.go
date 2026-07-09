@@ -34,7 +34,7 @@ func GetArticlesCache() ([]models.Article, error) {
 		slog.Info("Cache rebuild completed", "duration", time.Since(start), "count", len(articleCache))
 	}()
 
-	contentDir := filepath.Join(config.RepoPath, "content")
+	contentDir := filepath.Join(config.RepoPath, config.ContentDir)
 	dirtyFiles, _ := getGitDirtyFiles(config.RepoPath)
 
 	var paths []string
@@ -116,7 +116,7 @@ func getGitDirtyFiles(dir string) (map[string]bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", "--", "content")
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1", "-z", "--", config.ContentDir)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -124,13 +124,11 @@ func getGitDirtyFiles(dir string) (map[string]bool, error) {
 	}
 
 	dirty := make(map[string]bool)
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
-		if len(line) < 4 {
+	for _, entry := range parseGitStatusPorcelainZ(out) {
+		if len(entry) < 4 {
 			continue
 		}
-		path := strings.TrimSpace(line[3:])
-		path = strings.Trim(path, "\"")
+		path := strings.TrimSpace(entry[3:])
 		path = filepath.ToSlash(path)
 
 		diff, diffErr := CheckSemanticDiff(path)
@@ -139,10 +137,10 @@ func getGitDirtyFiles(dir string) (map[string]bool, error) {
 		}
 	}
 
-	cmdUntracked := exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard", "--", "content")
+	cmdUntracked := exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard", "-z", "--", config.ContentDir)
 	cmdUntracked.Dir = dir
 	if outUntracked, errUntracked := cmdUntracked.Output(); errUntracked == nil {
-		for _, raw := range strings.Split(string(outUntracked), "\n") {
+		for _, raw := range strings.Split(string(outUntracked), "\x00") {
 			path := strings.TrimSpace(raw)
 			if path == "" {
 				continue
@@ -180,7 +178,7 @@ func UpdateCache(relPath string) {
 		return // Next Get will rebuild
 	}
 
-	fullPath := filepath.Join(config.RepoPath, "content", relPath)
+	fullPath := filepath.Join(config.RepoPath, config.ContentDir, relPath)
 
 	// Check if file exists
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
@@ -235,7 +233,7 @@ func getGitFileStatus(relPath string) (bool, error) {
 
 	// git status --porcelain content/posts/xxx.md
 	// Note: relPath is relative to content/, but git needs relative to RepoPath
-	target := filepath.Join("content", relPath)
+	target := filepath.Join(config.ContentDir, relPath)
 	targetGit := filepath.ToSlash(target)
 	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", targetGit)
 	cmd.Dir = config.RepoPath
@@ -248,4 +246,20 @@ func getGitFileStatus(relPath string) (bool, error) {
 		return CheckSemanticDiff(targetGit)
 	}
 	return false, nil
+}
+
+func parseGitStatusPorcelainZ(out []byte) []string {
+	rawEntries := strings.Split(string(out), "\x00")
+	entries := make([]string, 0, len(rawEntries))
+	for i := 0; i < len(rawEntries); i++ {
+		entry := rawEntries[i]
+		if entry == "" {
+			continue
+		}
+		entries = append(entries, entry)
+		if len(entry) > 0 && (entry[0] == 'R' || entry[0] == 'C') {
+			i++ // porcelain -z stores the source path as the next NUL field.
+		}
+	}
+	return entries
 }

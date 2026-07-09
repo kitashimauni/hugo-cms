@@ -241,21 +241,57 @@ func TestPublishChangesCommitsBeforePush(t *testing.T) {
 	}
 }
 
+func TestPublishChangesSingleFileDoesNotRequireStaticDir(t *testing.T) {
+	repoPath := setupPublishRepositoryWithoutStatic(t)
+	if err := os.WriteFile(filepath.Join(repoPath, "content", "post.md"), []byte("changed\n"), 0644); err != nil {
+		t.Fatalf("modify content: %v", err)
+	}
+
+	pushCalled := false
+	_, err := publishChanges("token", "content/post.md", func(string, string, ...string) (string, error) {
+		pushCalled = true
+		return "pushed", nil
+	})
+	if err != nil {
+		t.Fatalf("publishChanges() unexpected error: %v", err)
+	}
+	if !pushCalled {
+		t.Fatal("publishChanges() did not push after committing without static dir")
+	}
+
+	output := runGitOutputForTest(t, repoPath, "show", "HEAD:content/post.md")
+	if string(output) != "changed\n" {
+		t.Fatalf("committed content = %q, want changed content", output)
+	}
+}
+
 func setupPublishRepository(t *testing.T) string {
+	t.Helper()
+	return setupPublishRepositoryWithOptions(t, true)
+}
+
+func setupPublishRepositoryWithoutStatic(t *testing.T) string {
+	t.Helper()
+	return setupPublishRepositoryWithOptions(t, false)
+}
+
+func setupPublishRepositoryWithOptions(t *testing.T, includeStatic bool) string {
 	t.Helper()
 	repoPath := t.TempDir()
 	runGitForTest(t, repoPath, "init")
 	if err := os.MkdirAll(filepath.Join(repoPath, "content"), 0755); err != nil {
 		t.Fatalf("create content directory: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(repoPath, "static"), 0755); err != nil {
-		t.Fatalf("create static directory: %v", err)
-	}
 	if err := os.WriteFile(filepath.Join(repoPath, "content", "post.md"), []byte("initial\n"), 0644); err != nil {
 		t.Fatalf("write initial content: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoPath, "static", ".gitkeep"), nil, 0644); err != nil {
-		t.Fatalf("write static placeholder: %v", err)
+	if includeStatic {
+		if err := os.MkdirAll(filepath.Join(repoPath, "static"), 0755); err != nil {
+			t.Fatalf("create static directory: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(repoPath, "static", ".gitkeep"), nil, 0644); err != nil {
+			t.Fatalf("write static placeholder: %v", err)
+		}
 	}
 	runGitForTest(t, repoPath, "add", ".")
 	runGitForTest(t, repoPath,

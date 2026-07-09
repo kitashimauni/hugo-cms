@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"hugo-cms/pkg/config"
@@ -41,7 +42,7 @@ func ReadinessCheck(c *gin.Context) {
 	}
 
 	// Check 2: Content directory is accessible
-	contentDir := config.RepoPath + "/content"
+	contentDir := filepath.Join(config.RepoPath, config.ContentDir)
 	contentAccessible := isDirAccessible(contentDir)
 	checks["content_dir"] = gin.H{
 		"healthy": contentAccessible,

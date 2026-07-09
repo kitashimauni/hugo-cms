@@ -248,8 +248,12 @@ func publishChanges(token, path string, push gitPushFunc) (string, error) {
 		// Single file publish
 		msg = fmt.Sprintf("Update %s via HomeCMS", path)
 
-		// Always add static
-		filesToAdd = append(filesToAdd, "static")
+		// Add static/media changes that may be referenced by the article, but
+		// do not require sites to have a static directory before any media is
+		// uploaded.
+		if dirExists(filepath.Join(config.RepoPath, config.StaticDir)) {
+			filesToAdd = append(filesToAdd, config.StaticDir)
+		}
 
 		// Check for Page Bundle
 		if strings.HasSuffix(path, "index.md") || strings.HasSuffix(path, "_index.md") {
@@ -302,6 +306,11 @@ func publishChanges(token, path string, push gitPushFunc) (string, error) {
 
 	fullLog := fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\n%s\n\n--- Git Push ---\n%s", commitLog, pushLog)
 	return fullLog, err
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func Diff(f1Path, f2Path, relPath string) (string, string) {
