@@ -23,6 +23,17 @@ func TestSetGeneratorAdapterRejectsNil(t *testing.T) {
 	}
 }
 
+func TestPreviewRuntimeSiteUsesSitePreviewProxyBase(t *testing.T) {
+	site := previewRuntimeSite(config.SiteConfig{
+		ID:         "docs site",
+		PreviewURL: "/",
+	})
+
+	if site.PreviewURL != "/admin/preview/docs%20site/" {
+		t.Fatalf("PreviewURL = %q, want site preview proxy base", site.PreviewURL)
+	}
+}
+
 func TestNewGeneratorAdapterSupportsEleventy(t *testing.T) {
 	adapter, err := NewGeneratorAdapter("eleventy")
 	if err != nil {

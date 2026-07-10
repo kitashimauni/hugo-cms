@@ -40,6 +40,40 @@ func configureGinMode() error {
 	}
 }
 
+func sitePreviewProxyHandler(c *gin.Context) {
+	siteID := strings.TrimSpace(c.Param("site"))
+	site, ok := config.GetSite(siteID)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown site: " + siteID})
+		return
+	}
+
+	if err := services.StartPreviewForSite(site); err != nil {
+		slog.Warn("Failed to start site preview", "site", siteID, "error", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Preview unavailable"})
+		return
+	}
+
+	previewProxyURL, _ := url.Parse("http://" + site.HugoServerBind + ":" + site.HugoServerPort)
+	proxy := httputil.NewSingleHostReverseProxy(previewProxyURL)
+	previewPath := c.Param("path")
+	if previewPath == "" {
+		previewPath = "/"
+	}
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = previewProxyURL.Scheme
+		req.URL.Host = previewProxyURL.Host
+		req.URL.Path = previewPath
+		req.URL.RawPath = ""
+		req.Host = previewProxyURL.Host
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		slog.Warn("Site preview proxy failed", "site", siteID, "error", err)
+		http.Error(w, "Preview unavailable", http.StatusBadGateway)
+	}
+	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
 func SetupRouter() (*gin.Engine, error) {
 	if err := configureGinMode(); err != nil {
 		return nil, err
@@ -111,14 +145,15 @@ func SetupRouter() (*gin.Engine, error) {
 			authorized.Static("/static", "./static")
 
 			authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
+			authorized.Any("/preview/:site/*path", sitePreviewProxyHandler)
 
 			api := authorized.Group("/api")
 			api.Use(handlers.RequestBodyLimit(config.MaxUploadSize + (1 << 20)))
 			api.Use(handlers.CSRFProtection) // Apply CSRF protection to all API routes
 			{
 				api.GET("/csrf-token", handlers.GetCSRFToken) // Endpoint to get CSRF token
-				api.POST("/build", handlers.RuntimeLocked(handlers.HandleBuild))
-				api.POST("/build/restart", handlers.RuntimeLocked(handlers.HandleRestart))
+				api.POST("/build", handlers.HandleBuild)
+				api.POST("/build/restart", handlers.HandleRestart)
 				api.GET("/articles", handlers.SiteScoped(handlers.ListArticles))
 				api.GET("/article", handlers.SiteScoped(handlers.GetArticle))
 				api.POST("/article", handlers.SiteScoped(handlers.SaveArticle))
@@ -193,9 +228,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Start Hugo Server
+	// Start default preview server
 	if err := services.StartHugoServer(); err != nil {
-		slog.Error("Failed to start Hugo Server", "error", err)
+		slog.Error("Failed to start default preview server", "error", err)
 	}
 
 	srv := newHTTPServer(r)
@@ -212,9 +247,9 @@ func main() {
 	<-quit
 	slog.Info("Shutting down server...")
 
-	// Clean up Hugo Server
-	if err := services.StopHugoServer(); err != nil {
-		slog.Error("Failed to stop Hugo Server", "error", err)
+	// Clean up preview servers
+	if err := services.StopAllPreviewServers(); err != nil {
+		slog.Error("Failed to stop preview servers", "error", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -5,6 +5,7 @@ Hugo CMSのREST API仕様です。
 ## 認証
 
 すべての `/admin/api/*` エンドポイントは認証が必要です。
+`/admin/preview/*` も認証済みadmin route配下で提供されます。
 
 ### セッション認証
 
@@ -29,6 +30,36 @@ fetch('/admin/api/article', {
     body: JSON.stringify(data)
 });
 ```
+
+---
+
+## サイト指定
+
+Site Registryを使う場合、site-aware APIはクエリパラメータまたはヘッダーで対象サイトを指定できます。
+
+```http
+GET /admin/api/articles?site=techblog
+X-CMS-Site: techblog
+```
+
+両方が指定された場合はクエリパラメータが優先されます。未指定の場合は`default_site`が使われます。
+
+対象API:
+
+- `/admin/api/articles`
+- `/admin/api/article`
+- `/admin/api/create`
+- `/admin/api/delete`
+- `/admin/api/diff`
+- `/admin/api/config`
+- `/admin/api/snippets`
+- `/admin/api/sync`
+- `/admin/api/publish`
+- `/admin/api/media`
+- `/admin/api/media/delete`
+- `/admin/api/media/raw`
+- `/admin/api/build`
+- `/admin/api/build/restart`
 
 ---
 
@@ -221,6 +252,52 @@ CSRFトークンを取得します。
     "type": "git"  // "git", "unsaved", or "none"
 }
 ```
+
+---
+
+## サイトAPI
+
+### GET /admin/api/sites
+
+読み込まれたSite Registryを取得します。
+
+**レスポンス**:
+
+```json
+{
+  "default_site": "techblog",
+  "selected_site": "techblog",
+  "sites": [
+    {
+      "id": "techblog",
+      "name": "Tech Blog",
+      "repo_path": "D:/sites/techblog",
+      "generator": "hugo",
+      "content_dir": "content",
+      "static_dir": "static",
+      "public_dir": "public",
+      "hugo_server_port": "1314",
+      "snippet_paths": ["D:/sites/techblog/.vscode/md.code-snippets"]
+    }
+  ]
+}
+```
+
+---
+
+## Preview
+
+### GET /admin/preview/:site/*
+
+選択サイトのpreview processへproxyします。管理画面のiframeが使用する内部routeです。
+
+例:
+
+```text
+/admin/preview/techblog/posts/hello/
+```
+
+このrouteは必要に応じて対象サイトのpreview processを起動し、Site Registryの`hugo_server_bind`と`hugo_server_port`へproxyします。サイトIDが存在しない場合は`400`、preview processを起動できない場合は`502`を返します。
 
 ---
 

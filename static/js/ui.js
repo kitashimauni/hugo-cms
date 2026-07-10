@@ -449,8 +449,10 @@ export function setPreviewUrl(path) {
 
     const rootRelativePath = "/" + previewPath.replace(/^\//, "");
     const targetUrl = rootRelativePath + (rootRelativePath.endsWith("/") ? "" : "/");
+    const siteID = API.getCurrentSite();
+    const previewBase = siteID ? `/admin/preview/${encodeURIComponent(siteID)}` : "";
 
-    frame.src = targetUrl + "?t=" + Date.now();
+    frame.src = previewBase + targetUrl + "?t=" + Date.now();
 }
 
 export function showDiffModal(diffText) {

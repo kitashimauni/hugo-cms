@@ -3,6 +3,8 @@ package services
 import (
 	"fmt"
 	"hugo-cms/pkg/config"
+	"net/url"
+	"path/filepath"
 	"sync"
 )
 
@@ -19,6 +21,8 @@ type GeneratorAdapter interface {
 var (
 	generatorAdapterMu sync.RWMutex
 	generatorAdapter   GeneratorAdapter = NewHugoAdapter()
+	previewAdaptersMu  sync.Mutex
+	previewAdapters    = map[string]GeneratorAdapter{}
 )
 
 func CurrentGeneratorAdapter() GeneratorAdapter {
@@ -63,19 +67,19 @@ func NewGeneratorAdapter(name string) (GeneratorAdapter, error) {
 // Compatibility wrappers keep the existing API stable while generator-specific
 // behavior lives behind GeneratorAdapter.
 func StartHugoServer() error {
-	return CurrentGeneratorAdapter().StartPreview()
+	return StartPreviewForSite(defaultPreviewSite())
 }
 
 func StopHugoServer() error {
-	return CurrentGeneratorAdapter().StopPreview()
+	return StopPreviewForSite(defaultPreviewSite())
 }
 
 func RestartHugoServer() error {
-	return CurrentGeneratorAdapter().RestartPreview()
+	return RestartPreviewForSite(defaultPreviewSite())
 }
 
 func IsHugoServerRunning() bool {
-	return CurrentGeneratorAdapter().IsPreviewRunning()
+	return IsPreviewRunningForSite(defaultPreviewSite())
 }
 
 func BuildSite() (string, error) {
@@ -92,4 +96,102 @@ func CreateContent(path string) (string, error) {
 		return "", err
 	}
 	return adapter.CreateContent(path)
+}
+
+func StartPreviewForSite(site config.SiteConfig) error {
+	previewAdaptersMu.Lock()
+	defer previewAdaptersMu.Unlock()
+
+	adapter, err := previewAdapterForSiteLocked(site)
+	if err != nil {
+		return err
+	}
+	return WithSiteRuntime(previewRuntimeSite(site), adapter.StartPreview)
+}
+
+func StopPreviewForSite(site config.SiteConfig) error {
+	previewAdaptersMu.Lock()
+	defer previewAdaptersMu.Unlock()
+
+	adapter, ok := previewAdapters[sitePreviewKey(site)]
+	if !ok {
+		return nil
+	}
+	return adapter.StopPreview()
+}
+
+func RestartPreviewForSite(site config.SiteConfig) error {
+	previewAdaptersMu.Lock()
+	defer previewAdaptersMu.Unlock()
+
+	adapter, err := previewAdapterForSiteLocked(site)
+	if err != nil {
+		return err
+	}
+	if err := adapter.StopPreview(); err != nil {
+		return err
+	}
+	return WithSiteRuntime(previewRuntimeSite(site), adapter.StartPreview)
+}
+
+func IsPreviewRunningForSite(site config.SiteConfig) bool {
+	previewAdaptersMu.Lock()
+	defer previewAdaptersMu.Unlock()
+
+	adapter, ok := previewAdapters[sitePreviewKey(site)]
+	return ok && adapter.IsPreviewRunning()
+}
+
+func StopAllPreviewServers() error {
+	previewAdaptersMu.Lock()
+	adapters := make([]GeneratorAdapter, 0, len(previewAdapters))
+	for _, adapter := range previewAdapters {
+		adapters = append(adapters, adapter)
+	}
+	previewAdapters = map[string]GeneratorAdapter{}
+	previewAdaptersMu.Unlock()
+
+	var stopErr error
+	for _, adapter := range adapters {
+		if err := adapter.StopPreview(); err != nil && stopErr == nil {
+			stopErr = err
+		}
+	}
+	return stopErr
+}
+
+func previewAdapterForSiteLocked(site config.SiteConfig) (GeneratorAdapter, error) {
+	key := sitePreviewKey(site)
+	if adapter, ok := previewAdapters[key]; ok {
+		return adapter, nil
+	}
+
+	adapter, err := NewGeneratorAdapter(site.Generator)
+	if err != nil {
+		return nil, err
+	}
+	previewAdapters[key] = adapter
+	return adapter, nil
+}
+
+func sitePreviewKey(site config.SiteConfig) string {
+	if site.ID != "" {
+		return site.ID
+	}
+	return filepath.ToSlash(filepath.Clean(site.RepoPath)) + "\x00" + site.HugoServerBind + "\x00" + site.HugoServerPort
+}
+
+func defaultPreviewSite() config.SiteConfig {
+	if site, ok := config.GetSite(config.DefaultSiteID); ok {
+		return site
+	}
+	return config.RuntimeSiteConfig()
+}
+
+func previewRuntimeSite(site config.SiteConfig) config.SiteConfig {
+	if site.ID == "" {
+		return site
+	}
+	site.PreviewURL = "/admin/preview/" + url.PathEscape(site.ID) + "/"
+	return site
 }

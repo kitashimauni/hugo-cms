@@ -1,10 +1,10 @@
 # マルチサイト・マルチジェネレーター設計
 
-最終更新日: 2026-07-06
+最終更新日: 2026-07-10
 
 ## ステータス
 
-提案段階。現在のHugo向け動作を維持しながら段階的に移行する。
+段階実装中。現在のHugo向け動作を維持しながら、Site Registry、site-aware API、site別preview processへ移行している。
 
 ## 背景
 
@@ -172,14 +172,37 @@ type GeneratorAdapter interface {
 
 ### Preview Process Supervisor
 
-現在の単一グローバルなHugoプロセスを、サイトIDをキーにしたプロセス管理へ変更する。
+単一グローバルなHugoプロセスではなく、サイトIDをキーにしたプロセス管理を行う。
 
-- 動的な空きポート割り当て
 - サイト単位の起動・停止・再起動
 - 多重起動防止
-- readiness確認
-- アイドル時の自動停止
-- 同時起動数、CPU、メモリ、実行時間の制限
+- shutdown時の全preview停止
+- `/admin/preview/{siteID}/...` 経由の認証付きproxy
+- selected siteのiframe preview
+
+現在の実装では、ポートはSite Registryの`hugo_server_port`で明示する。今後の改善候補として、動的な空きポート割り当て、readiness確認、アイドル時の自動停止、同時起動数やCPU/メモリ制限がある。
+
+```mermaid
+flowchart LR
+    UI["Editor iframe"] --> Proxy["/admin/preview/{siteID}/..."]
+    Proxy --> Registry["Site Registry"]
+    Registry --> Manager["Preview Manager"]
+    Manager --> HugoProc["Hugo server (site A)"]
+    Manager --> EleventyProc["Eleventy --serve (site B)"]
+```
+
+preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:<preview-port>`をブラウザへ露出しないことで、previewプロセスのbind先をローカルに閉じ込めやすくする。
+
+### Site Runtime Bridge
+
+既存サービスの多くは`config.RepoPath`などのprocess-wide runtime値を参照している。現在は互換性を保つため、HTTP handler層で選択サイトを解決し、短時間だけruntime値を適用するbridgeを使っている。
+
+- site-scoped APIは`?site=`または`X-CMS-Site`で対象サイトを指定する。
+- preview process管理はサイト設定を明示的に受け取り、site IDごとにadapterを保持する。
+- 記事キャッシュは`repo_path + content_dir`でkey分割する。
+- process-wide runtimeを読むscope外処理はruntime lockで保護する。
+
+今後の最終形は、記事・メディア・Git・generatorサービスへ`SiteConfig`または`SiteRuntime`を明示的に渡し、process-wide runtime mutationを削減することである。
 
 ## ジェネレーターごとの差異
 
