@@ -30,23 +30,23 @@ func (*EleventyAdapter) Name() string {
 	return "eleventy"
 }
 
-func (adapter *EleventyAdapter) StartPreview() error {
-	pm, err := detectEleventyPackageManager(config.RepoPath)
+func (adapter *EleventyAdapter) StartPreview(runtime config.SiteRuntime) error {
+	pm, err := detectEleventyPackageManager(runtime.RepoPath)
 	if err != nil {
 		return err
 	}
-	slog.Info("Starting Eleventy server", "port", config.HugoServerPort, "package_manager", pm.Name)
+	slog.Info("Starting Eleventy server", "site", runtime.ID, "port", runtime.HugoServerPort, "package_manager", pm.Name)
 
 	err = adapter.preview.Start(func() managedProcess {
 		args := append([]string{}, pm.Args...)
 		args = append(args,
 			"--serve",
-			"--port", config.HugoServerPort,
-			"--input", config.ContentDir,
-			"--output", config.PublicDir,
+			"--port", runtime.HugoServerPort,
+			"--input", runtime.ContentDir,
+			"--output", runtime.PublicDir,
 		)
 		cmd := exec.Command(pm.Bin, args...)
-		cmd.Dir = config.RepoPath
+		cmd.Dir = runtime.RepoPath
 		cmd.Env = generatorProcessEnvironment("NODE_ENV=development")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -70,26 +70,19 @@ func (adapter *EleventyAdapter) StopPreview() error {
 	return nil
 }
 
-func (adapter *EleventyAdapter) RestartPreview() error {
-	if err := adapter.StopPreview(); err != nil {
-		return err
-	}
-	return adapter.StartPreview()
-}
-
 func (adapter *EleventyAdapter) IsPreviewRunning() bool {
 	return adapter.preview.Running()
 }
 
-func (*EleventyAdapter) Build() (string, error) {
-	pm, err := detectEleventyPackageManager(config.RepoPath)
+func (*EleventyAdapter) Build(runtime config.SiteRuntime) (string, error) {
+	pm, err := detectEleventyPackageManager(runtime.RepoPath)
 	if err != nil {
 		return "", err
 	}
 
 	start := time.Now()
 	defer func() {
-		slog.Info("Eleventy build completed", "duration", time.Since(start), "package_manager", pm.Name)
+		slog.Info("Eleventy build completed", "site", runtime.ID, "duration", time.Since(start), "package_manager", pm.Name)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -97,11 +90,11 @@ func (*EleventyAdapter) Build() (string, error) {
 
 	args := append([]string{}, pm.Args...)
 	args = append(args,
-		"--input", config.ContentDir,
-		"--output", config.PublicDir,
+		"--input", runtime.ContentDir,
+		"--output", runtime.PublicDir,
 	)
 	cmd := exec.CommandContext(ctx, pm.Bin, args...)
-	cmd.Dir = config.RepoPath
+	cmd.Dir = runtime.RepoPath
 	cmd.Env = generatorProcessEnvironment("NODE_ENV=production")
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -110,13 +103,13 @@ func (*EleventyAdapter) Build() (string, error) {
 	return string(output), err
 }
 
-func (*EleventyAdapter) CreateContent(path string) (string, error) {
+func (*EleventyAdapter) CreateContent(runtime config.SiteRuntime, path string) (string, error) {
 	start := time.Now()
 	defer func() {
-		slog.Info("Eleventy new content", "path", path, "duration", time.Since(start))
+		slog.Info("Eleventy new content", "site", runtime.ID, "path", path, "duration", time.Since(start))
 	}()
 
-	fullPath := SafeJoin(config.RepoPath, config.ContentDir, path)
+	fullPath := SafeJoin(runtime.RepoPath, runtime.ContentDir, path)
 	if fullPath == "" {
 		return "Invalid path", fmt.Errorf("invalid path: %s", path)
 	}
@@ -124,12 +117,12 @@ func (*EleventyAdapter) CreateContent(path string) (string, error) {
 		return "File already exists", os.ErrExist
 	}
 
-	cmsConfig, err := GetCMSConfig()
+	cmsConfig, err := GetCMSConfigForRuntime(runtime)
 	if err != nil {
 		return "Eleventy content creation requires CMS config", err
 	}
 
-	relContentPath := filepath.Join(config.ContentDir, path)
+	relContentPath := filepath.Join(runtime.ContentDir, path)
 	for _, collection := range cmsConfig.Collections {
 		collFolder := filepath.Clean(collection.Folder)
 		targetFolder := filepath.Dir(relContentPath)

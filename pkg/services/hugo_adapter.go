@@ -23,11 +23,11 @@ func (*HugoAdapter) Name() string {
 	return "hugo"
 }
 
-func (adapter *HugoAdapter) StartPreview() error {
-	slog.Info("Starting Hugo server", "port", config.HugoServerPort)
+func (adapter *HugoAdapter) StartPreview(runtime config.SiteRuntime) error {
+	slog.Info("Starting Hugo server", "site", runtime.ID, "port", runtime.HugoServerPort)
 
 	err := adapter.preview.Start(func() managedProcess {
-		cmd := exec.Command("hugo", hugoServerArgs()...)
+		cmd := exec.Command("hugo", hugoServerArgs(runtime)...)
 		cmd.Env = generatorProcessEnvironment()
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -51,27 +51,20 @@ func (adapter *HugoAdapter) StopPreview() error {
 	return nil
 }
 
-func (adapter *HugoAdapter) RestartPreview() error {
-	if err := adapter.StopPreview(); err != nil {
-		return err
-	}
-	return adapter.StartPreview()
-}
-
 func (adapter *HugoAdapter) IsPreviewRunning() bool {
 	return adapter.preview.Running()
 }
 
-func (*HugoAdapter) Build() (string, error) {
+func (*HugoAdapter) Build(runtime config.SiteRuntime) (string, error) {
 	start := time.Now()
 	defer func() {
-		slog.Info("Hugo build completed", "duration", time.Since(start))
+		slog.Info("Hugo build completed", "site", runtime.ID, "duration", time.Since(start))
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "hugo", hugoBuildArgs()...)
+	cmd := exec.CommandContext(ctx, "hugo", hugoBuildArgs(runtime)...)
 	cmd.Env = generatorProcessEnvironment()
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -80,14 +73,14 @@ func (*HugoAdapter) Build() (string, error) {
 	return string(output), err
 }
 
-func hugoServerArgs() []string {
+func hugoServerArgs(runtime config.SiteRuntime) []string {
 	return []string{
 		"server",
-		"--source", config.RepoPath,
-		"--contentDir", config.ContentDir,
-		"--bind", config.HugoServerBind,
-		"--port", config.HugoServerPort,
-		"--baseURL", config.GetAppURL() + config.PreviewURL,
+		"--source", runtime.RepoPath,
+		"--contentDir", runtime.ContentDir,
+		"--bind", runtime.HugoServerBind,
+		"--port", runtime.HugoServerPort,
+		"--baseURL", runtime.AppURL + runtime.PreviewURL,
 		"--appendPort=false",
 		"--disableLiveReload",
 		"-D",
@@ -95,25 +88,25 @@ func hugoServerArgs() []string {
 	}
 }
 
-func hugoBuildArgs() []string {
+func hugoBuildArgs(runtime config.SiteRuntime) []string {
 	return []string{
-		"--source", config.RepoPath,
-		"--contentDir", config.ContentDir,
-		"--destination", config.PublicDir,
-		"--baseURL", config.GetAppURL() + config.PreviewURL,
+		"--source", runtime.RepoPath,
+		"--contentDir", runtime.ContentDir,
+		"--destination", runtime.PublicDir,
+		"--baseURL", runtime.AppURL + runtime.PreviewURL,
 		"--cleanDestinationDir",
 		"-D",
 		"-F",
 	}
 }
 
-func (*HugoAdapter) CreateContent(path string) (string, error) {
+func (*HugoAdapter) CreateContent(runtime config.SiteRuntime, path string) (string, error) {
 	start := time.Now()
 	defer func() {
-		slog.Info("Hugo new content", "path", path, "duration", time.Since(start))
+		slog.Info("Hugo new content", "site", runtime.ID, "path", path, "duration", time.Since(start))
 	}()
 
-	fullPath := SafeJoin(config.RepoPath, config.ContentDir, path)
+	fullPath := SafeJoin(runtime.RepoPath, runtime.ContentDir, path)
 	if fullPath == "" {
 		return "Invalid path", fmt.Errorf("invalid path: %s", path)
 	}
@@ -122,9 +115,9 @@ func (*HugoAdapter) CreateContent(path string) (string, error) {
 		return "File already exists", os.ErrExist
 	}
 
-	cmsConfig, err := GetCMSConfig()
+	cmsConfig, err := GetCMSConfigForRuntime(runtime)
 	if err == nil {
-		relContentPath := filepath.Join(config.ContentDir, path)
+		relContentPath := filepath.Join(runtime.ContentDir, path)
 
 		for _, collection := range cmsConfig.Collections {
 			collFolder := filepath.Clean(collection.Folder)
@@ -149,8 +142,8 @@ func (*HugoAdapter) CreateContent(path string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "hugo", hugoNewContentArgs(path)...)
-	cmd.Dir = config.RepoPath
+	cmd := exec.CommandContext(ctx, "hugo", hugoNewContentArgs(runtime, path)...)
+	cmd.Dir = runtime.RepoPath
 	cmd.Env = generatorProcessEnvironment()
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -159,11 +152,11 @@ func (*HugoAdapter) CreateContent(path string) (string, error) {
 	return string(output), err
 }
 
-func hugoNewContentArgs(path string) []string {
+func hugoNewContentArgs(runtime config.SiteRuntime, path string) []string {
 	return []string{
 		"new",
 		"content",
-		"--contentDir", config.ContentDir,
+		"--contentDir", runtime.ContentDir,
 		filepath.ToSlash(path),
 	}
 }

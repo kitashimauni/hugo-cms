@@ -4,7 +4,7 @@
 
 ## ステータス
 
-段階実装中。現在のHugo向け動作を維持しながら、Site Registry、site-aware API、site別preview processへ移行している。
+段階実装中。現在のHugo向け動作を維持しながら、Site Registry、site-aware API、site別preview processを導入済み。次の焦点はprocess-wide runtime bridgeを縮小し、サービスへ`SiteRuntime`を明示的に渡すことである。
 
 ## 背景
 
@@ -201,13 +201,16 @@ preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:
 
 既存サービスの多くは`config.RepoPath`などのprocess-wide runtime値を参照している。現在は互換性を保つため、HTTP handler層で選択サイトを解決し、短時間だけruntime値を適用するbridgeを使っている。
 
+`SiteRuntime`は、Site Registry由来の`SiteConfig`に、現在グローバルで管理している実行時設定（Git設定、App URL、解決済みPublicPathなど）を合わせたサービス向けの値オブジェクトである。新規または改修するサービスは、`SiteConfig`やprocess-wide globalsではなく`SiteRuntime`を受け取る。
+
 - site-scoped APIは`?site=`または`X-CMS-Site`で対象サイトを指定する。
 - preview process管理はサイト設定を明示的に受け取り、site IDごとにadapterを保持する。
+- generator adapterのpreview/build/createは`SiteRuntime`を明示的に受け取り、Hugo/Eleventyコマンド生成では`config.RepoPath`等のprocess-wide値を直接読まない。
 - 記事キャッシュは`repo_path + content_dir`でkey分割する。
 - process-wide runtimeを読むscope外処理はruntime lockで保護する。
 - preview adapter mapのlockはmapアクセス中だけ保持し、preview process操作やruntime bridge呼び出し中には保持しない。`/ready`などがruntime lockを先に取るため、lock順序の反転を避ける。
 
-今後の最終形は、記事・メディア・Git・generatorサービスへ`SiteConfig`または`SiteRuntime`を明示的に渡し、process-wide runtime mutationを削減することである。
+今後の最終形は、記事・メディア・Gitサービスにも`SiteRuntime`を明示的に渡し、process-wide runtime mutationを削減することである。
 
 ## ジェネレーターごとの差異
 
@@ -370,12 +373,19 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 
 `SITES_CONFIG_PATH`からSite Registryを読み込み、default siteの`repo_path`、`generator`、`content_dir`、`static_dir`、`public_dir`を既存APIへ適用できるようにした。`GET /admin/api/sites`で読み込み結果を確認できる。
 
-未実装:
+実装済み:
 
 - UI上のサイト切替
-- `/admin/sites/{siteID}/api/...`形式のsiteId付きAPI
-- サイト単位のプレビューProcessManager
+- `?site=`および`X-CMS-Site`によるsite-aware API
+- サイト単位のpreview process管理
+- `/admin/preview/{siteID}/...`の認証付きpreview proxy
+- preview bind/portの重複検証
+
+未実装:
+
+- `/admin/sites/{siteID}/api/...`形式のpath-based site API
 - サイトごとのmise実行
+- `SiteRuntime`の全サービスへの展開
 
 ### Phase 3: コンテンツとメディアの共通化
 
@@ -404,10 +414,13 @@ Hugo/Eleventyの子プロセスへ渡す環境変数をallowlist方式にし、`
 
 初期版の`EleventyAdapter`を追加した。`package.json`とlockファイルを必須とし、lockfileに対応するpackage managerでローカル依存のEleventyを起動・ビルドする。新規記事はCMS configのcollectionに一致する場合だけFront Matter codec経由で生成する。
 
+実装済み:
+
+- siteId単位のEleventyプレビュー
+
 未実装:
 
 - UIからのgenerator差分表示
-- siteId単位のEleventyプレビュー
 - JavaScript Front Matterのraw編集表示
 - Eleventy Data Cascadeの実効値表示
 

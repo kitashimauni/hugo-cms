@@ -17,7 +17,7 @@ type testGeneratorAdapter struct {
 
 func (adapter testGeneratorAdapter) Name() string { return "test" }
 
-func (adapter testGeneratorAdapter) StartPreview() error {
+func (adapter testGeneratorAdapter) StartPreview(_ config.SiteRuntime) error {
 	if adapter.start != nil {
 		return adapter.start()
 	}
@@ -31,13 +31,6 @@ func (adapter testGeneratorAdapter) StopPreview() error {
 	return nil
 }
 
-func (adapter testGeneratorAdapter) RestartPreview() error {
-	if err := adapter.StopPreview(); err != nil {
-		return err
-	}
-	return adapter.StartPreview()
-}
-
 func (adapter testGeneratorAdapter) IsPreviewRunning() bool {
 	if adapter.isRunning != nil {
 		return adapter.isRunning()
@@ -45,9 +38,9 @@ func (adapter testGeneratorAdapter) IsPreviewRunning() bool {
 	return true
 }
 
-func (adapter testGeneratorAdapter) Build() (string, error) { return "", nil }
+func (adapter testGeneratorAdapter) Build(_ config.SiteRuntime) (string, error) { return "", nil }
 
-func (adapter testGeneratorAdapter) CreateContent(_ string) (string, error) {
+func (adapter testGeneratorAdapter) CreateContent(_ config.SiteRuntime, _ string) (string, error) {
 	return "", nil
 }
 
@@ -115,7 +108,7 @@ func TestStartPreviewForSiteDoesNotHoldAdapterMapLockWhileStarting(t *testing.T)
 
 	previewAdaptersMu.Lock()
 	previewAdapters = map[string]GeneratorAdapter{
-		sitePreviewKey(site): testGeneratorAdapter{
+		sitePreviewKey(config.NewSiteRuntime(site)): testGeneratorAdapter{
 			start: func() error {
 				if !IsPreviewRunningForSite(site) {
 					return fmt.Errorf("IsPreviewRunningForSite() = false, want true")
@@ -312,7 +305,7 @@ collections:
 		t.Fatalf("write cms config: %v", err)
 	}
 
-	log, err := NewEleventyAdapter().CreateContent("posts/new.md")
+	log, err := NewEleventyAdapter().CreateContent(config.CurrentSiteRuntime(), "posts/new.md")
 	if err != nil {
 		t.Fatalf("CreateContent() error = %v, log = %q", err, log)
 	}

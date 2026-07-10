@@ -130,7 +130,11 @@ func DeleteFile(targetPath string) error {
 }
 
 func GetConfig() (map[string]interface{}, error) {
-	configPath := filepath.Join(config.RepoPath, config.StaticDir, "admin", "config.yml")
+	return GetConfigForRuntime(config.CurrentSiteRuntime())
+}
+
+func GetConfigForRuntime(runtime config.SiteRuntime) (map[string]interface{}, error) {
+	configPath := filepath.Join(runtime.RepoPath, runtime.StaticDir, "admin", "config.yml")
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, err
@@ -144,7 +148,11 @@ func GetConfig() (map[string]interface{}, error) {
 }
 
 func GetCMSConfig() (*models.CMSConfig, error) {
-	configPath := filepath.Join(config.RepoPath, config.StaticDir, "admin", "config.yml")
+	return GetCMSConfigForRuntime(config.CurrentSiteRuntime())
+}
+
+func GetCMSConfigForRuntime(runtime config.SiteRuntime) (*models.CMSConfig, error) {
+	configPath := filepath.Join(runtime.RepoPath, runtime.StaticDir, "admin", "config.yml")
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, err

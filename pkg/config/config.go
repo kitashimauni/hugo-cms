@@ -400,36 +400,26 @@ func applyDefaultSite(site SiteConfig) {
 }
 
 func RuntimeSiteConfig() SiteConfig {
-	return SiteConfig{
-		ID:              DefaultSiteID,
-		Name:            "Current",
-		RepoPath:        RepoPath,
-		Generator:       SiteGenerator,
-		ContentDir:      ContentDir,
-		StaticDir:       StaticDir,
-		PublicDir:       PublicDir,
-		PreviewURL:      PreviewURL,
-		HugoServerPort:  HugoServerPort,
-		HugoServerBind:  HugoServerBind,
-		ArticleMediaDir: ArticleMediaDir,
-		StaticMediaDir:  StaticMediaDir,
-		SnippetPaths:    SnippetPaths,
-	}
+	return CurrentSiteRuntime().SiteConfig()
 }
 
 func ApplySiteRuntime(site SiteConfig) {
-	RepoPath = site.RepoPath
-	SiteGenerator = site.Generator
-	ContentDir = site.ContentDir
-	StaticDir = site.StaticDir
-	PublicDir = site.PublicDir
-	PublicPath = filepath.Join(site.RepoPath, site.PublicDir)
-	PreviewURL = site.PreviewURL
-	HugoServerPort = site.HugoServerPort
-	HugoServerBind = site.HugoServerBind
-	ArticleMediaDir = site.ArticleMediaDir
-	StaticMediaDir = site.StaticMediaDir
-	SnippetPaths = site.SnippetPaths
+	ApplyRuntime(NewSiteRuntime(site))
+}
+
+func ApplyRuntime(runtime SiteRuntime) {
+	RepoPath = runtime.RepoPath
+	SiteGenerator = runtime.Generator
+	ContentDir = runtime.ContentDir
+	StaticDir = runtime.StaticDir
+	PublicDir = runtime.PublicDir
+	PublicPath = runtime.PublicPath
+	PreviewURL = runtime.PreviewURL
+	HugoServerPort = runtime.HugoServerPort
+	HugoServerBind = runtime.HugoServerBind
+	ArticleMediaDir = runtime.ArticleMediaDir
+	StaticMediaDir = runtime.StaticMediaDir
+	SnippetPaths = append([]string(nil), runtime.SnippetPaths...)
 }
 
 // ValidateSecurityConfig rejects insecure authorization defaults.
