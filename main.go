@@ -85,7 +85,7 @@ func SetupRouter() (*gin.Engine, error) {
 
 	// --- Health Check Endpoints (Public) ---
 	r.GET("/health", handlers.HealthCheck)
-	r.GET("/ready", handlers.ReadinessCheck)
+	r.GET("/ready", handlers.RuntimeLocked(handlers.ReadinessCheck))
 
 	// --- Admin Routes ---
 	admin := r.Group("/admin")
@@ -117,23 +117,23 @@ func SetupRouter() (*gin.Engine, error) {
 			api.Use(handlers.CSRFProtection) // Apply CSRF protection to all API routes
 			{
 				api.GET("/csrf-token", handlers.GetCSRFToken) // Endpoint to get CSRF token
-				api.POST("/build", handlers.HandleBuild)
-				api.POST("/build/restart", handlers.HandleRestart)
-				api.GET("/articles", handlers.ListArticles)
-				api.GET("/article", handlers.GetArticle)
-				api.POST("/article", handlers.SaveArticle)
-				api.POST("/create", handlers.CreateArticle)
-				api.POST("/delete", handlers.DeleteArticle)
-				api.POST("/diff", handlers.GetDiff)
-				api.GET("/config", handlers.GetConfig)
+				api.POST("/build", handlers.RuntimeLocked(handlers.HandleBuild))
+				api.POST("/build/restart", handlers.RuntimeLocked(handlers.HandleRestart))
+				api.GET("/articles", handlers.SiteScoped(handlers.ListArticles))
+				api.GET("/article", handlers.SiteScoped(handlers.GetArticle))
+				api.POST("/article", handlers.SiteScoped(handlers.SaveArticle))
+				api.POST("/create", handlers.SiteScoped(handlers.CreateArticle))
+				api.POST("/delete", handlers.SiteScoped(handlers.DeleteArticle))
+				api.POST("/diff", handlers.SiteScoped(handlers.GetDiff))
+				api.GET("/config", handlers.SiteScoped(handlers.GetConfig))
 				api.GET("/sites", handlers.ListSites)
-				api.GET("/snippets", handlers.GetSnippets)
-				api.POST("/sync", handlers.HandleSync)
-				api.POST("/publish", handlers.HandlePublish)
-				api.GET("/media", handlers.ListMedia)
-				api.POST("/media", handlers.UploadMedia)
-				api.POST("/media/delete", handlers.DeleteMedia)
-				api.GET("/media/raw", handlers.ServeMediaRaw)
+				api.GET("/snippets", handlers.SiteScoped(handlers.GetSnippets))
+				api.POST("/sync", handlers.SiteScoped(handlers.HandleSync))
+				api.POST("/publish", handlers.SiteScoped(handlers.HandlePublish))
+				api.GET("/media", handlers.SiteScoped(handlers.ListMedia))
+				api.POST("/media", handlers.SiteScoped(handlers.UploadMedia))
+				api.POST("/media/delete", handlers.SiteScoped(handlers.DeleteMedia))
+				api.GET("/media/raw", handlers.SiteScoped(handlers.ServeMediaRaw))
 			}
 		}
 	}

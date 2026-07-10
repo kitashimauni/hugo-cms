@@ -394,14 +394,16 @@ func GetConfig(c *gin.Context) {
 		"public_dir":     config.PublicDir,
 		"site_generator": config.SiteGenerator,
 		"default_site":   config.DefaultSiteID,
+		"site_id":        currentSiteID(c),
 	}
 	c.JSON(http.StatusOK, cfg)
 }
 
 func ListSites(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"default_site": config.DefaultSiteID,
-		"sites":        config.Sites,
+		"default_site":  config.DefaultSiteID,
+		"selected_site": currentSiteID(c),
+		"sites":         config.Sites,
 	})
 }
 
