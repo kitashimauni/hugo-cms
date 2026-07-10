@@ -73,6 +73,7 @@ sites:
 - サイトごとに別のpreview processが起動する
 - Restart Previewが選択サイトのpreviewだけを再起動する
 - `hugo_server_bind` + `hugo_server_port` が重複しているSite Registryは起動時に拒否される
+- `0.0.0.0`や`::`のwildcard bindは、同じportの具体bindとも衝突として拒否される
 
 ## 4. Eleventy
 

@@ -282,15 +282,42 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 }
 
 func validateUniquePreviewAddresses(sites []SiteConfig) error {
-	seen := map[string]string{}
+	seen := []previewAddressUse{}
 	for _, site := range sites {
-		key := net.JoinHostPort(site.HugoServerBind, site.HugoServerPort)
-		if existingID, ok := seen[key]; ok {
-			return fmt.Errorf("preview address %s is used by both site %q and site %q", key, existingID, site.ID)
+		current := newPreviewAddressUse(site)
+		for _, existing := range seen {
+			if existing.address == current.address {
+				return fmt.Errorf("preview address %s is used by both site %q and site %q", current.address, existing.siteID, current.siteID)
+			}
+			if existing.port == current.port && (existing.wildcard || current.wildcard) {
+				return fmt.Errorf("preview port %s conflicts because wildcard bind is used by site %q (%s) and site %q (%s)", current.port, existing.siteID, existing.address, current.siteID, current.address)
+			}
 		}
-		seen[key] = site.ID
+		seen = append(seen, current)
 	}
 	return nil
+}
+
+type previewAddressUse struct {
+	siteID   string
+	address  string
+	port     string
+	wildcard bool
+}
+
+func newPreviewAddressUse(site SiteConfig) previewAddressUse {
+	return previewAddressUse{
+		siteID:   site.ID,
+		address:  net.JoinHostPort(site.HugoServerBind, site.HugoServerPort),
+		port:     site.HugoServerPort,
+		wildcard: isWildcardBind(site.HugoServerBind),
+	}
+}
+
+func isWildcardBind(bind string) bool {
+	bind = strings.Trim(strings.TrimSpace(bind), "[]")
+	ip := net.ParseIP(bind)
+	return ip != nil && ip.IsUnspecified()
 }
 
 func defaultSnippetPaths(repoPath string) []string {
