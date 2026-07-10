@@ -85,7 +85,7 @@ func SetupRouter() (*gin.Engine, error) {
 
 	// --- Health Check Endpoints (Public) ---
 	r.GET("/health", handlers.HealthCheck)
-	r.GET("/ready", handlers.ReadinessCheck)
+	r.GET("/ready", handlers.RuntimeLocked(handlers.ReadinessCheck))
 
 	// --- Admin Routes ---
 	admin := r.Group("/admin")
