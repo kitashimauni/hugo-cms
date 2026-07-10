@@ -16,9 +16,8 @@ import (
 )
 
 var (
-	articleCache []models.Article
-	cacheMutex   sync.Mutex
-	cacheLoaded  bool
+	articleCaches = map[string][]models.Article{}
+	cacheMutex    sync.Mutex
 )
 
 func GetArticlesCache() ([]models.Article, error) {
@@ -26,12 +25,13 @@ func GetArticlesCache() ([]models.Article, error) {
 	cacheMutex.Lock()
 	defer cacheMutex.Unlock()
 
-	if cacheLoaded {
+	cacheKey := articleCacheKey()
+	if articleCache, ok := articleCaches[cacheKey]; ok {
 		return articleCache, nil
 	}
 
 	defer func() {
-		slog.Info("Cache rebuild completed", "duration", time.Since(start), "count", len(articleCache))
+		slog.Info("Cache rebuild completed", "site_cache_key", cacheKey, "duration", time.Since(start), "count", len(articleCaches[cacheKey]))
 	}()
 
 	contentDir := filepath.Join(config.RepoPath, config.ContentDir)
@@ -91,9 +91,8 @@ func GetArticlesCache() ([]models.Article, error) {
 
 	wg.Wait()
 
-	articleCache = articles
-	cacheLoaded = true
-	return articleCache, nil
+	articleCaches[cacheKey] = articles
+	return articles, nil
 }
 
 func readHead(path string, limit int64) ([]byte, error) {
@@ -161,8 +160,7 @@ func getGitDirtyFiles(dir string) (map[string]bool, error) {
 func InvalidateCache() {
 	cacheMutex.Lock()
 	defer cacheMutex.Unlock()
-	cacheLoaded = false
-	articleCache = nil
+	delete(articleCaches, articleCacheKey())
 }
 
 func UpdateCache(relPath string) {
@@ -174,6 +172,8 @@ func UpdateCache(relPath string) {
 	cacheMutex.Lock()
 	defer cacheMutex.Unlock()
 
+	cacheKey := articleCacheKey()
+	articleCache, cacheLoaded := articleCaches[cacheKey]
 	if !cacheLoaded {
 		return // Next Get will rebuild
 	}
@@ -186,6 +186,7 @@ func UpdateCache(relPath string) {
 		for i, art := range articleCache {
 			if art.Path == relPath {
 				articleCache = append(articleCache[:i], articleCache[i+1:]...)
+				articleCaches[cacheKey] = articleCache
 				break
 			}
 		}
@@ -225,6 +226,11 @@ func UpdateCache(relPath string) {
 	if !found {
 		articleCache = append(articleCache, newArt)
 	}
+	articleCaches[cacheKey] = articleCache
+}
+
+func articleCacheKey() string {
+	return filepath.ToSlash(filepath.Clean(config.RepoPath)) + "\x00" + filepath.ToSlash(filepath.Clean(config.ContentDir))
 }
 
 func getGitFileStatus(relPath string) (bool, error) {

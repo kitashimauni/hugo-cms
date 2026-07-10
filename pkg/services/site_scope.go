@@ -7,6 +7,12 @@ import (
 
 var siteScopeMu sync.Mutex
 
+func WithSiteRuntimeLock(fn func() error) error {
+	siteScopeMu.Lock()
+	defer siteScopeMu.Unlock()
+	return fn()
+}
+
 // WithSiteRuntime temporarily applies a site configuration while executing fn.
 //
 // Existing services read site settings from config globals. This scoped bridge
@@ -19,10 +25,8 @@ func WithSiteRuntime(site config.SiteConfig, fn func() error) error {
 
 	previous := config.RuntimeSiteConfig()
 	config.ApplySiteRuntime(site)
-	InvalidateCache()
 	defer func() {
 		config.ApplySiteRuntime(previous)
-		InvalidateCache()
 	}()
 
 	return fn()
