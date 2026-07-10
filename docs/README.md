@@ -6,6 +6,7 @@ Hugo CMSの利用方法、仕様、設計、および監査結果を目的別に
 
 - [設定ガイド](guides/configuration.md) - 環境変数と実行設定
 - [デプロイガイド](guides/deployment.md) - サーバー、Docker、リバースプロキシ
+- [Smoke Test Checklist](guides/smoke-tests.md) - 変更後の最低限確認項目
 
 ## リファレンス
 

@@ -149,6 +149,8 @@ sites:
     static_dir: static
     public_dir: public
     hugo_server_port: "1314"
+    snippet_paths:
+      - .vscode/md.code-snippets
 
   - id: notes
     name: Notes
@@ -158,9 +160,42 @@ sites:
     static_dir: public-assets
     public_dir: _site
     hugo_server_port: "1315"
+    snippet_paths:
+      - .vscode/md.code-snippets
 ```
 
-現時点ではdefault siteを既存APIへ適用し、`GET /admin/api/sites`で読み込まれたSite Registryを確認できます。UI上のサイト切替とsiteId付きAPIは次段階で追加します。
+Site Registryを設定すると、管理画面のサイドバーにサイトセレクタが表示されます。記事、CMS設定、メディア、スニペット、Git操作、プレビューは選択中サイトを対象にします。
+
+HTTP APIでは、`?site=<site_id>`または`X-CMS-Site: <site_id>`で対象サイトを指定できます。未指定の場合は`default_site`が使われます。
+
+### Preview
+
+プレビューはサイトごとに独立したプロセスとして管理されます。選択中サイトのiframeは次の内部proxyを参照します。
+
+```text
+/admin/preview/<site_id>/<page-path>
+```
+
+サイトごとに`hugo_server_bind`と`hugo_server_port`の組み合わせを重複しない値にしてください。重複がある場合、CMSは起動時にSite Registryを不正として拒否します。`0.0.0.0`や`::`のようなwildcard bindは同じportの任意bindと衝突扱いになります。Hugoでは`hugo server`、Eleventyではlockfileに対応するpackage manager経由の`eleventy --serve`を使用します。
+
+初回preview requestで対象サイトのpreview processを起動した場合、CMSはproxyする前にpreview portが実際に接続可能になるまで短時間待機します。これにより、process起動直後にiframeが`502 Preview unavailable`になる揺らぎを抑えます。
+
+preview iframe内のページ・画像・CSSなどが`/images/foo.png`のようなroot-relative URLを要求した場合も、直前のpreview URLから選択サイトを判定し、同じ`/admin/preview/<site_id>/...`配下へリダイレクトします。これにより非defaultサイトのpreviewがdefaultサイトのroot proxyへ落ちることを避けます。
+
+### site registry項目
+
+| 項目 | 必須 | 説明 |
+|---|---:|---|
+| `id` | はい | サイトID。UI、API、preview routeで使用 |
+| `name` | いいえ | UI表示名。未指定時は`id` |
+| `repo_path` | はい | 対象リポジトリ |
+| `generator` | いいえ | `hugo`または`eleventy` |
+| `content_dir` | いいえ | Markdown記事のルート。デフォルト`content` |
+| `static_dir` | いいえ | 静的ファイルのルート。デフォルト`static` |
+| `public_dir` | いいえ | build出力先。デフォルト`public` |
+| `hugo_server_port` | いいえ | previewプロセスのポート。`hugo_server_bind`との組み合わせはサイト間で重複不可 |
+| `hugo_server_bind` | いいえ | preview bind address。デフォルト`127.0.0.1`。`0.0.0.0`や`::`は同じportの全bindと衝突扱い |
+| `snippet_paths` | いいえ | スニペットファイル。相対パスは`repo_path`基準 |
 
 ### スニペット設定
 
@@ -170,11 +205,24 @@ Markdown編集時に使用するスニペットファイルのパス。カンマ
 ファイル形式は VS Code のスニペット形式 (`.code-snippets` または `.json`) に準拠します。
 `scope` プロパティに `markdown` が含まれるか、`scope` が未指定（グローバル）のスニペットのみが読み込まれます。
 
-デフォルト: `repo/.vscode/md.code-snippets`
+単一サイト構成のデフォルト: `<REPO_PATH>/.vscode/md.code-snippets`
+
+Site Registry利用時は、サイトごとに`snippet_paths`を指定できます。未指定の場合は各サイトの`<repo_path>/.vscode/md.code-snippets`を読み込みます。
 
 ```env
 # 複数ファイルを指定
 SNIPPET_PATHS=repo/.vscode/global.code-snippets,repo/.vscode/md.code-snippets
+```
+
+Site Registryでの例:
+
+```yaml
+sites:
+  - id: techblog
+    repo_path: D:/sites/techblog
+    snippet_paths:
+      - .vscode/global.code-snippets
+      - .vscode/md.code-snippets
 ```
 
 ### メディア設定

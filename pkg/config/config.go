@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -209,6 +210,9 @@ func loadSiteRegistry() error {
 	if len(normalized) == 0 {
 		return fmt.Errorf("site registry config %q contains no usable sites", SitesConfigPath)
 	}
+	if err := validateUniquePreviewAddresses(normalized); err != nil {
+		return err
+	}
 
 	Sites = normalized
 	if strings.TrimSpace(registry.DefaultSite) != "" {
@@ -275,6 +279,45 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 	}
 	site.SnippetPaths = normalizeSnippetPaths(site.SnippetPaths, site.RepoPath)
 	return site
+}
+
+func validateUniquePreviewAddresses(sites []SiteConfig) error {
+	seen := []previewAddressUse{}
+	for _, site := range sites {
+		current := newPreviewAddressUse(site)
+		for _, existing := range seen {
+			if existing.address == current.address {
+				return fmt.Errorf("preview address %s is used by both site %q and site %q", current.address, existing.siteID, current.siteID)
+			}
+			if existing.port == current.port && (existing.wildcard || current.wildcard) {
+				return fmt.Errorf("preview port %s conflicts because wildcard bind is used by site %q (%s) and site %q (%s)", current.port, existing.siteID, existing.address, current.siteID, current.address)
+			}
+		}
+		seen = append(seen, current)
+	}
+	return nil
+}
+
+type previewAddressUse struct {
+	siteID   string
+	address  string
+	port     string
+	wildcard bool
+}
+
+func newPreviewAddressUse(site SiteConfig) previewAddressUse {
+	return previewAddressUse{
+		siteID:   site.ID,
+		address:  net.JoinHostPort(site.HugoServerBind, site.HugoServerPort),
+		port:     site.HugoServerPort,
+		wildcard: isWildcardBind(site.HugoServerBind),
+	}
+}
+
+func isWildcardBind(bind string) bool {
+	bind = strings.Trim(strings.TrimSpace(bind), "[]")
+	ip := net.ParseIP(bind)
+	return ip != nil && ip.IsUnspecified()
 }
 
 func defaultSnippetPaths(repoPath string) []string {

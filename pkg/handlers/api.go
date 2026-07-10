@@ -16,17 +16,29 @@ import (
 )
 
 func HandleBuild(c *gin.Context) {
-	// With Hugo Server running, explicit build is not needed for preview.
-	// We just return OK so frontend logic continues.
-	RespondOK(c, "Preview managed by Hugo Server")
+	site, err := requestedSite(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
+	if err := services.StartPreviewForSite(site); err != nil {
+		ErrorInternal(c, "Failed to start preview server: "+err.Error())
+		return
+	}
+	RespondOK(c, "Preview server is running")
 }
 
 func HandleRestart(c *gin.Context) {
-	if err := services.RestartHugoServer(); err != nil {
-		ErrorInternal(c, "Failed to restart Hugo server: "+err.Error())
+	site, err := requestedSite(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
 		return
 	}
-	RespondOK(c, "Hugo Server Restarted")
+	if err := services.RestartPreviewForSite(site); err != nil {
+		ErrorInternal(c, "Failed to restart preview server: "+err.Error())
+		return
+	}
+	RespondOK(c, "Preview server restarted")
 }
 
 func HandleSync(c *gin.Context) {

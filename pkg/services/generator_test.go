@@ -1,11 +1,55 @@
 package services
 
 import (
+	"fmt"
 	"hugo-cms/pkg/config"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+type testGeneratorAdapter struct {
+	start     func() error
+	stop      func() error
+	isRunning func() bool
+}
+
+func (adapter testGeneratorAdapter) Name() string { return "test" }
+
+func (adapter testGeneratorAdapter) StartPreview() error {
+	if adapter.start != nil {
+		return adapter.start()
+	}
+	return nil
+}
+
+func (adapter testGeneratorAdapter) StopPreview() error {
+	if adapter.stop != nil {
+		return adapter.stop()
+	}
+	return nil
+}
+
+func (adapter testGeneratorAdapter) RestartPreview() error {
+	if err := adapter.StopPreview(); err != nil {
+		return err
+	}
+	return adapter.StartPreview()
+}
+
+func (adapter testGeneratorAdapter) IsPreviewRunning() bool {
+	if adapter.isRunning != nil {
+		return adapter.isRunning()
+	}
+	return true
+}
+
+func (adapter testGeneratorAdapter) Build() (string, error) { return "", nil }
+
+func (adapter testGeneratorAdapter) CreateContent(_ string) (string, error) {
+	return "", nil
+}
 
 func TestDefaultGeneratorAdapterIsHugo(t *testing.T) {
 	adapter := CurrentGeneratorAdapter()
@@ -20,6 +64,81 @@ func TestDefaultGeneratorAdapterIsHugo(t *testing.T) {
 func TestSetGeneratorAdapterRejectsNil(t *testing.T) {
 	if err := SetGeneratorAdapter(nil); err == nil {
 		t.Fatal("SetGeneratorAdapter(nil) should fail")
+	}
+}
+
+func TestPreviewRuntimeSiteUsesSitePreviewProxyBase(t *testing.T) {
+	site := previewRuntimeSite(config.SiteConfig{
+		ID:         "docs site",
+		PreviewURL: "/",
+	})
+
+	if site.PreviewURL != "/admin/preview/docs%20site/" {
+		t.Fatalf("PreviewURL = %q, want site preview proxy base", site.PreviewURL)
+	}
+}
+
+func TestStartPreviewForSiteDoesNotHoldAdapterMapLockWhileStarting(t *testing.T) {
+	originalPreviewAdapters := previewAdapters
+	originalRepoPath := config.RepoPath
+	originalContentDir := config.ContentDir
+	originalStaticDir := config.StaticDir
+	originalPublicDir := config.PublicDir
+	originalPreviewURL := config.PreviewURL
+	originalPort := config.HugoServerPort
+	originalBind := config.HugoServerBind
+	t.Cleanup(func() {
+		previewAdaptersMu.Lock()
+		previewAdapters = originalPreviewAdapters
+		previewAdaptersMu.Unlock()
+
+		config.RepoPath = originalRepoPath
+		config.ContentDir = originalContentDir
+		config.StaticDir = originalStaticDir
+		config.PublicDir = originalPublicDir
+		config.PreviewURL = originalPreviewURL
+		config.HugoServerPort = originalPort
+		config.HugoServerBind = originalBind
+	})
+
+	site := config.SiteConfig{
+		ID:             "lock-test",
+		RepoPath:       t.TempDir(),
+		Generator:      "hugo",
+		ContentDir:     "content",
+		StaticDir:      "static",
+		PublicDir:      "public",
+		PreviewURL:     "/",
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: "1314",
+	}
+
+	previewAdaptersMu.Lock()
+	previewAdapters = map[string]GeneratorAdapter{
+		sitePreviewKey(site): testGeneratorAdapter{
+			start: func() error {
+				if !IsPreviewRunningForSite(site) {
+					return fmt.Errorf("IsPreviewRunningForSite() = false, want true")
+				}
+				return nil
+			},
+			isRunning: func() bool { return true },
+		},
+	}
+	previewAdaptersMu.Unlock()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- StartPreviewForSite(site)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("StartPreviewForSite() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartPreviewForSite() deadlocked while starting preview")
 	}
 }
 

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"hugo-cms/pkg/config"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -137,5 +140,68 @@ func TestSetupRouterRejectsInvalidGinMode(t *testing.T) {
 	_, err := SetupRouter()
 	if err == nil || !strings.Contains(err.Error(), "invalid GIN_MODE") {
 		t.Fatalf("SetupRouter() error = %v, want invalid-mode error", err)
+	}
+}
+
+func TestPreviewSiteFromReferer(t *testing.T) {
+	originalSites := config.Sites
+	t.Cleanup(func() {
+		config.Sites = originalSites
+	})
+
+	config.Sites = []config.SiteConfig{
+		{ID: "docs site", RepoPath: "C:/sites/docs"},
+	}
+
+	site, ok := previewSiteFromReferer("http://localhost:8080/admin/preview/docs%20site/posts/hello/")
+	if !ok {
+		t.Fatal("previewSiteFromReferer() did not find site")
+	}
+	if site.ID != "docs site" {
+		t.Fatalf("site.ID = %q, want docs site", site.ID)
+	}
+}
+
+func TestPreviewRedirectTargetPreservesPathAndQuery(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "http://localhost:8080/images/logo.png?v=1", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+
+	target := previewRedirectTarget(req, config.SiteConfig{ID: "docs site"})
+	if target != "/admin/preview/docs%20site/images/logo.png?v=1" {
+		t.Fatalf("previewRedirectTarget() = %q", target)
+	}
+}
+
+func TestSitePreviewAddressSupportsIPv6(t *testing.T) {
+	address := sitePreviewAddress(config.SiteConfig{
+		HugoServerBind: "::1",
+		HugoServerPort: "1314",
+	})
+
+	if address != "[::1]:1314" {
+		t.Fatalf("sitePreviewAddress() = %q, want IPv6 host-port", address)
+	}
+}
+
+func TestWaitForPreviewPortReturnsWhenListening(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort() error = %v", err)
+	}
+
+	err = waitForPreviewPort(context.Background(), config.SiteConfig{
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: port,
+	}, 500*time.Millisecond)
+	if err != nil {
+		t.Fatalf("waitForPreviewPort() error = %v", err)
 	}
 }
