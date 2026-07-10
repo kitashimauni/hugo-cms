@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"hugo-cms/pkg/config"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -169,5 +171,37 @@ func TestPreviewRedirectTargetPreservesPathAndQuery(t *testing.T) {
 	target := previewRedirectTarget(req, config.SiteConfig{ID: "docs site"})
 	if target != "/admin/preview/docs%20site/images/logo.png?v=1" {
 		t.Fatalf("previewRedirectTarget() = %q", target)
+	}
+}
+
+func TestSitePreviewAddressSupportsIPv6(t *testing.T) {
+	address := sitePreviewAddress(config.SiteConfig{
+		HugoServerBind: "::1",
+		HugoServerPort: "1314",
+	})
+
+	if address != "[::1]:1314" {
+		t.Fatalf("sitePreviewAddress() = %q, want IPv6 host-port", address)
+	}
+}
+
+func TestWaitForPreviewPortReturnsWhenListening(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort() error = %v", err)
+	}
+
+	err = waitForPreviewPort(context.Background(), config.SiteConfig{
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: port,
+	}, 500*time.Millisecond)
+	if err != nil {
+		t.Fatalf("waitForPreviewPort() error = %v", err)
 	}
 }

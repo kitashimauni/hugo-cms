@@ -68,6 +68,7 @@ sites:
 - `/admin/api/config?site=<id>` の `_cms.site_id` が対象サイトになる
 - スニペットが選択サイトの`snippet_paths`または`<repo_path>/.vscode/md.code-snippets`から読み込まれる
 - Preview iframe が `/admin/preview/<site_id>/...` を参照する
+- 初回previewでも、preview process起動直後のport未listenによる一時的な`502`にならない
 - preview内のroot-relative URL (`/images/foo.png`, `/about/`など) が同じsiteの`/admin/preview/<site_id>/...`へリダイレクトされる
 - サイトごとに別のpreview processが起動する
 - Restart Previewが選択サイトのpreviewだけを再起動する

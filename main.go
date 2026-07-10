@@ -11,6 +11,7 @@ import (
 	"hugo-cms/pkg/handlers"
 	"hugo-cms/pkg/services"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -58,8 +59,18 @@ func sitePreviewProxyHandler(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Preview unavailable"})
 		return
 	}
+	if err := waitForPreviewPort(c.Request.Context(), site, 5*time.Second); err != nil {
+		slog.Warn("Site preview did not become ready", "site", siteID, "error", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Preview unavailable"})
+		return
+	}
 
-	previewProxyURL, _ := url.Parse("http://" + site.HugoServerBind + ":" + site.HugoServerPort)
+	previewProxyURL, err := url.Parse("http://" + sitePreviewAddress(site))
+	if err != nil {
+		slog.Warn("Invalid site preview address", "site", siteID, "error", err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Preview unavailable"})
+		return
+	}
 	proxy := httputil.NewSingleHostReverseProxy(previewProxyURL)
 	previewPath := c.Param("path")
 	if previewPath == "" {
@@ -77,6 +88,39 @@ func sitePreviewProxyHandler(c *gin.Context) {
 		http.Error(w, "Preview unavailable", http.StatusBadGateway)
 	}
 	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func sitePreviewAddress(site config.SiteConfig) string {
+	return net.JoinHostPort(site.HugoServerBind, site.HugoServerPort)
+}
+
+func waitForPreviewPort(parent context.Context, site config.SiteConfig, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+
+	address := sitePreviewAddress(site)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		var dialer net.Dialer
+		conn, err := dialer.DialContext(ctx, "tcp", address)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		lastErr = err
+
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("preview port %s not ready: %w", address, lastErr)
+			}
+			return fmt.Errorf("preview port %s not ready: %w", address, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func previewSiteFromReferer(referer string) (config.SiteConfig, bool) {

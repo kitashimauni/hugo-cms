@@ -178,6 +178,8 @@ HTTP APIでは、`?site=<site_id>`または`X-CMS-Site: <site_id>`で対象サ�
 
 サイトごとに`hugo_server_bind`と`hugo_server_port`の組み合わせを重複しない値にしてください。重複がある場合、CMSは起動時にSite Registryを不正として拒否します。Hugoでは`hugo server`、Eleventyではlockfileに対応するpackage manager経由の`eleventy --serve`を使用します。
 
+初回preview requestで対象サイトのpreview processを起動した場合、CMSはproxyする前にpreview portが実際に接続可能になるまで短時間待機します。これにより、process起動直後にiframeが`502 Preview unavailable`になる揺らぎを抑えます。
+
 preview iframe内のページ・画像・CSSなどが`/images/foo.png`のようなroot-relative URLを要求した場合も、直前のpreview URLから選択サイトを判定し、同じ`/admin/preview/<site_id>/...`配下へリダイレクトします。これにより非defaultサイトのpreviewがdefaultサイトのroot proxyへ落ちることを避けます。
 
 ### site registry項目

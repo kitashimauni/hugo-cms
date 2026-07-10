@@ -179,10 +179,11 @@ type GeneratorAdapter interface {
 - shutdown時の全preview停止
 - `/admin/preview/{siteID}/...` 経由の認証付きproxy
 - selected siteのiframe preview
+- 初回proxy前のpreview port readiness wait
 - preview内のroot-relative URLを同じsiteのpreview routeへ戻すredirect
 - `hugo_server_bind` + `hugo_server_port` の重複設定の拒否
 
-現在の実装では、ポートはSite Registryの`hugo_server_port`で明示する。同じbind/portを複数siteへ割り当てると、preview processの起動直後に既存プロセスへ誤proxyする可能性があるため、設定読み込み時に拒否する。今後の改善候補として、動的な空きポート割り当て、readiness確認、アイドル時の自動停止、同時起動数やCPU/メモリ制限がある。
+現在の実装では、ポートはSite Registryの`hugo_server_port`で明示する。同じbind/portを複数siteへ割り当てると、preview processの起動直後に既存プロセスへ誤proxyする可能性があるため、設定読み込み時に拒否する。初回preview requestでは、process起動後にTCP接続できるまで短時間待ってからproxyする。今後の改善候補として、動的な空きポート割り当て、HTTPレベルのreadiness確認、アイドル時の自動停止、同時起動数やCPU/メモリ制限がある。
 
 ```mermaid
 flowchart LR

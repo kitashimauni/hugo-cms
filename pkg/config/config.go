@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -283,7 +284,7 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 func validateUniquePreviewAddresses(sites []SiteConfig) error {
 	seen := map[string]string{}
 	for _, site := range sites {
-		key := site.HugoServerBind + ":" + site.HugoServerPort
+		key := net.JoinHostPort(site.HugoServerBind, site.HugoServerPort)
 		if existingID, ok := seen[key]; ok {
 			return fmt.Errorf("preview address %s is used by both site %q and site %q", key, existingID, site.ID)
 		}
