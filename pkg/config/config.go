@@ -209,6 +209,9 @@ func loadSiteRegistry() error {
 	if len(normalized) == 0 {
 		return fmt.Errorf("site registry config %q contains no usable sites", SitesConfigPath)
 	}
+	if err := validateUniquePreviewAddresses(normalized); err != nil {
+		return err
+	}
 
 	Sites = normalized
 	if strings.TrimSpace(registry.DefaultSite) != "" {
@@ -275,6 +278,18 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 	}
 	site.SnippetPaths = normalizeSnippetPaths(site.SnippetPaths, site.RepoPath)
 	return site
+}
+
+func validateUniquePreviewAddresses(sites []SiteConfig) error {
+	seen := map[string]string{}
+	for _, site := range sites {
+		key := site.HugoServerBind + ":" + site.HugoServerPort
+		if existingID, ok := seen[key]; ok {
+			return fmt.Errorf("preview address %s is used by both site %q and site %q", key, existingID, site.ID)
+		}
+		seen[key] = site.ID
+	}
+	return nil
 }
 
 func defaultSnippetPaths(repoPath string) []string {

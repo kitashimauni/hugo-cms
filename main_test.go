@@ -1,6 +1,7 @@
 package main
 
 import (
+	"hugo-cms/pkg/config"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -137,5 +138,36 @@ func TestSetupRouterRejectsInvalidGinMode(t *testing.T) {
 	_, err := SetupRouter()
 	if err == nil || !strings.Contains(err.Error(), "invalid GIN_MODE") {
 		t.Fatalf("SetupRouter() error = %v, want invalid-mode error", err)
+	}
+}
+
+func TestPreviewSiteFromReferer(t *testing.T) {
+	originalSites := config.Sites
+	t.Cleanup(func() {
+		config.Sites = originalSites
+	})
+
+	config.Sites = []config.SiteConfig{
+		{ID: "docs site", RepoPath: "C:/sites/docs"},
+	}
+
+	site, ok := previewSiteFromReferer("http://localhost:8080/admin/preview/docs%20site/posts/hello/")
+	if !ok {
+		t.Fatal("previewSiteFromReferer() did not find site")
+	}
+	if site.ID != "docs site" {
+		t.Fatalf("site.ID = %q, want docs site", site.ID)
+	}
+}
+
+func TestPreviewRedirectTargetPreservesPathAndQuery(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "http://localhost:8080/images/logo.png?v=1", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+
+	target := previewRedirectTarget(req, config.SiteConfig{ID: "docs site"})
+	if target != "/admin/preview/docs%20site/images/logo.png?v=1" {
+		t.Fatalf("previewRedirectTarget() = %q", target)
 	}
 }

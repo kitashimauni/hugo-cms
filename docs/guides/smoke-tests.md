@@ -68,8 +68,10 @@ sites:
 - `/admin/api/config?site=<id>` の `_cms.site_id` が対象サイトになる
 - スニペットが選択サイトの`snippet_paths`または`<repo_path>/.vscode/md.code-snippets`から読み込まれる
 - Preview iframe が `/admin/preview/<site_id>/...` を参照する
+- preview内のroot-relative URL (`/images/foo.png`, `/about/`など) が同じsiteの`/admin/preview/<site_id>/...`へリダイレクトされる
 - サイトごとに別のpreview processが起動する
 - Restart Previewが選択サイトのpreviewだけを再起動する
+- `hugo_server_bind` + `hugo_server_port` が重複しているSite Registryは起動時に拒否される
 
 ## 4. Eleventy
 
@@ -96,6 +98,6 @@ sites:
 
 ## 6. 注意点
 
-- preview portはサイト間で重複させないでください。
+- preview bind/portはサイト間で重複させないでください。重複したSite Registryは起動時に拒否されます。
 - preview processはCMSサーバー上でサイトのコードを実行します。Site Registryには信頼済みリポジトリだけを登録してください。
 - 現在は互換性維持のため、内部サービスの一部がprocess-wide runtime bridgeを使います。scope外のruntime readsはlockで保護し、今後は明示的な`SiteRuntime`引数へ段階移行します。

@@ -176,7 +176,9 @@ HTTP APIでは、`?site=<site_id>`または`X-CMS-Site: <site_id>`で対象サ�
 /admin/preview/<site_id>/<page-path>
 ```
 
-サイトごとに`hugo_server_port`を重複しない値にしてください。Hugoでは`hugo server`、Eleventyではlockfileに対応するpackage manager経由の`eleventy --serve`を使用します。
+サイトごとに`hugo_server_bind`と`hugo_server_port`の組み合わせを重複しない値にしてください。重複がある場合、CMSは起動時にSite Registryを不正として拒否します。Hugoでは`hugo server`、Eleventyではlockfileに対応するpackage manager経由の`eleventy --serve`を使用します。
+
+preview iframe内のページ・画像・CSSなどが`/images/foo.png`のようなroot-relative URLを要求した場合も、直前のpreview URLから選択サイトを判定し、同じ`/admin/preview/<site_id>/...`配下へリダイレクトします。これにより非defaultサイトのpreviewがdefaultサイトのroot proxyへ落ちることを避けます。
 
 ### site registry項目
 
@@ -189,7 +191,7 @@ HTTP APIでは、`?site=<site_id>`または`X-CMS-Site: <site_id>`で対象サ�
 | `content_dir` | いいえ | Markdown記事のルート。デフォルト`content` |
 | `static_dir` | いいえ | 静的ファイルのルート。デフォルト`static` |
 | `public_dir` | いいえ | build出力先。デフォルト`public` |
-| `hugo_server_port` | いいえ | previewプロセスのポート。サイト間で重複不可 |
+| `hugo_server_port` | いいえ | previewプロセスのポート。`hugo_server_bind`との組み合わせはサイト間で重複不可 |
 | `hugo_server_bind` | いいえ | preview bind address。デフォルト`127.0.0.1` |
 | `snippet_paths` | いいえ | スニペットファイル。相対パスは`repo_path`基準 |
 

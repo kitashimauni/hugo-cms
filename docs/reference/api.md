@@ -299,6 +299,8 @@ CSRFトークンを取得します。
 
 このrouteは必要に応じて対象サイトのpreview processを起動し、Site Registryの`hugo_server_bind`と`hugo_server_port`へproxyします。サイトIDが存在しない場合は`400`、preview processを起動できない場合は`502`を返します。
 
+iframe内でroot-relative URLへの遷移やasset requestが発生した場合、CMSは`Referer`の`/admin/preview/:site/...`から選択サイトを復元し、同じpreview route配下へ一時リダイレクトします。
+
 ---
 
 ## Git API

@@ -41,6 +41,11 @@ func configureGinMode() error {
 }
 
 func sitePreviewProxyHandler(c *gin.Context) {
+	// Preview pages need same-origin referrers so root-relative links and
+	// assets can be routed back to the selected site instead of the default
+	// root proxy. Other admin routes keep the stricter no-referrer policy.
+	c.Header("Referrer-Policy", "same-origin")
+
 	siteID := strings.TrimSpace(c.Param("site"))
 	site, ok := config.GetSite(siteID)
 	if !ok {
@@ -72,6 +77,43 @@ func sitePreviewProxyHandler(c *gin.Context) {
 		http.Error(w, "Preview unavailable", http.StatusBadGateway)
 	}
 	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func previewSiteFromReferer(referer string) (config.SiteConfig, bool) {
+	if strings.TrimSpace(referer) == "" {
+		return config.SiteConfig{}, false
+	}
+	refererURL, err := url.Parse(referer)
+	if err != nil {
+		return config.SiteConfig{}, false
+	}
+
+	parts := strings.Split(strings.TrimPrefix(refererURL.EscapedPath(), "/"), "/")
+	if len(parts) < 3 || parts[0] != "admin" || parts[1] != "preview" {
+		return config.SiteConfig{}, false
+	}
+
+	siteID, err := url.PathUnescape(parts[2])
+	if err != nil {
+		return config.SiteConfig{}, false
+	}
+	return config.GetSite(siteID)
+}
+
+func previewRedirectTarget(req *http.Request, site config.SiteConfig) string {
+	path := req.URL.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	target := "/admin/preview/" + url.PathEscape(site.ID) + path
+	if req.URL.RawQuery != "" {
+		target += "?" + req.URL.RawQuery
+	}
+	return target
 }
 
 func SetupRouter() (*gin.Engine, error) {
@@ -182,6 +224,10 @@ func SetupRouter() (*gin.Engine, error) {
 		http.Error(w, "Preview unavailable", http.StatusBadGateway)
 	}
 	r.NoRoute(handlers.AuthRequired, handlers.TokenValidation, func(c *gin.Context) {
+		if site, ok := previewSiteFromReferer(c.Request.Referer()); ok {
+			c.Redirect(http.StatusTemporaryRedirect, previewRedirectTarget(c.Request, site))
+			return
+		}
 		proxy.ServeHTTP(c.Writer, c.Request)
 	})
 

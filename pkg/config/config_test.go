@@ -205,6 +205,49 @@ sites:
 	}
 }
 
+func TestLoadSiteRegistryRejectsDuplicatePreviewAddress(t *testing.T) {
+	originalSites := Sites
+	originalDefaultSiteID := DefaultSiteID
+	originalRepoPath := RepoPath
+	originalSitesConfigPath := SitesConfigPath
+	t.Cleanup(func() {
+		Sites = originalSites
+		DefaultSiteID = originalDefaultSiteID
+		RepoPath = originalRepoPath
+		SitesConfigPath = originalSitesConfigPath
+	})
+
+	configPath := filepath.Join(t.TempDir(), "sites.yml")
+	err := os.WriteFile(configPath, []byte(`
+default_site: blog
+sites:
+  - id: blog
+    repo_path: C:/sites/blog
+    generator: hugo
+  - id: notes
+    repo_path: C:/sites/notes
+    generator: eleventy
+`), 0644)
+	if err != nil {
+		t.Fatalf("write registry config: %v", err)
+	}
+
+	DefaultSiteID = "default"
+	RepoPath = "./repo"
+	SitesConfigPath = configPath
+
+	err = loadSiteRegistry()
+	if err == nil {
+		t.Fatal("loadSiteRegistry() should reject duplicate preview addresses")
+	}
+	if !strings.Contains(err.Error(), "preview address 127.0.0.1:1314") {
+		t.Fatalf("loadSiteRegistry() error = %v, want duplicate preview address", err)
+	}
+	if RepoPath != "./repo" {
+		t.Fatalf("RepoPath = %q, should not switch site after duplicate preview address", RepoPath)
+	}
+}
+
 func TestNormalizeSiteConfigRejectsUnsafeDirs(t *testing.T) {
 	site := normalizeSiteConfig(SiteConfig{
 		ID:         "unsafe",
