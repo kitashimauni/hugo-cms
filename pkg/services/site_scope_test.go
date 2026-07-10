@@ -23,6 +23,7 @@ func restoreServiceSiteScopeConfig(t *testing.T) {
 	originalHugoServerBind := config.HugoServerBind
 	originalArticleMediaDir := config.ArticleMediaDir
 	originalStaticMediaDir := config.StaticMediaDir
+	originalSnippetPaths := append([]string(nil), config.SnippetPaths...)
 
 	cacheMutex.Lock()
 	originalArticleCaches := articleCaches
@@ -41,6 +42,7 @@ func restoreServiceSiteScopeConfig(t *testing.T) {
 		config.HugoServerBind = originalHugoServerBind
 		config.ArticleMediaDir = originalArticleMediaDir
 		config.StaticMediaDir = originalStaticMediaDir
+		config.SnippetPaths = originalSnippetPaths
 
 		cacheMutex.Lock()
 		articleCaches = originalArticleCaches

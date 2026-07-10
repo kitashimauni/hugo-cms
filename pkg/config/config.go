@@ -58,24 +58,25 @@ var (
 	GitHubOAuthScopes   = []string{"public_repo"} // Default to public_repo only
 
 	// Snippet settings
-	SnippetPaths = []string{"repo/.vscode/md.code-snippets"}
+	SnippetPaths = []string{}
 )
 
 var OauthConf *oauth2.Config
 
 type SiteConfig struct {
-	ID              string `yaml:"id" json:"id"`
-	Name            string `yaml:"name" json:"name"`
-	RepoPath        string `yaml:"repo_path" json:"repo_path"`
-	Generator       string `yaml:"generator" json:"generator"`
-	ContentDir      string `yaml:"content_dir" json:"content_dir"`
-	StaticDir       string `yaml:"static_dir" json:"static_dir"`
-	PublicDir       string `yaml:"public_dir" json:"public_dir"`
-	PreviewURL      string `yaml:"preview_url" json:"preview_url"`
-	HugoServerPort  string `yaml:"hugo_server_port" json:"hugo_server_port"`
-	HugoServerBind  string `yaml:"hugo_server_bind" json:"hugo_server_bind"`
-	ArticleMediaDir string `yaml:"article_media_dir" json:"article_media_dir"`
-	StaticMediaDir  string `yaml:"static_media_dir" json:"static_media_dir"`
+	ID              string   `yaml:"id" json:"id"`
+	Name            string   `yaml:"name" json:"name"`
+	RepoPath        string   `yaml:"repo_path" json:"repo_path"`
+	Generator       string   `yaml:"generator" json:"generator"`
+	ContentDir      string   `yaml:"content_dir" json:"content_dir"`
+	StaticDir       string   `yaml:"static_dir" json:"static_dir"`
+	PublicDir       string   `yaml:"public_dir" json:"public_dir"`
+	PreviewURL      string   `yaml:"preview_url" json:"preview_url"`
+	HugoServerPort  string   `yaml:"hugo_server_port" json:"hugo_server_port"`
+	HugoServerBind  string   `yaml:"hugo_server_bind" json:"hugo_server_bind"`
+	ArticleMediaDir string   `yaml:"article_media_dir" json:"article_media_dir"`
+	StaticMediaDir  string   `yaml:"static_media_dir" json:"static_media_dir"`
+	SnippetPaths    []string `yaml:"snippet_paths" json:"snippet_paths"`
 }
 
 type SiteRegistryConfig struct {
@@ -156,6 +157,8 @@ func Init() error {
 
 	if snippets := os.Getenv("SNIPPET_PATHS"); snippets != "" {
 		SnippetPaths = splitAndTrim(snippets, ",")
+	} else {
+		SnippetPaths = defaultSnippetPaths(RepoPath)
 	}
 	if err := loadSiteRegistry(); err != nil {
 		return err
@@ -234,6 +237,7 @@ func defaultSiteFromGlobals() SiteConfig {
 		HugoServerBind:  HugoServerBind,
 		ArticleMediaDir: ArticleMediaDir,
 		StaticMediaDir:  StaticMediaDir,
+		SnippetPaths:    SnippetPaths,
 	})
 }
 
@@ -269,7 +273,49 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 	if site.HugoServerBind == "" {
 		site.HugoServerBind = "127.0.0.1"
 	}
+	site.SnippetPaths = normalizeSnippetPaths(site.SnippetPaths, site.RepoPath)
 	return site
+}
+
+func defaultSnippetPaths(repoPath string) []string {
+	return []string{filepath.Clean(filepath.Join(repoPath, ".vscode", "md.code-snippets"))}
+}
+
+func normalizeSnippetPaths(paths []string, repoPath string) []string {
+	if len(paths) == 0 {
+		return defaultSnippetPaths(repoPath)
+	}
+
+	normalized := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		path = filepath.Clean(path)
+		if filepath.IsAbs(path) {
+			normalized = append(normalized, path)
+			continue
+		}
+		if relativePathWithinRepo(path, repoPath) {
+			normalized = append(normalized, path)
+			continue
+		}
+		normalized = append(normalized, filepath.Join(repoPath, path))
+	}
+	if len(normalized) == 0 {
+		return defaultSnippetPaths(repoPath)
+	}
+	return normalized
+}
+
+func relativePathWithinRepo(path, repoPath string) bool {
+	if filepath.IsAbs(path) || filepath.IsAbs(repoPath) {
+		return false
+	}
+	cleanPath := filepath.Clean(path)
+	cleanRepo := filepath.Clean(repoPath)
+	return cleanPath == cleanRepo || strings.HasPrefix(cleanPath, cleanRepo+string(os.PathSeparator))
 }
 
 func cleanRelativeDir(value, fallback string) string {
@@ -324,6 +370,7 @@ func RuntimeSiteConfig() SiteConfig {
 		HugoServerBind:  HugoServerBind,
 		ArticleMediaDir: ArticleMediaDir,
 		StaticMediaDir:  StaticMediaDir,
+		SnippetPaths:    SnippetPaths,
 	}
 }
 
@@ -339,6 +386,7 @@ func ApplySiteRuntime(site SiteConfig) {
 	HugoServerBind = site.HugoServerBind
 	ArticleMediaDir = site.ArticleMediaDir
 	StaticMediaDir = site.StaticMediaDir
+	SnippetPaths = site.SnippetPaths
 }
 
 // ValidateSecurityConfig rejects insecure authorization defaults.

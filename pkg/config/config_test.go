@@ -100,6 +100,7 @@ func TestLoadSiteRegistryAppliesDefaultSite(t *testing.T) {
 	originalPort := HugoServerPort
 	originalBind := HugoServerBind
 	originalSitesConfigPath := SitesConfigPath
+	originalSnippetPaths := append([]string(nil), SnippetPaths...)
 	t.Cleanup(func() {
 		Sites = originalSites
 		DefaultSiteID = originalDefaultSiteID
@@ -112,6 +113,7 @@ func TestLoadSiteRegistryAppliesDefaultSite(t *testing.T) {
 		HugoServerPort = originalPort
 		HugoServerBind = originalBind
 		SitesConfigPath = originalSitesConfigPath
+		SnippetPaths = originalSnippetPaths
 	})
 
 	configPath := filepath.Join(t.TempDir(), "sites.yml")
@@ -129,6 +131,8 @@ sites:
     public_dir: _site
     preview_url: /preview/
     hugo_server_port: "1320"
+    snippet_paths:
+      - .vscode/md.code-snippets
 `), 0644)
 	if err != nil {
 		t.Fatalf("write registry config: %v", err)
@@ -154,6 +158,10 @@ sites:
 	}
 	if HugoServerPort != "1320" {
 		t.Fatalf("HugoServerPort = %q, want 1320", HugoServerPort)
+	}
+	wantSnippetPath := filepath.Join("C:/sites/notes", ".vscode", "md.code-snippets")
+	if len(SnippetPaths) != 1 || SnippetPaths[0] != wantSnippetPath {
+		t.Fatalf("SnippetPaths = %#v, want %q", SnippetPaths, wantSnippetPath)
 	}
 }
 
@@ -227,6 +235,7 @@ func TestInitSanitizesSingleSiteDirectoryOverrides(t *testing.T) {
 	originalArticleMediaDir := ArticleMediaDir
 	originalStaticMediaDir := StaticMediaDir
 	originalSitesConfigPath := SitesConfigPath
+	originalSnippetPaths := append([]string(nil), SnippetPaths...)
 	t.Cleanup(func() {
 		Sites = originalSites
 		DefaultSiteID = originalDefaultSiteID
@@ -238,6 +247,7 @@ func TestInitSanitizesSingleSiteDirectoryOverrides(t *testing.T) {
 		ArticleMediaDir = originalArticleMediaDir
 		StaticMediaDir = originalStaticMediaDir
 		SitesConfigPath = originalSitesConfigPath
+		SnippetPaths = originalSnippetPaths
 	})
 
 	t.Setenv("REPO_PATH", "./repo")
@@ -247,6 +257,7 @@ func TestInitSanitizesSingleSiteDirectoryOverrides(t *testing.T) {
 	t.Setenv("PUBLIC_DIR", ".")
 	t.Setenv("ARTICLE_MEDIA_DIR", "../images")
 	t.Setenv("STATIC_MEDIA_DIR", "\\uploads")
+	t.Setenv("SNIPPET_PATHS", "")
 	t.Setenv("SITES_CONFIG_PATH", "")
 	t.Setenv("DEFAULT_SITE_ID", "default")
 
@@ -271,5 +282,21 @@ func TestInitSanitizesSingleSiteDirectoryOverrides(t *testing.T) {
 	}
 	if len(Sites) != 1 || Sites[0].ContentDir != "content" || Sites[0].StaticDir != "static" || Sites[0].PublicDir != "public" {
 		t.Fatalf("Sites = %#v, want sanitized default site", Sites)
+	}
+	wantSnippetPath := filepath.Join("./repo", ".vscode", "md.code-snippets")
+	if len(SnippetPaths) != 1 || SnippetPaths[0] != filepath.Clean(wantSnippetPath) {
+		t.Fatalf("SnippetPaths = %#v, want default repo snippet path", SnippetPaths)
+	}
+}
+
+func TestNormalizeSiteConfigDefaultsSnippetPathsToSiteRepo(t *testing.T) {
+	site := normalizeSiteConfig(SiteConfig{
+		ID:       "docs",
+		RepoPath: filepath.Join(t.TempDir(), "docs"),
+	})
+
+	want := filepath.Join(site.RepoPath, ".vscode", "md.code-snippets")
+	if len(site.SnippetPaths) != 1 || site.SnippetPaths[0] != want {
+		t.Fatalf("SnippetPaths = %#v, want %q", site.SnippetPaths, want)
 	}
 }

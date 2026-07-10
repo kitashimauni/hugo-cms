@@ -5,6 +5,8 @@ import (
 	"hugo-cms/pkg/config"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +23,7 @@ func restoreSiteScopeConfig(t *testing.T) {
 	originalPreviewURL := config.PreviewURL
 	originalSiteGenerator := config.SiteGenerator
 	originalDefaultSiteID := config.DefaultSiteID
+	originalSnippetPaths := append([]string(nil), config.SnippetPaths...)
 	originalSites := append([]config.SiteConfig(nil), config.Sites...)
 
 	t.Cleanup(func() {
@@ -32,6 +35,7 @@ func restoreSiteScopeConfig(t *testing.T) {
 		config.PreviewURL = originalPreviewURL
 		config.SiteGenerator = originalSiteGenerator
 		config.DefaultSiteID = originalDefaultSiteID
+		config.SnippetPaths = originalSnippetPaths
 		config.Sites = originalSites
 	})
 }
@@ -55,6 +59,7 @@ func TestSiteScopedAppliesRequestedSiteAndRestoresRuntime(t *testing.T) {
 			PreviewURL:     "/",
 			HugoServerPort: "1314",
 			HugoServerBind: "127.0.0.1",
+			SnippetPaths:   []string{filepath.Join(defaultRepo, ".vscode", "md.code-snippets")},
 		},
 		{
 			ID:             "docs",
@@ -67,6 +72,7 @@ func TestSiteScopedAppliesRequestedSiteAndRestoresRuntime(t *testing.T) {
 			PreviewURL:     "/docs/",
 			HugoServerPort: "1315",
 			HugoServerBind: "127.0.0.1",
+			SnippetPaths:   []string{filepath.Join(selectedRepo, ".vscode", "md.code-snippets")},
 		},
 	}
 	config.ApplySiteRuntime(config.Sites[0])
@@ -102,6 +108,88 @@ func TestSiteScopedAppliesRequestedSiteAndRestoresRuntime(t *testing.T) {
 		response["content_dir"] != "src" ||
 		response["generator"] != "eleventy" {
 		t.Fatalf("response = %#v, want selected site runtime fields", response)
+	}
+}
+
+func TestSiteScopedSnippetsUseSelectedSitePaths(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	restoreSiteScopeConfig(t)
+
+	defaultRepo := t.TempDir()
+	selectedRepo := t.TempDir()
+	writeSnippetFile(t, filepath.Join(defaultRepo, ".vscode", "md.code-snippets"), `{
+  "Default Snippet": {
+    "prefix": "default",
+    "body": "default body",
+    "description": "default site"
+  }
+}`)
+	writeSnippetFile(t, filepath.Join(selectedRepo, ".vscode", "md.code-snippets"), `{
+  "Selected Snippet": {
+    "prefix": "selected",
+    "body": "selected body",
+    "description": "selected site"
+  }
+}`)
+
+	config.DefaultSiteID = "default"
+	config.Sites = []config.SiteConfig{
+		{
+			ID:             "default",
+			RepoPath:       defaultRepo,
+			Generator:      "hugo",
+			ContentDir:     "content",
+			StaticDir:      "static",
+			PublicDir:      "public",
+			PreviewURL:     "/",
+			HugoServerPort: "1314",
+			HugoServerBind: "127.0.0.1",
+			SnippetPaths:   []string{filepath.Join(defaultRepo, ".vscode", "md.code-snippets")},
+		},
+		{
+			ID:             "docs",
+			RepoPath:       selectedRepo,
+			Generator:      "eleventy",
+			ContentDir:     "src",
+			StaticDir:      "static",
+			PublicDir:      "public",
+			PreviewURL:     "/docs/",
+			HugoServerPort: "1315",
+			HugoServerBind: "127.0.0.1",
+			SnippetPaths:   []string{filepath.Join(selectedRepo, ".vscode", "md.code-snippets")},
+		},
+	}
+	config.ApplySiteRuntime(config.Sites[0])
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/admin/api/snippets?site=docs", nil)
+
+	SiteScoped(GetSnippets)(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetSnippets() status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var snippets map[string]SnippetDef
+	if err := json.Unmarshal(w.Body.Bytes(), &snippets); err != nil {
+		t.Fatalf("unmarshal snippets: %v", err)
+	}
+	if _, ok := snippets["Selected Snippet"]; !ok {
+		t.Fatalf("snippets = %#v, want selected site snippet", snippets)
+	}
+	if _, ok := snippets["Default Snippet"]; ok {
+		t.Fatalf("snippets = %#v, should not include default site snippet", snippets)
+	}
+}
+
+func writeSnippetFile(t *testing.T, path, content string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("create snippet dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write snippet file: %v", err)
 	}
 }
 
