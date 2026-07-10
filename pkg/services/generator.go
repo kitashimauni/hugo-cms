@@ -99,10 +99,7 @@ func CreateContent(path string) (string, error) {
 }
 
 func StartPreviewForSite(site config.SiteConfig) error {
-	previewAdaptersMu.Lock()
-	defer previewAdaptersMu.Unlock()
-
-	adapter, err := previewAdapterForSiteLocked(site)
+	adapter, err := previewAdapterForSite(site)
 	if err != nil {
 		return err
 	}
@@ -110,10 +107,7 @@ func StartPreviewForSite(site config.SiteConfig) error {
 }
 
 func StopPreviewForSite(site config.SiteConfig) error {
-	previewAdaptersMu.Lock()
-	defer previewAdaptersMu.Unlock()
-
-	adapter, ok := previewAdapters[sitePreviewKey(site)]
+	adapter, ok := previewAdapterForSiteIfExists(site)
 	if !ok {
 		return nil
 	}
@@ -121,10 +115,7 @@ func StopPreviewForSite(site config.SiteConfig) error {
 }
 
 func RestartPreviewForSite(site config.SiteConfig) error {
-	previewAdaptersMu.Lock()
-	defer previewAdaptersMu.Unlock()
-
-	adapter, err := previewAdapterForSiteLocked(site)
+	adapter, err := previewAdapterForSite(site)
 	if err != nil {
 		return err
 	}
@@ -135,10 +126,7 @@ func RestartPreviewForSite(site config.SiteConfig) error {
 }
 
 func IsPreviewRunningForSite(site config.SiteConfig) bool {
-	previewAdaptersMu.Lock()
-	defer previewAdaptersMu.Unlock()
-
-	adapter, ok := previewAdapters[sitePreviewKey(site)]
+	adapter, ok := previewAdapterForSiteIfExists(site)
 	return ok && adapter.IsPreviewRunning()
 }
 
@@ -158,6 +146,19 @@ func StopAllPreviewServers() error {
 		}
 	}
 	return stopErr
+}
+
+func previewAdapterForSite(site config.SiteConfig) (GeneratorAdapter, error) {
+	previewAdaptersMu.Lock()
+	defer previewAdaptersMu.Unlock()
+	return previewAdapterForSiteLocked(site)
+}
+
+func previewAdapterForSiteIfExists(site config.SiteConfig) (GeneratorAdapter, bool) {
+	previewAdaptersMu.Lock()
+	defer previewAdaptersMu.Unlock()
+	adapter, ok := previewAdapters[sitePreviewKey(site)]
+	return adapter, ok
 }
 
 func previewAdapterForSiteLocked(site config.SiteConfig) (GeneratorAdapter, error) {

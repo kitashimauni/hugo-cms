@@ -204,6 +204,7 @@ preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:
 - preview process管理はサイト設定を明示的に受け取り、site IDごとにadapterを保持する。
 - 記事キャッシュは`repo_path + content_dir`でkey分割する。
 - process-wide runtimeを読むscope外処理はruntime lockで保護する。
+- preview adapter mapのlockはmapアクセス中だけ保持し、preview process操作やruntime bridge呼び出し中には保持しない。`/ready`などがruntime lockを先に取るため、lock順序の反転を避ける。
 
 今後の最終形は、記事・メディア・Git・generatorサービスへ`SiteConfig`または`SiteRuntime`を明示的に渡し、process-wide runtime mutationを削減することである。
 
