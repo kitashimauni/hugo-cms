@@ -171,7 +171,8 @@ func TestPublishChangesDoesNotPushWhenCommitFails(t *testing.T) {
 	}
 
 	pushCalled := false
-	log, err := publishChanges("token", "content/post.md", func(string, string, ...string) (string, error) {
+	runtime := runtimeForPublishTest(repoPath)
+	log, err := publishChanges(runtime, "token", "content/post.md", func(string, string, ...string) (string, error) {
 		pushCalled = true
 		return "unexpected push", nil
 	})
@@ -187,10 +188,11 @@ func TestPublishChangesDoesNotPushWhenCommitFails(t *testing.T) {
 }
 
 func TestPublishChangesPushesExistingCommitsWhenNothingIsStaged(t *testing.T) {
-	setupPublishRepository(t)
+	repoPath := setupPublishRepository(t)
 
 	pushCalled := false
-	log, err := publishChanges("token", "", func(string, string, ...string) (string, error) {
+	runtime := runtimeForPublishTest(repoPath)
+	log, err := publishChanges(runtime, "token", "", func(string, string, ...string) (string, error) {
 		pushCalled = true
 		return "pushed", nil
 	})
@@ -206,10 +208,11 @@ func TestPublishChangesPushesExistingCommitsWhenNothingIsStaged(t *testing.T) {
 }
 
 func TestPublishChangesReturnsPushErrorWhenNothingIsStaged(t *testing.T) {
-	setupPublishRepository(t)
+	repoPath := setupPublishRepository(t)
 	pushErr := errors.New("temporary push failure")
 
-	_, err := publishChanges("token", "", func(string, string, ...string) (string, error) {
+	runtime := runtimeForPublishTest(repoPath)
+	_, err := publishChanges(runtime, "token", "", func(string, string, ...string) (string, error) {
 		return "push failed", pushErr
 	})
 	if !errors.Is(err, pushErr) {
@@ -224,7 +227,8 @@ func TestPublishChangesCommitsBeforePush(t *testing.T) {
 	}
 
 	pushCalled := false
-	_, err := publishChanges("token", "content/post.md", func(string, string, ...string) (string, error) {
+	runtime := runtimeForPublishTest(repoPath)
+	_, err := publishChanges(runtime, "token", "content/post.md", func(string, string, ...string) (string, error) {
 		pushCalled = true
 		return "pushed", nil
 	})
@@ -248,7 +252,8 @@ func TestPublishChangesSingleFileDoesNotRequireStaticDir(t *testing.T) {
 	}
 
 	pushCalled := false
-	_, err := publishChanges("token", "content/post.md", func(string, string, ...string) (string, error) {
+	runtime := runtimeForPublishTest(repoPath)
+	_, err := publishChanges(runtime, "token", "content/post.md", func(string, string, ...string) (string, error) {
 		pushCalled = true
 		return "pushed", nil
 	})
@@ -273,6 +278,20 @@ func setupPublishRepository(t *testing.T) string {
 func setupPublishRepositoryWithoutStatic(t *testing.T) string {
 	t.Helper()
 	return setupPublishRepositoryWithOptions(t, false)
+}
+
+func runtimeForPublishTest(repoPath string) config.SiteRuntime {
+	return config.NewSiteRuntime(config.SiteConfig{
+		ID:             "test",
+		RepoPath:       repoPath,
+		Generator:      "hugo",
+		ContentDir:     "content",
+		StaticDir:      "static",
+		PublicDir:      "public",
+		PreviewURL:     "/",
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: "1314",
+	})
 }
 
 func setupPublishRepositoryWithOptions(t *testing.T, includeStatic bool) string {

@@ -43,9 +43,12 @@ func RuntimeLocked(handler gin.HandlerFunc) gin.HandlerFunc {
 }
 
 func requestedSite(c *gin.Context) (config.SiteConfig, error) {
-	siteID := strings.TrimSpace(c.Query("site"))
-	if siteID == "" {
-		siteID = strings.TrimSpace(c.GetHeader("X-CMS-Site"))
+	siteID := ""
+	if c.Request != nil {
+		siteID = strings.TrimSpace(c.Query("site"))
+		if siteID == "" {
+			siteID = strings.TrimSpace(c.GetHeader("X-CMS-Site"))
+		}
 	}
 	if siteID == "" {
 		siteID = config.DefaultSiteID
@@ -53,9 +56,21 @@ func requestedSite(c *gin.Context) (config.SiteConfig, error) {
 
 	site, ok := config.GetSite(siteID)
 	if !ok {
+		if siteID == config.DefaultSiteID {
+			return config.RuntimeSiteConfig(), nil
+		}
 		return config.SiteConfig{}, errInvalidSite(siteID)
 	}
 	return site, nil
+}
+
+func requestedRuntime(c *gin.Context) (config.SiteRuntime, error) {
+	site, err := requestedSite(c)
+	if err != nil {
+		return config.SiteRuntime{}, err
+	}
+	c.Set(siteContextKey, site.ID)
+	return config.NewSiteRuntime(site), nil
 }
 
 func currentSiteID(c *gin.Context) string {

@@ -1,6 +1,6 @@
 # Smoke Test Checklist
 
-最終更新日: 2026-07-10
+最終更新日: 2026-07-11
 
 大きめの変更やSite Registry変更後に、最低限確認する項目です。
 
@@ -66,6 +66,8 @@ sites:
 - 切り替え後、記事一覧が選択サイトの内容になる
 - `/admin/api/articles?site=<id>` が対象サイトの内容を返す
 - `/admin/api/config?site=<id>` の `_cms.site_id` が対象サイトになる
+- 記事の作成、保存、Diff、削除が選択サイトの`content_dir`配下だけを対象にする
+- メディア一覧、アップロード、削除、raw配信が選択サイトの`static_dir`/記事別メディア設定だけを対象にする
 - スニペットが選択サイトの`snippet_paths`または`<repo_path>/.vscode/md.code-snippets`から読み込まれる
 - Preview iframe が `/admin/preview/<site_id>/...` を参照する
 - 初回previewでも、preview process起動直後のport未listenによる一時的な`502`にならない
@@ -95,6 +97,7 @@ sites:
 
 - Syncが対象サイトのrepoで実行される
 - 単一記事publishが対象サイトのcontent pathをcommit対象にする
+- publish時に対象サイトの`git_remote`/`git_branch`/`static_dir`設定が使われる
 - static directoryが未作成でも単一記事publishが失敗しない
 - push失敗後の再publishで、既存commitがremoteへpushされる
 
@@ -102,4 +105,4 @@ sites:
 
 - preview bind/portはサイト間で重複させないでください。重複したSite Registryは起動時に拒否されます。
 - preview processはCMSサーバー上でサイトのコードを実行します。Site Registryには信頼済みリポジトリだけを登録してください。
-- 現在は互換性維持のため、内部サービスの一部がprocess-wide runtime bridgeを使います。scope外のruntime readsはlockで保護し、今後は明示的な`SiteRuntime`引数へ段階移行します。
+- 主要なsite-aware APIは`SiteRuntime`を明示的にサービスへ渡します。互換ラッパーやscope外のruntime readsが残る経路では、default siteと選択siteが混ざらないことを重点的に確認してください。

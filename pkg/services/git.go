@@ -17,19 +17,23 @@ import (
 )
 
 func CheckSemanticDiff(relPath string) (bool, error) {
+	return CheckSemanticDiffForRuntime(config.CurrentSiteRuntime(), relPath)
+}
+
+func CheckSemanticDiffForRuntime(runtime config.SiteRuntime, relPath string) (bool, error) {
 	gitPath := filepath.ToSlash(relPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
 	defer cancel()
 
 	cmdHead := exec.CommandContext(ctx, "git", "show", "HEAD:"+gitPath)
-	cmdHead.Dir = config.RepoPath
+	cmdHead.Dir = runtime.RepoPath
 	headContent, _ := cmdHead.Output()
 
-	diskPath := filepath.Join(config.RepoPath, filepath.FromSlash(gitPath))
+	diskPath := filepath.Join(runtime.RepoPath, filepath.FromSlash(gitPath))
 	diskContent, _ := os.ReadFile(diskPath)
 
-	collection, _ := GetCollectionForPath(gitPath)
+	collection, _ := GetCollectionForPathForRuntime(runtime, gitPath)
 
 	headFM, headBody, headErr := canonicalizeContentForDiff(headContent, collection)
 	diskFM, diskBody, diskErr := canonicalizeContentForDiff(diskContent, collection)
@@ -48,6 +52,14 @@ func CheckSemanticDiff(relPath string) (bool, error) {
 }
 
 func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
+	return executeGitWithToken(dir, config.GitRemote, token, args...)
+}
+
+func ExecuteGitWithTokenForRuntime(runtime config.SiteRuntime, token string, args ...string) (string, error) {
+	return executeGitWithToken(runtime.RepoPath, runtime.GitRemote, token, args...)
+}
+
+func executeGitWithToken(dir, remote, token string, args ...string) (string, error) {
 	if token == "" {
 		return "GitHub token is required", fmt.Errorf("empty GitHub token")
 	}
@@ -65,7 +77,7 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	// We need to ensure the remote URL in the command triggers ASKPASS.
 	// Typically, https://username@host/repo... works, asking for password.
 
-	remoteUrl, err := readRawRemoteURL(ctx, dir, config.GitRemote)
+	remoteUrl, err := readRawRemoteURL(ctx, dir, remote)
 	if err != nil {
 		return "Failed to get remote url", err
 	}
@@ -78,7 +90,7 @@ func ExecuteGitWithToken(dir, token string, args ...string) (string, error) {
 	newArgs := make([]string, len(args))
 	copy(newArgs, args)
 	for i, v := range newArgs {
-		if v == config.GitRemote {
+		if v == remote {
 			newArgs[i] = authenticatedUrl
 		}
 	}
@@ -203,25 +215,35 @@ func createAskPassScript() (string, error) {
 }
 
 func SyncRepo(token string) (string, error) {
+	return SyncRepoForRuntime(config.CurrentSiteRuntime(), token)
+}
+
+func SyncRepoForRuntime(runtime config.SiteRuntime, token string) (string, error) {
 	unlock := LockRepositoryOperation()
 	defer unlock()
 
-	log, err := ExecuteGitWithToken(config.RepoPath, token, "pull", config.GitRemote, config.GitBranch)
+	log, err := ExecuteGitWithTokenForRuntime(runtime, token, "pull", runtime.GitRemote, runtime.GitBranch)
 	if err == nil {
-		InvalidateCache()
+		InvalidateCacheForRuntime(runtime)
 	}
 	return log, err
 }
 
 func PublishChanges(token, path string) (string, error) {
+	return PublishChangesForRuntime(config.CurrentSiteRuntime(), token, path)
+}
+
+func PublishChangesForRuntime(runtime config.SiteRuntime, token, path string) (string, error) {
 	unlock := LockRepositoryOperation()
 	defer unlock()
-	return publishChanges(token, path, ExecuteGitWithToken)
+	return publishChanges(runtime, token, path, func(_ string, token string, args ...string) (string, error) {
+		return ExecuteGitWithTokenForRuntime(runtime, token, args...)
+	})
 }
 
 type gitPushFunc func(dir, token string, args ...string) (string, error)
 
-func publishChanges(token, path string, push gitPushFunc) (string, error) {
+func publishChanges(runtime config.SiteRuntime, token, path string, push gitPushFunc) (string, error) {
 	// Create context with timeout for local git operations
 	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
 	defer cancel()
@@ -229,14 +251,14 @@ func publishChanges(token, path string, push gitPushFunc) (string, error) {
 	// Ensure Git Identity
 	// We set this locally for the repo so it doesn't affect global config
 
-	cmdConfigEmail := exec.CommandContext(ctx, "git", "config", "--local", "user.email", config.GitUserEmail)
-	cmdConfigEmail.Dir = config.RepoPath
+	cmdConfigEmail := exec.CommandContext(ctx, "git", "config", "--local", "user.email", runtime.GitUserEmail)
+	cmdConfigEmail.Dir = runtime.RepoPath
 	if output, err := cmdConfigEmail.CombinedOutput(); err != nil {
 		return fmt.Sprintf("Failed to set git user.email: %s", output), err
 	}
 
-	cmdConfigName := exec.CommandContext(ctx, "git", "config", "--local", "user.name", config.GitUserName)
-	cmdConfigName.Dir = config.RepoPath
+	cmdConfigName := exec.CommandContext(ctx, "git", "config", "--local", "user.name", runtime.GitUserName)
+	cmdConfigName.Dir = runtime.RepoPath
 	if output, err := cmdConfigName.CombinedOutput(); err != nil {
 		return fmt.Sprintf("Failed to set git user.name: %s", output), err
 	}
@@ -251,8 +273,8 @@ func publishChanges(token, path string, push gitPushFunc) (string, error) {
 		// Add static/media changes that may be referenced by the article, but
 		// do not require sites to have a static directory before any media is
 		// uploaded.
-		if dirExists(filepath.Join(config.RepoPath, config.StaticDir)) {
-			filesToAdd = append(filesToAdd, config.StaticDir)
+		if dirExists(filepath.Join(runtime.RepoPath, runtime.StaticDir)) {
+			filesToAdd = append(filesToAdd, runtime.StaticDir)
 		}
 
 		// Check for Page Bundle
@@ -273,13 +295,13 @@ func publishChanges(token, path string, push gitPushFunc) (string, error) {
 	// Prepare arguments for git add
 	gitAddArgs := append([]string{"add", "--"}, filesToAdd...)
 	addCmd := exec.CommandContext(ctx, "git", gitAddArgs...)
-	addCmd.Dir = config.RepoPath
+	addCmd.Dir = runtime.RepoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Sprintf("Git Add Failed: %s\nOutput: %s", err.Error(), string(out)), err
 	}
 
 	stagedDiffCmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet", "--exit-code")
-	stagedDiffCmd.Dir = config.RepoPath
+	stagedDiffCmd.Dir = runtime.RepoPath
 	commitLog := "No new changes to commit; checking whether existing commits need to be pushed."
 	if err := stagedDiffCmd.Run(); err != nil {
 		var exitErr *exec.ExitError
@@ -288,7 +310,7 @@ func publishChanges(token, path string, push gitPushFunc) (string, error) {
 		}
 
 		commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", msg)
-		commitCmd.Dir = config.RepoPath
+		commitCmd.Dir = runtime.RepoPath
 		commitOut, commitErr := commitCmd.CombinedOutput()
 		if commitErr != nil {
 			return fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\nCommit failed: %s\nOutput: %s",
@@ -297,11 +319,11 @@ func publishChanges(token, path string, push gitPushFunc) (string, error) {
 		commitLog = string(commitOut)
 	}
 
-	pushLog, err := push(config.RepoPath, token, "push", config.GitRemote, config.GitBranch)
+	pushLog, err := push(runtime.RepoPath, token, "push", runtime.GitRemote, runtime.GitBranch)
 
 	// Invalidate cache after successful publish to refresh dirty status
 	if err == nil {
-		InvalidateCache()
+		InvalidateCacheForRuntime(runtime)
 	}
 
 	fullLog := fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\n%s\n\n--- Git Push ---\n%s", commitLog, pushLog)
@@ -314,6 +336,10 @@ func dirExists(path string) bool {
 }
 
 func Diff(f1Path, f2Path, relPath string) (string, string) {
+	return DiffForRuntime(config.CurrentSiteRuntime(), f1Path, f2Path, relPath)
+}
+
+func DiffForRuntime(runtime config.SiteRuntime, f1Path, f2Path, relPath string) (string, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
 	defer cancel()
 
@@ -337,12 +363,12 @@ func Diff(f1Path, f2Path, relPath string) (string, string) {
 	// Use filepath.ToSlash to ensure forward slashes for git
 	gitPath := filepath.ToSlash(relPath)
 	cmdHead := exec.CommandContext(ctx, "git", "show", "HEAD:"+gitPath)
-	cmdHead.Dir = config.RepoPath
+	cmdHead.Dir = runtime.RepoPath
 	outHead, _ := cmdHead.Output()
 	// err is expected for new files, we treat it as empty
 
 	// Normalize HEAD content with defaults
-	collection, _ := GetCollectionForPath(relPath)
+	collection, _ := GetCollectionForPathForRuntime(runtime, relPath)
 	normalizedHead := NormalizeContent(outHead, collection)
 
 	// Write to temp file

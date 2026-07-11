@@ -16,12 +16,12 @@ import (
 )
 
 func HandleBuild(c *gin.Context) {
-	site, err := requestedSite(c)
+	runtime, err := requestedRuntime(c)
 	if err != nil {
 		ErrorBadRequest(c, err.Error())
 		return
 	}
-	if err := services.StartPreviewForSite(site); err != nil {
+	if err := services.StartPreviewForRuntime(runtime); err != nil {
 		ErrorInternal(c, "Failed to start preview server: "+err.Error())
 		return
 	}
@@ -29,12 +29,12 @@ func HandleBuild(c *gin.Context) {
 }
 
 func HandleRestart(c *gin.Context) {
-	site, err := requestedSite(c)
+	runtime, err := requestedRuntime(c)
 	if err != nil {
 		ErrorBadRequest(c, err.Error())
 		return
 	}
-	if err := services.RestartPreviewForSite(site); err != nil {
+	if err := services.RestartPreviewForRuntime(runtime); err != nil {
 		ErrorInternal(c, "Failed to restart preview server: "+err.Error())
 		return
 	}
@@ -42,13 +42,18 @@ func HandleRestart(c *gin.Context) {
 }
 
 func HandleSync(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	session := sessions.Default(c)
 	token, ok := session.Get("access_token").(string)
 	if !ok {
 		ErrorUnauthorized(c, "Invalid session token")
 		return
 	}
-	log, err := services.SyncRepo(token)
+	log, err := services.SyncRepoForRuntime(runtime, token)
 
 	if err != nil {
 		ErrorInternal(c, "Sync failed: "+log)
@@ -58,6 +63,11 @@ func HandleSync(c *gin.Context) {
 }
 
 func HandlePublish(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	session := sessions.Default(c)
 	token, ok := session.Get("access_token").(string)
 	if !ok {
@@ -77,10 +87,10 @@ func HandlePublish(c *gin.Context) {
 		// e.g. "posts/abc.md" -> "content/posts/abc.md"
 		// We use Join to be OS agnostic, but git expects forward slashes.
 		// git.go's PublishChanges might need to handle ToSlash, but let's do it here.
-		gitPath = filepath.ToSlash(filepath.Join(config.ContentDir, req.Path))
+		gitPath = filepath.ToSlash(filepath.Join(runtime.ContentDir, req.Path))
 
 		// Verify file exists before passing to git
-		fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, req.Path)
+		fullPath := services.SafeJoin(runtime.RepoPath, runtime.ContentDir, req.Path)
 		if fullPath == "" {
 			ErrorBadRequest(c, "Invalid path")
 			return
@@ -91,7 +101,7 @@ func HandlePublish(c *gin.Context) {
 		}
 	}
 
-	log, err := services.PublishChanges(token, gitPath)
+	log, err := services.PublishChangesForRuntime(runtime, token, gitPath)
 	if err != nil {
 		ErrorInternal(c, "Publish failed: "+log)
 		return
@@ -100,7 +110,12 @@ func HandlePublish(c *gin.Context) {
 }
 
 func ListArticles(c *gin.Context) {
-	articles, err := services.GetArticlesCache()
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
+	articles, err := services.GetArticlesCacheForRuntime(runtime)
 	if err != nil {
 		ErrorInternal(c, "Failed to fetch articles")
 		return
@@ -109,13 +124,18 @@ func ListArticles(c *gin.Context) {
 }
 
 func GetArticle(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	targetPath := c.Query("path")
 	if targetPath == "" {
 		ErrorBadRequest(c, "Path parameter is required")
 		return
 	}
 
-	fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, targetPath)
+	fullPath := services.SafeJoin(runtime.RepoPath, runtime.ContentDir, targetPath)
 	if fullPath == "" {
 		ErrorBadRequest(c, "Invalid path")
 		return
@@ -142,6 +162,11 @@ func GetArticle(c *gin.Context) {
 }
 
 func SaveArticle(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	var art models.Article
 	if err := c.BindJSON(&art); err != nil {
 		ErrorBadRequest(c, "Invalid JSON")
@@ -153,7 +178,7 @@ func SaveArticle(c *gin.Context) {
 		return
 	}
 
-	fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, art.Path)
+	fullPath := services.SafeJoin(runtime.RepoPath, runtime.ContentDir, art.Path)
 	if fullPath == "" {
 		ErrorBadRequest(c, "Invalid path")
 		return
@@ -163,7 +188,6 @@ func SaveArticle(c *gin.Context) {
 	defer unlock()
 
 	var finalContent []byte
-	var err error
 
 	if art.FrontMatter != nil {
 		finalContent, err = services.ConstructFileContent(art.FrontMatter, art.Body, art.Format)
@@ -180,11 +204,16 @@ func SaveArticle(c *gin.Context) {
 		return
 	}
 
-	services.UpdateCache(art.Path)
+	services.UpdateCacheForRuntime(runtime, art.Path)
 	c.JSON(http.StatusOK, gin.H{"status": "saved"})
 }
 
 func CreateArticle(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	var req struct {
 		Path       string                 `json:"path"`
 		Content    string                 `json:"content"`
@@ -201,7 +230,7 @@ func CreateArticle(c *gin.Context) {
 
 	// New logic: Collection-based creation
 	if req.Collection != "" {
-		cmsConfig, err := services.GetCMSConfig()
+		cmsConfig, err := services.GetCMSConfigForRuntime(runtime)
 		if err != nil {
 			ErrorInternal(c, "Failed to load CMS config")
 			return
@@ -227,12 +256,12 @@ func CreateArticle(c *gin.Context) {
 			return
 		}
 
-		collectionFolder, err := services.CollectionFolderWithinContent(*targetCollection)
+		collectionFolder, err := services.CollectionFolderWithinContentForRuntime(runtime, *targetCollection)
 		if err != nil {
 			ErrorBadRequest(c, err.Error())
 			return
 		}
-		fullPath := services.SafeJoin(config.RepoPath, collectionFolder, relPath)
+		fullPath := services.SafeJoin(runtime.RepoPath, collectionFolder, relPath)
 		if fullPath == "" {
 			ErrorBadRequest(c, "Invalid resolved path")
 			return
@@ -262,10 +291,10 @@ func CreateArticle(c *gin.Context) {
 			return
 		}
 
-		contentRelPath, _ := filepath.Rel(filepath.Join(config.RepoPath, config.ContentDir), fullPath)
+		contentRelPath, _ := filepath.Rel(filepath.Join(runtime.RepoPath, runtime.ContentDir), fullPath)
 		contentRelPath = filepath.ToSlash(contentRelPath)
 
-		services.UpdateCache(contentRelPath)
+		services.UpdateCacheForRuntime(runtime, contentRelPath)
 		c.JSON(http.StatusOK, gin.H{"status": "created", "path": contentRelPath})
 		return
 	}
@@ -276,7 +305,7 @@ func CreateArticle(c *gin.Context) {
 		return
 	}
 
-	log, err := services.CreateContent(req.Path)
+	log, err := services.CreateContentForRuntime(runtime, req.Path)
 	if err != nil {
 		if os.IsExist(err) {
 			ErrorConflict(c, log)
@@ -286,11 +315,16 @@ func CreateArticle(c *gin.Context) {
 		return
 	}
 
-	services.UpdateCache(req.Path)
+	services.UpdateCacheForRuntime(runtime, req.Path)
 	c.JSON(http.StatusOK, gin.H{"status": "created", "log": log})
 }
 
 func GetDiff(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	var art models.Article
 	if err := c.BindJSON(&art); err != nil {
 		ErrorBadRequest(c, "Invalid JSON")
@@ -302,7 +336,7 @@ func GetDiff(c *gin.Context) {
 		return
 	}
 
-	fullPath := services.SafeJoin(config.RepoPath, config.ContentDir, art.Path)
+	fullPath := services.SafeJoin(runtime.RepoPath, runtime.ContentDir, art.Path)
 	if fullPath == "" {
 		ErrorBadRequest(c, "Invalid path")
 		return
@@ -314,8 +348,8 @@ func GetDiff(c *gin.Context) {
 	}
 
 	// Apply defaults for normalization
-	collectionPath := filepath.Join(config.ContentDir, art.Path)
-	collection, _ := services.GetCollectionForPath(collectionPath)
+	collectionPath := filepath.Join(runtime.ContentDir, art.Path)
+	collection, _ := services.GetCollectionForPathForRuntime(runtime, collectionPath)
 	currentContent = services.NormalizeContent(currentContent, collection)
 
 	var newContent []byte
@@ -357,13 +391,18 @@ func GetDiff(c *gin.Context) {
 	f1.Close()
 	f2.Close()
 
-	relPath := filepath.Join(config.ContentDir, art.Path)
-	diffStr, diffType := services.Diff(f1.Name(), f2.Name(), relPath)
+	relPath := filepath.Join(runtime.ContentDir, art.Path)
+	diffStr, diffType := services.DiffForRuntime(runtime, f1.Name(), f2.Name(), relPath)
 
 	c.JSON(http.StatusOK, gin.H{"diff": diffStr, "type": diffType})
 }
 
 func DeleteArticle(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	var req struct {
 		Path string `json:"path"`
 	}
@@ -380,19 +419,24 @@ func DeleteArticle(c *gin.Context) {
 	unlock := services.LockRepositoryOperation()
 	defer unlock()
 
-	if err := services.DeleteFile(req.Path); err != nil {
+	if err := services.DeleteFileForRuntime(runtime, req.Path); err != nil {
 		ErrorInternal(c, "Delete failed: "+err.Error())
 		return
 	}
 
 	// Re-scan or remove from cache
 	// Assuming UpdateCache handles re-scan or we'll fix it
-	services.UpdateCache(req.Path)
+	services.UpdateCacheForRuntime(runtime, req.Path)
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
 func GetConfig(c *gin.Context) {
-	cfg, err := services.GetConfig()
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
+	cfg, err := services.GetConfigForRuntime(runtime)
 	if err != nil {
 		ErrorInternal(c, "Failed to parse config")
 		return
@@ -401,12 +445,12 @@ func GetConfig(c *gin.Context) {
 		cfg = map[string]interface{}{}
 	}
 	cfg["_cms"] = gin.H{
-		"content_dir":    config.ContentDir,
-		"static_dir":     config.StaticDir,
-		"public_dir":     config.PublicDir,
-		"site_generator": config.SiteGenerator,
+		"content_dir":    runtime.ContentDir,
+		"static_dir":     runtime.StaticDir,
+		"public_dir":     runtime.PublicDir,
+		"site_generator": runtime.Generator,
 		"default_site":   config.DefaultSiteID,
-		"site_id":        currentSiteID(c),
+		"site_id":        runtime.ID,
 	}
 	c.JSON(http.StatusOK, cfg)
 }
@@ -427,9 +471,14 @@ type SnippetDef struct {
 }
 
 func GetSnippets(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	allSnippets := make(map[string]SnippetDef)
 
-	for _, path := range config.SnippetPaths {
+	for _, path := range runtime.SnippetPaths {
 		// Clean the path
 		path = filepath.Clean(path)
 
