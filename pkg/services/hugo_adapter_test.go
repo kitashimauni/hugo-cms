@@ -26,11 +26,19 @@ func TestHugoAdapterCreateContentReturnsMatchedCollectionFormatError(t *testing.
 		t.Fatalf("write CMS config: %v", err)
 	}
 
-	originalRepoPath := config.RepoPath
-	config.RepoPath = repoPath
-	t.Cleanup(func() { config.RepoPath = originalRepoPath })
+	runtime := config.NewSiteRuntime(config.SiteConfig{
+		ID:             "test",
+		RepoPath:       repoPath,
+		Generator:      "hugo",
+		ContentDir:     "content",
+		StaticDir:      "static",
+		PublicDir:      "public",
+		PreviewURL:     "/",
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: "1314",
+	})
 
-	log, err := NewHugoAdapter().CreateContent("posts/new.md")
+	log, err := NewHugoAdapter().CreateContent(runtime, "posts/new.md")
 	if err == nil {
 		t.Fatal("CreateContent() should return the matched collection format error")
 	}
@@ -46,35 +54,28 @@ func TestHugoAdapterCreateContentReturnsMatchedCollectionFormatError(t *testing.
 }
 
 func TestHugoArgsIncludeConfiguredContentDir(t *testing.T) {
-	originalRepoPath := config.RepoPath
-	originalContentDir := config.ContentDir
-	originalPublicDir := config.PublicDir
-	originalPort := config.HugoServerPort
-	originalBind := config.HugoServerBind
-	t.Cleanup(func() {
-		config.RepoPath = originalRepoPath
-		config.ContentDir = originalContentDir
-		config.PublicDir = originalPublicDir
-		config.HugoServerPort = originalPort
-		config.HugoServerBind = originalBind
+	runtime := config.NewSiteRuntime(config.SiteConfig{
+		ID:             "test",
+		RepoPath:       "repo",
+		Generator:      "hugo",
+		ContentDir:     "src",
+		StaticDir:      "static",
+		PublicDir:      "_site",
+		PreviewURL:     "/preview/",
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: "1320",
 	})
 
-	config.RepoPath = "repo"
-	config.ContentDir = "src"
-	config.PublicDir = "_site"
-	config.HugoServerPort = "1320"
-	config.HugoServerBind = "127.0.0.1"
-
-	if got := argValue(hugoServerArgs(), "--contentDir"); got != "src" {
+	if got := argValue(hugoServerArgs(runtime), "--contentDir"); got != "src" {
 		t.Fatalf("hugoServerArgs contentDir = %q, want src", got)
 	}
-	if got := argValue(hugoBuildArgs(), "--contentDir"); got != "src" {
+	if got := argValue(hugoBuildArgs(runtime), "--contentDir"); got != "src" {
 		t.Fatalf("hugoBuildArgs contentDir = %q, want src", got)
 	}
-	if got := argValue(hugoBuildArgs(), "--destination"); got != "_site" {
+	if got := argValue(hugoBuildArgs(runtime), "--destination"); got != "_site" {
 		t.Fatalf("hugoBuildArgs destination = %q, want _site", got)
 	}
-	newArgs := hugoNewContentArgs("posts/a.md")
+	newArgs := hugoNewContentArgs(runtime, "posts/a.md")
 	if len(newArgs) < 3 || newArgs[0] != "new" || newArgs[1] != "content" {
 		t.Fatalf("hugoNewContentArgs = %#v, want hugo new content subcommand", newArgs)
 	}

@@ -20,13 +20,20 @@ func WithSiteRuntimeLock(fn func() error) error {
 // a selected site explicitly. Calls are serialized so concurrent requests do
 // not observe another site's runtime settings.
 func WithSiteRuntime(site config.SiteConfig, fn func() error) error {
+	return WithRuntime(config.NewSiteRuntime(site), fn)
+}
+
+// WithRuntime temporarily applies a resolved runtime while executing fn.
+// Prefer passing config.SiteRuntime directly into services for new code; this
+// bridge exists for legacy services that still read config package globals.
+func WithRuntime(runtime config.SiteRuntime, fn func() error) error {
 	siteScopeMu.Lock()
 	defer siteScopeMu.Unlock()
 
-	previous := config.RuntimeSiteConfig()
-	config.ApplySiteRuntime(site)
+	previous := config.CurrentSiteRuntime()
+	config.ApplyRuntime(runtime)
 	defer func() {
-		config.ApplySiteRuntime(previous)
+		config.ApplyRuntime(previous)
 	}()
 
 	return fn()

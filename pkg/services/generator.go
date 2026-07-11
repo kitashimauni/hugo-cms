@@ -10,12 +10,11 @@ import (
 
 type GeneratorAdapter interface {
 	Name() string
-	StartPreview() error
+	StartPreview(runtime config.SiteRuntime) error
 	StopPreview() error
-	RestartPreview() error
 	IsPreviewRunning() bool
-	Build() (string, error)
-	CreateContent(path string) (string, error)
+	Build(runtime config.SiteRuntime) (string, error)
+	CreateContent(runtime config.SiteRuntime, path string) (string, error)
 }
 
 var (
@@ -83,31 +82,47 @@ func IsHugoServerRunning() bool {
 }
 
 func BuildSite() (string, error) {
-	adapter, err := NewGeneratorAdapter(config.SiteGenerator)
+	return BuildSiteForRuntime(config.CurrentSiteRuntime())
+}
+
+func BuildSiteForRuntime(runtime config.SiteRuntime) (string, error) {
+	adapter, err := NewGeneratorAdapter(runtime.Generator)
 	if err != nil {
 		return "", err
 	}
-	return adapter.Build()
+	return adapter.Build(runtime)
 }
 
 func CreateContent(path string) (string, error) {
-	adapter, err := NewGeneratorAdapter(config.SiteGenerator)
+	return CreateContentForRuntime(config.CurrentSiteRuntime(), path)
+}
+
+func CreateContentForRuntime(runtime config.SiteRuntime, path string) (string, error) {
+	adapter, err := NewGeneratorAdapter(runtime.Generator)
 	if err != nil {
 		return "", err
 	}
-	return adapter.CreateContent(path)
+	return adapter.CreateContent(runtime, path)
 }
 
 func StartPreviewForSite(site config.SiteConfig) error {
-	adapter, err := previewAdapterForSite(site)
+	return StartPreviewForRuntime(previewRuntime(site))
+}
+
+func StartPreviewForRuntime(runtime config.SiteRuntime) error {
+	adapter, err := previewAdapterForRuntime(runtime)
 	if err != nil {
 		return err
 	}
-	return WithSiteRuntime(previewRuntimeSite(site), adapter.StartPreview)
+	return adapter.StartPreview(runtime)
 }
 
 func StopPreviewForSite(site config.SiteConfig) error {
-	adapter, ok := previewAdapterForSiteIfExists(site)
+	return StopPreviewForRuntime(config.NewSiteRuntime(site))
+}
+
+func StopPreviewForRuntime(runtime config.SiteRuntime) error {
+	adapter, ok := previewAdapterForRuntimeIfExists(runtime)
 	if !ok {
 		return nil
 	}
@@ -115,18 +130,26 @@ func StopPreviewForSite(site config.SiteConfig) error {
 }
 
 func RestartPreviewForSite(site config.SiteConfig) error {
-	adapter, err := previewAdapterForSite(site)
+	return RestartPreviewForRuntime(previewRuntime(site))
+}
+
+func RestartPreviewForRuntime(runtime config.SiteRuntime) error {
+	adapter, err := previewAdapterForRuntime(runtime)
 	if err != nil {
 		return err
 	}
 	if err := adapter.StopPreview(); err != nil {
 		return err
 	}
-	return WithSiteRuntime(previewRuntimeSite(site), adapter.StartPreview)
+	return adapter.StartPreview(runtime)
 }
 
 func IsPreviewRunningForSite(site config.SiteConfig) bool {
-	adapter, ok := previewAdapterForSiteIfExists(site)
+	return IsPreviewRunningForRuntime(config.NewSiteRuntime(site))
+}
+
+func IsPreviewRunningForRuntime(runtime config.SiteRuntime) bool {
+	adapter, ok := previewAdapterForRuntimeIfExists(runtime)
 	return ok && adapter.IsPreviewRunning()
 }
 
@@ -148,26 +171,26 @@ func StopAllPreviewServers() error {
 	return stopErr
 }
 
-func previewAdapterForSite(site config.SiteConfig) (GeneratorAdapter, error) {
+func previewAdapterForRuntime(runtime config.SiteRuntime) (GeneratorAdapter, error) {
 	previewAdaptersMu.Lock()
 	defer previewAdaptersMu.Unlock()
-	return previewAdapterForSiteLocked(site)
+	return previewAdapterForRuntimeLocked(runtime)
 }
 
-func previewAdapterForSiteIfExists(site config.SiteConfig) (GeneratorAdapter, bool) {
+func previewAdapterForRuntimeIfExists(runtime config.SiteRuntime) (GeneratorAdapter, bool) {
 	previewAdaptersMu.Lock()
 	defer previewAdaptersMu.Unlock()
-	adapter, ok := previewAdapters[sitePreviewKey(site)]
+	adapter, ok := previewAdapters[sitePreviewKey(runtime)]
 	return adapter, ok
 }
 
-func previewAdapterForSiteLocked(site config.SiteConfig) (GeneratorAdapter, error) {
-	key := sitePreviewKey(site)
+func previewAdapterForRuntimeLocked(runtime config.SiteRuntime) (GeneratorAdapter, error) {
+	key := sitePreviewKey(runtime)
 	if adapter, ok := previewAdapters[key]; ok {
 		return adapter, nil
 	}
 
-	adapter, err := NewGeneratorAdapter(site.Generator)
+	adapter, err := NewGeneratorAdapter(runtime.Generator)
 	if err != nil {
 		return nil, err
 	}
@@ -175,11 +198,11 @@ func previewAdapterForSiteLocked(site config.SiteConfig) (GeneratorAdapter, erro
 	return adapter, nil
 }
 
-func sitePreviewKey(site config.SiteConfig) string {
-	if site.ID != "" {
-		return site.ID
+func sitePreviewKey(runtime config.SiteRuntime) string {
+	if runtime.ID != "" {
+		return runtime.ID
 	}
-	return filepath.ToSlash(filepath.Clean(site.RepoPath)) + "\x00" + site.HugoServerBind + "\x00" + site.HugoServerPort
+	return filepath.ToSlash(filepath.Clean(runtime.RepoPath)) + "\x00" + runtime.HugoServerBind + "\x00" + runtime.HugoServerPort
 }
 
 func defaultPreviewSite() config.SiteConfig {
@@ -190,9 +213,13 @@ func defaultPreviewSite() config.SiteConfig {
 }
 
 func previewRuntimeSite(site config.SiteConfig) config.SiteConfig {
+	return previewRuntime(site).SiteConfig()
+}
+
+func previewRuntime(site config.SiteConfig) config.SiteRuntime {
 	if site.ID == "" {
-		return site
+		return config.NewSiteRuntime(site)
 	}
 	site.PreviewURL = "/admin/preview/" + url.PathEscape(site.ID) + "/"
-	return site
+	return config.NewSiteRuntime(site)
 }
