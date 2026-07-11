@@ -269,6 +269,47 @@ media:
 	}
 }
 
+func TestSaveMediaFileUsesRootPublicPathForStaticMediaRoot(t *testing.T) {
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: posts
+      folder: content/posts
+media:
+  folder: static
+`)
+	runtime := config.NewSiteRuntime(config.SiteConfig{
+		ID:             "test",
+		RepoPath:       repoPath,
+		Generator:      "hugo",
+		ContentDir:     "content",
+		StaticDir:      "static",
+		PublicDir:      "public",
+		PreviewURL:     "/",
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: "1314",
+	})
+
+	header := testFileHeader(t, "image.png", []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+	})
+	media, err := SaveMediaFileForRuntime(runtime, header, "static", "")
+	if err != nil {
+		t.Fatalf("SaveMediaFileForRuntime() unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(media.RepoPath, "static/") {
+		t.Fatalf("RepoPath = %q, want static prefix", media.RepoPath)
+	}
+	if strings.HasPrefix(media.Path, "/static/") {
+		t.Fatalf("Path = %q, should not include static directory prefix", media.Path)
+	}
+	if !strings.HasPrefix(media.Path, "/image_") || !strings.HasSuffix(media.Path, ".png") {
+		t.Fatalf("Path = %q, want root-relative generated image path", media.Path)
+	}
+}
+
 func TestSaveMediaFileNormalizesLegacyAbsoluteMediaFolder(t *testing.T) {
 	repoPath := t.TempDir()
 	writeTestFile(t, filepath.Join(repoPath, "static", "admin", "config.yml"), `

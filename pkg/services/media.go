@@ -329,7 +329,11 @@ func staticMediaTargetForRuntime(runtime config.SiteRuntime) staticMediaTarget {
 		}
 		publicBase := cfg.PublicFolder
 		if publicBase == "" {
-			publicBase = "/" + strings.Trim(filepath.ToSlash(filepath.Base(repoRelDir)), "/")
+			if repoRelDir == filepath.ToSlash(filepath.Clean(runtime.StaticDir)) {
+				publicBase = ""
+			} else {
+				publicBase = "/" + strings.Trim(filepath.ToSlash(filepath.Base(repoRelDir)), "/")
+			}
 		}
 		return staticMediaTarget{
 			repoRelDir: repoRelDir,
