@@ -320,12 +320,19 @@ func staticMediaTargetForRuntime(runtime config.SiteRuntime) staticMediaTarget {
 	}
 
 	if cfg, err := GetCMSConfigForRuntime(runtime); err == nil && cfg.MediaFolder != "" {
+		repoRelDir := cleanMediaRepoRelDir(cfg.MediaFolder)
+		if repoRelDir == "" {
+			return staticMediaTarget{
+				repoRelDir: filepath.ToSlash(filepath.Clean(runtime.StaticDir)),
+				publicBase: "",
+			}
+		}
 		publicBase := cfg.PublicFolder
 		if publicBase == "" {
-			publicBase = "/" + strings.Trim(filepath.ToSlash(filepath.Base(cfg.MediaFolder)), "/")
+			publicBase = "/" + strings.Trim(filepath.ToSlash(filepath.Base(repoRelDir)), "/")
 		}
 		return staticMediaTarget{
-			repoRelDir: filepath.ToSlash(filepath.Clean(cfg.MediaFolder)),
+			repoRelDir: repoRelDir,
 			publicBase: cleanPublicPath(publicBase),
 		}
 	}
@@ -346,4 +353,17 @@ func joinPublicPath(base, rel string) string {
 		return base
 	}
 	return base + "/" + rel
+}
+
+func cleanMediaRepoRelDir(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	path = filepath.ToSlash(path)
+	path = strings.TrimLeft(path, "/")
+	if strings.Contains(path, ":") {
+		return ""
+	}
+	return cleanConfigPath(path)
 }

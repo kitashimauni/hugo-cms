@@ -269,6 +269,42 @@ media:
 	}
 }
 
+func TestSaveMediaFileNormalizesLegacyAbsoluteMediaFolder(t *testing.T) {
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, "static", "admin", "config.yml"), `
+media_folder: /static/images
+public_folder: /images
+collections:
+  - name: posts
+    folder: content/posts
+`)
+	runtime := config.NewSiteRuntime(config.SiteConfig{
+		ID:             "test",
+		RepoPath:       repoPath,
+		Generator:      "hugo",
+		ContentDir:     "content",
+		StaticDir:      "static",
+		PublicDir:      "public",
+		PreviewURL:     "/",
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: "1314",
+	})
+
+	header := testFileHeader(t, "image.png", []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+	})
+	media, err := SaveMediaFileForRuntime(runtime, header, "static", "")
+	if err != nil {
+		t.Fatalf("SaveMediaFileForRuntime() unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(media.RepoPath, "static/images/") {
+		t.Fatalf("RepoPath = %q, want static/images prefix", media.RepoPath)
+	}
+	if !strings.HasPrefix(media.Path, "/images/") {
+		t.Fatalf("Path = %q, want /images prefix", media.Path)
+	}
+}
+
 func TestValidateMediaRepoPath(t *testing.T) {
 	repoPath := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repoPath, "static", "images"), 0755); err != nil {

@@ -66,6 +66,46 @@ collections:
 	}
 }
 
+func TestGetConfigForRuntimePreservesLegacyRawFields(t *testing.T) {
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, "static", "admin", "config.yml"), `
+collections:
+  - name: posts
+    label: Blog Posts
+    folder: content/posts
+    create: true
+    slug: "{{year}}-{{slug}}"
+    fields:
+      - name: title
+        label: Title Label
+        widget: string
+`)
+
+	conf, err := GetConfigForRuntime(testRuntime(repoPath))
+	if err != nil {
+		t.Fatalf("GetConfigForRuntime() error = %v", err)
+	}
+	collections, ok := conf["collections"].([]interface{})
+	if !ok || len(collections) != 1 {
+		t.Fatalf("collections = %#v, want one raw collection", conf["collections"])
+	}
+	collection, ok := collections[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("collection = %#v, want map", collections[0])
+	}
+	if collection["create"] != true || collection["slug"] != "{{year}}-{{slug}}" {
+		t.Fatalf("collection = %#v, want preserved create and slug", collection)
+	}
+	fields, ok := collection["fields"].([]interface{})
+	if !ok || len(fields) != 1 {
+		t.Fatalf("fields = %#v, want one raw field", collection["fields"])
+	}
+	field, ok := fields[0].(map[string]interface{})
+	if !ok || field["label"] != "Title Label" {
+		t.Fatalf("field = %#v, want preserved label", fields[0])
+	}
+}
+
 func TestHomeCMSConfigTakesPrecedenceOverLegacyConfig(t *testing.T) {
 	repoPath := t.TempDir()
 	writeTestFile(t, filepath.Join(repoPath, ".homecms.yml"), `

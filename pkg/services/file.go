@@ -135,21 +135,38 @@ func DeleteFileForRuntime(runtime config.SiteRuntime, targetPath string) error {
 }
 
 func GetConfigForRuntime(runtime config.SiteRuntime) (map[string]interface{}, error) {
-	cmsConfig, source, err := LoadCMSConfigForRuntime(runtime)
+	rawConfig, source, err := LoadConfigMapForRuntime(runtime)
 	if err != nil {
 		return nil, err
 	}
 
-	content, err := yaml.Marshal(cmsConfig)
+	rawConfig["_config_source"] = source
+	return rawConfig, nil
+}
+
+func LoadConfigMapForRuntime(runtime config.SiteRuntime) (map[string]interface{}, string, error) {
+	homePath := filepath.Join(runtime.RepoPath, homeCMSConfigFile)
+	if _, err := os.Stat(homePath); err == nil {
+		cmsConfig, err := readHomeCMSConfig(homePath)
+		if err != nil {
+			return nil, homeCMSConfigFile, err
+		}
+		rawConfig, err := cmsConfigToMap(cmsConfig)
+		return rawConfig, homeCMSConfigFile, err
+	} else if !os.IsNotExist(err) {
+		return nil, homeCMSConfigFile, err
+	}
+
+	configPath := legacyCMSConfigPath(runtime)
+	content, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, err
+		return nil, legacyCMSConfigFile, err
 	}
 	var rawConfig map[string]interface{}
 	if err := yaml.Unmarshal(content, &rawConfig); err != nil {
-		return nil, err
+		return nil, legacyCMSConfigFile, err
 	}
-	rawConfig["_config_source"] = source
-	return rawConfig, nil
+	return rawConfig, legacyCMSConfigFile, nil
 }
 
 func GetCMSConfigForRuntime(runtime config.SiteRuntime) (*models.CMSConfig, error) {
@@ -166,7 +183,7 @@ func LoadCMSConfigForRuntime(runtime config.SiteRuntime) (*models.CMSConfig, str
 		return nil, homeCMSConfigFile, err
 	}
 
-	configPath := filepath.Join(runtime.RepoPath, runtime.StaticDir, "admin", legacyCMSConfigFile)
+	configPath := legacyCMSConfigPath(runtime)
 	content, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, legacyCMSConfigFile, err
@@ -177,6 +194,22 @@ func LoadCMSConfigForRuntime(runtime config.SiteRuntime) (*models.CMSConfig, str
 		return nil, legacyCMSConfigFile, err
 	}
 	return &cfg, legacyCMSConfigFile, nil
+}
+
+func legacyCMSConfigPath(runtime config.SiteRuntime) string {
+	return filepath.Join(runtime.RepoPath, runtime.StaticDir, "admin", legacyCMSConfigFile)
+}
+
+func cmsConfigToMap(cmsConfig *models.CMSConfig) (map[string]interface{}, error) {
+	content, err := yaml.Marshal(cmsConfig)
+	if err != nil {
+		return nil, err
+	}
+	var rawConfig map[string]interface{}
+	if err := yaml.Unmarshal(content, &rawConfig); err != nil {
+		return nil, err
+	}
+	return rawConfig, nil
 }
 
 func readHomeCMSConfig(path string) (*models.CMSConfig, error) {
