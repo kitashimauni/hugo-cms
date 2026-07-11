@@ -1,24 +1,27 @@
 package services
 
 import (
+	"hugo-cms/pkg/config"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestDeleteFile(t *testing.T) {
-	// Note: DeleteFile uses config.RepoPath, making it hard to test in isolation
-	// These tests document expected behavior
+	runtime := config.NewSiteRuntime(config.SiteConfig{
+		RepoPath:   t.TempDir(),
+		ContentDir: "content",
+	})
 
 	t.Run("Empty path should fail", func(t *testing.T) {
-		err := DeleteFile("")
+		err := DeleteFileForRuntime(runtime, "")
 		if err == nil {
 			t.Error("DeleteFile(\"\") should return error")
 		}
 	})
 
 	t.Run("Path traversal should fail", func(t *testing.T) {
-		err := DeleteFile("../../../etc/passwd")
+		err := DeleteFileForRuntime(runtime, "../../../etc/passwd")
 		if err == nil {
 			t.Error("DeleteFile with path traversal should return error")
 		}
@@ -26,28 +29,72 @@ func TestDeleteFile(t *testing.T) {
 }
 
 func TestGetConfig(t *testing.T) {
-	// GetConfig reads hugo.toml from config.RepoPath
-	// Test documents expected return type
-	t.Run("Returns map or error", func(t *testing.T) {
-		conf, err := GetConfig()
-		// In test environment without proper setup, this may fail
-		if err != nil {
-			t.Logf("GetConfig returned error (expected in test env): %v", err)
-		} else if conf == nil {
-			t.Error("GetConfig should return non-nil config on success")
-		}
-	})
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: posts
+      folder: content/posts
+      frontmatter: yaml
+media:
+  folder: assets/images
+  public_path: /images
+`)
+	conf, err := GetConfigForRuntime(testRuntime(repoPath))
+	if err != nil {
+		t.Fatalf("GetConfigForRuntime() error = %v", err)
+	}
+	if conf == nil || conf["_config_source"] != ".homecms.yml" {
+		t.Fatalf("GetConfigForRuntime() = %#v, want .homecms.yml source", conf)
+	}
 }
 
 func TestGetCMSConfig(t *testing.T) {
-	t.Run("Returns CMSConfig or error", func(t *testing.T) {
-		conf, err := GetCMSConfig()
-		if err != nil {
-			t.Logf("GetCMSConfig returned error (expected in test env): %v", err)
-		} else if conf == nil {
-			t.Error("GetCMSConfig should return non-nil config on success")
-		}
-	})
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, "static", "admin", "config.yml"), `
+collections:
+  - name: posts
+    folder: content/posts
+`)
+	conf, err := GetCMSConfigForRuntime(testRuntime(repoPath))
+	if err != nil {
+		t.Fatalf("GetCMSConfigForRuntime() error = %v", err)
+	}
+	if conf == nil || len(conf.Collections) != 1 {
+		t.Fatalf("GetCMSConfigForRuntime() = %#v, want one collection", conf)
+	}
+}
+
+func TestHomeCMSConfigTakesPrecedenceOverLegacyConfig(t *testing.T) {
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: home
+      folder: content/home
+      frontmatter: yaml
+`)
+	writeTestFile(t, filepath.Join(repoPath, "static", "admin", "config.yml"), `
+collections:
+  - name: legacy
+    folder: content/legacy
+`)
+
+	conf, source, err := LoadCMSConfigForRuntime(testRuntime(repoPath))
+	if err != nil {
+		t.Fatalf("LoadCMSConfigForRuntime() error = %v", err)
+	}
+	if source != ".homecms.yml" {
+		t.Fatalf("source = %q, want .homecms.yml", source)
+	}
+	if len(conf.Collections) != 1 || conf.Collections[0].Name != "home" {
+		t.Fatalf("collections = %#v, want home collection", conf.Collections)
+	}
+	if conf.Collections[0].Format != "yaml-frontmatter" {
+		t.Fatalf("format = %q, want yaml-frontmatter", conf.Collections[0].Format)
+	}
 }
 
 func TestResolvePath(t *testing.T) {
@@ -111,15 +158,21 @@ func slugify(s string) string {
 }
 
 func TestGetCollectionForPath(t *testing.T) {
-	t.Run("Returns collection or error", func(t *testing.T) {
-		// Without proper CMS config setup, this will fail
-		coll, err := GetCollectionForPath("posts/test.md")
-		if err != nil {
-			t.Logf("GetCollectionForPath returned error (expected in test env): %v", err)
-		} else if coll == nil {
-			t.Log("GetCollectionForPath returned nil collection")
-		}
-	})
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: posts
+      folder: content/posts
+`)
+	coll, err := GetCollectionForPathForRuntime(testRuntime(repoPath), "content/posts/test.md")
+	if err != nil {
+		t.Fatalf("GetCollectionForPathForRuntime() error = %v", err)
+	}
+	if coll == nil || coll.Name != "posts" {
+		t.Fatalf("collection = %#v, want posts", coll)
+	}
 }
 
 func TestSafeJoinEdgeCases(t *testing.T) {
@@ -179,6 +232,30 @@ func TestSafeJoinEdgeCases(t *testing.T) {
 				t.Errorf("SafeJoin(%q, %q, %q) = empty, want non-empty", root, tt.sub, tt.target)
 			}
 		})
+	}
+}
+
+func testRuntime(repoPath string) config.SiteRuntime {
+	return config.NewSiteRuntime(config.SiteConfig{
+		ID:             "test",
+		RepoPath:       repoPath,
+		Generator:      "hugo",
+		ContentDir:     "content",
+		StaticDir:      "static",
+		PublicDir:      "public",
+		PreviewURL:     "/",
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: "1314",
+	})
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("create directory: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
 	}
 }
 

@@ -460,7 +460,7 @@ Hugoサーバーを再起動します。
 
 ### GET /admin/api/config
 
-CMS設定 (config.yml) を取得します。
+CMS設定を取得します。サイトリポジトリ直下の `.homecms.yml` がある場合はそれを優先し、存在しない場合は既存互換の `<static_dir>/admin/config.yml` を読み込みます。
 
 **レスポンス**:
 ```json
@@ -475,7 +475,15 @@ CMS設定 (config.yml) を取得します。
         }
     ],
     "media_folder": "/static/images",
-    "public_folder": "/images"
+    "public_folder": "/images",
+    "_cms": {
+        "site_id": "default",
+        "content_dir": "content",
+        "static_dir": "static",
+        "public_dir": "public",
+        "site_generator": "hugo",
+        "config_source": ".homecms.yml"
+    }
 }
 ```
 
@@ -508,9 +516,9 @@ CMS設定 (config.yml) を取得します。
     "timestamp": "2026-01-10T12:00:00Z",
     "uptime": "1h30m45s",
     "checks": {
-        "hugo_server": {
+        "preview_server": {
             "healthy": true,
-            "message": "Hugo server is running"
+            "message": "Preview server is running"
         },
         "content_dir": {
             "healthy": true,
@@ -532,7 +540,7 @@ CMS設定 (config.yml) を取得します。
 {
     "status": "degraded",
     "checks": {
-        "hugo_server": {
+        "preview_server": {
             "healthy": false,
             "message": "Hugo server is not running"
         }

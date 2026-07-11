@@ -63,38 +63,12 @@ func NewGeneratorAdapter(name string) (GeneratorAdapter, error) {
 	}
 }
 
-// Compatibility wrappers keep the existing API stable while generator-specific
-// behavior lives behind GeneratorAdapter.
-func StartHugoServer() error {
-	return StartPreviewForSite(defaultPreviewSite())
-}
-
-func StopHugoServer() error {
-	return StopPreviewForSite(defaultPreviewSite())
-}
-
-func RestartHugoServer() error {
-	return RestartPreviewForSite(defaultPreviewSite())
-}
-
-func IsHugoServerRunning() bool {
-	return IsPreviewRunningForSite(defaultPreviewSite())
-}
-
-func BuildSite() (string, error) {
-	return BuildSiteForRuntime(config.CurrentSiteRuntime())
-}
-
 func BuildSiteForRuntime(runtime config.SiteRuntime) (string, error) {
 	adapter, err := NewGeneratorAdapter(runtime.Generator)
 	if err != nil {
 		return "", err
 	}
 	return adapter.Build(runtime)
-}
-
-func CreateContent(path string) (string, error) {
-	return CreateContentForRuntime(config.CurrentSiteRuntime(), path)
 }
 
 func CreateContentForRuntime(runtime config.SiteRuntime, path string) (string, error) {
@@ -205,7 +179,7 @@ func sitePreviewKey(runtime config.SiteRuntime) string {
 	return filepath.ToSlash(filepath.Clean(runtime.RepoPath)) + "\x00" + runtime.HugoServerBind + "\x00" + runtime.HugoServerPort
 }
 
-func defaultPreviewSite() config.SiteConfig {
+func DefaultPreviewSite() config.SiteConfig {
 	if site, ok := config.GetSite(config.DefaultSiteID); ok {
 		return site
 	}

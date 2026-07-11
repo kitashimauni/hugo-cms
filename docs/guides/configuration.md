@@ -168,6 +168,34 @@ Site Registryを設定すると、管理画面のサイドバーにサイトセ�
 
 HTTP APIでは、`?site=<site_id>`または`X-CMS-Site: <site_id>`で対象サイトを指定できます。未指定の場合は`default_site`が使われます。
 
+### サイト内CMS設定
+
+各サイトリポジトリでは、リポジトリ直下の`.homecms.yml`を優先して読み込みます。既存互換として`<static_dir>/admin/config.yml`も利用できますが、両方が存在する場合は`.homecms.yml`が優先されます。
+
+最小例:
+
+```yaml
+version: 1
+
+content:
+  collections:
+    - name: posts
+      label: Posts
+      folder: content/posts
+      path: "{{slug}}"
+      extension: md
+      frontmatter: yaml
+      fields:
+        - { name: title, label: Title, widget: string }
+        - { name: body, label: Body, widget: markdown }
+
+media:
+  folder: static/images
+  public_path: /images
+```
+
+`media.folder`はリポジトリルート基準です。`static_media_dir` / `STATIC_MEDIA_DIR`を明示していないサイトでは、この値がstatic media modeの保存先になります。
+
 ### Preview
 
 プレビューはサイトごとに独立したプロセスとして管理されます。選択中サイトのiframeは次の内部proxyを参照します。

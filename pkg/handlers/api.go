@@ -444,6 +444,8 @@ func GetConfig(c *gin.Context) {
 	if cfg == nil {
 		cfg = map[string]interface{}{}
 	}
+	configSource, _ := cfg["_config_source"].(string)
+	delete(cfg, "_config_source")
 	cfg["_cms"] = gin.H{
 		"content_dir":    runtime.ContentDir,
 		"static_dir":     runtime.StaticDir,
@@ -451,6 +453,7 @@ func GetConfig(c *gin.Context) {
 		"site_generator": runtime.Generator,
 		"default_site":   config.DefaultSiteID,
 		"site_id":        runtime.ID,
+		"config_source":  configSource,
 	}
 	c.JSON(http.StatusOK, cfg)
 }

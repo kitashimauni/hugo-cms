@@ -8,26 +8,17 @@ import (
 	"testing"
 )
 
-func restoreCollectionTestConfig(t *testing.T, repoPath, contentDir, staticDir string) {
-	t.Helper()
-
-	originalRepoPath := config.RepoPath
-	originalContentDir := config.ContentDir
-	originalStaticDir := config.StaticDir
-	t.Cleanup(func() {
-		config.RepoPath = originalRepoPath
-		config.ContentDir = originalContentDir
-		config.StaticDir = originalStaticDir
-	})
-
-	config.RepoPath = repoPath
-	config.ContentDir = contentDir
-	config.StaticDir = staticDir
-}
-
 func TestGetCollectionForPathNormalizesLegacyCollectionFolder(t *testing.T) {
 	repoPath := t.TempDir()
-	restoreCollectionTestConfig(t, repoPath, "src", "static")
+	runtime := config.NewSiteRuntime(config.SiteConfig{
+		ID:             "test",
+		RepoPath:       repoPath,
+		ContentDir:     "src",
+		StaticDir:      "static",
+		PublicDir:      "public",
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: "1314",
+	})
 
 	configPath := filepath.Join(repoPath, "static", "admin", "config.yml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
@@ -45,8 +36,8 @@ collections:
 		t.Fatalf("write CMS config: %v", err)
 	}
 
-	collectionPath := filepath.ToSlash(filepath.Join(config.ContentDir, "posts", "draft.md"))
-	collection, err := GetCollectionForPath(collectionPath)
+	collectionPath := filepath.ToSlash(filepath.Join(runtime.ContentDir, "posts", "draft.md"))
+	collection, err := GetCollectionForPathForRuntime(runtime, collectionPath)
 	if err != nil {
 		t.Fatalf("GetCollectionForPath(%q) returned error: %v", collectionPath, err)
 	}
@@ -56,9 +47,9 @@ collections:
 }
 
 func TestCollectionFolderWithinContentMapsLegacyContentFolder(t *testing.T) {
-	restoreCollectionTestConfig(t, t.TempDir(), "src", "static")
+	runtime := config.NewSiteRuntime(config.SiteConfig{RepoPath: t.TempDir(), ContentDir: "src", StaticDir: "static"})
 
-	folder, err := CollectionFolderWithinContent(models.Collection{Folder: "content/posts"})
+	folder, err := CollectionFolderWithinContentForRuntime(runtime, models.Collection{Folder: "content/posts"})
 	if err != nil {
 		t.Fatalf("CollectionFolderWithinContent() returned error: %v", err)
 	}

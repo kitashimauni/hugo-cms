@@ -6,6 +6,38 @@ type CMSConfig struct {
 	Collections  []Collection `yaml:"collections"`
 }
 
+type HomeCMSConfig struct {
+	Version int            `yaml:"version" json:"version"`
+	Content HomeCMSContent `yaml:"content" json:"content"`
+	Media   HomeCMSMedia   `yaml:"media" json:"media"`
+	Preview HomeCMSPreview `yaml:"preview" json:"preview"`
+}
+
+type HomeCMSContent struct {
+	Collections []HomeCMSCollection `yaml:"collections" json:"collections"`
+}
+
+type HomeCMSMedia struct {
+	Folder     string `yaml:"folder" json:"folder"`
+	PublicPath string `yaml:"public_path" json:"public_path"`
+}
+
+type HomeCMSPreview struct {
+	URLField string `yaml:"url_field" json:"url_field"`
+}
+
+type HomeCMSCollection struct {
+	Name         string  `yaml:"name" json:"name"`
+	Label        string  `yaml:"label" json:"label"`
+	Folder       string  `yaml:"folder" json:"folder"`
+	Path         string  `yaml:"path" json:"path"`
+	Extension    string  `yaml:"extension" json:"extension"`
+	FrontMatter  string  `yaml:"frontmatter" json:"frontmatter"`
+	MediaFolder  string  `yaml:"media_folder" json:"media_folder"`
+	PublicFolder string  `yaml:"public_path" json:"public_path"`
+	Fields       []Field `yaml:"fields" json:"fields"`
+}
+
 type Collection struct {
 	Name         string  `yaml:"name"`
 	Label        string  `yaml:"label"`

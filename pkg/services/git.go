@@ -16,10 +16,6 @@ import (
 	"time"
 )
 
-func CheckSemanticDiff(relPath string) (bool, error) {
-	return CheckSemanticDiffForRuntime(config.CurrentSiteRuntime(), relPath)
-}
-
 func CheckSemanticDiffForRuntime(runtime config.SiteRuntime, relPath string) (bool, error) {
 	gitPath := filepath.ToSlash(relPath)
 
@@ -214,10 +210,6 @@ func createAskPassScript() (string, error) {
 	return f.Name(), nil
 }
 
-func SyncRepo(token string) (string, error) {
-	return SyncRepoForRuntime(config.CurrentSiteRuntime(), token)
-}
-
 func SyncRepoForRuntime(runtime config.SiteRuntime, token string) (string, error) {
 	unlock := LockRepositoryOperation()
 	defer unlock()
@@ -227,10 +219,6 @@ func SyncRepoForRuntime(runtime config.SiteRuntime, token string) (string, error
 		InvalidateCacheForRuntime(runtime)
 	}
 	return log, err
-}
-
-func PublishChanges(token, path string) (string, error) {
-	return PublishChangesForRuntime(config.CurrentSiteRuntime(), token, path)
 }
 
 func PublishChangesForRuntime(runtime config.SiteRuntime, token, path string) (string, error) {
@@ -333,10 +321,6 @@ func publishChanges(runtime config.SiteRuntime, token, path string, push gitPush
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
-}
-
-func Diff(f1Path, f2Path, relPath string) (string, string) {
-	return DiffForRuntime(config.CurrentSiteRuntime(), f1Path, f2Path, relPath)
 }
 
 func DiffForRuntime(runtime config.SiteRuntime, f1Path, f2Path, relPath string) (string, string) {

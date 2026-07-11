@@ -13,6 +13,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	homeCMSConfigFile   = ".homecms.yml"
+	legacyCMSConfigFile = "config.yml"
+)
+
 func SafeJoin(root, sub, target string) string {
 	if root == "" || filepath.IsAbs(sub) || filepath.IsAbs(target) {
 		return ""
@@ -96,10 +101,6 @@ func isResolvedPathWithin(root, target string) bool {
 	return true
 }
 
-func DeleteFile(targetPath string) error {
-	return DeleteFileForRuntime(config.CurrentSiteRuntime(), targetPath)
-}
-
 func DeleteFileForRuntime(runtime config.SiteRuntime, targetPath string) error {
 	fullPath := SafeJoin(runtime.RepoPath, runtime.ContentDir, targetPath)
 	if fullPath == "" {
@@ -133,40 +134,121 @@ func DeleteFileForRuntime(runtime config.SiteRuntime, targetPath string) error {
 	return nil
 }
 
-func GetConfig() (map[string]interface{}, error) {
-	return GetConfigForRuntime(config.CurrentSiteRuntime())
-}
-
 func GetConfigForRuntime(runtime config.SiteRuntime) (map[string]interface{}, error) {
-	configPath := filepath.Join(runtime.RepoPath, runtime.StaticDir, "admin", "config.yml")
-	content, err := os.ReadFile(configPath)
+	cmsConfig, source, err := LoadCMSConfigForRuntime(runtime)
 	if err != nil {
 		return nil, err
 	}
 
-	var cfg map[string]interface{}
-	if err := yaml.Unmarshal(content, &cfg); err != nil {
+	content, err := yaml.Marshal(cmsConfig)
+	if err != nil {
 		return nil, err
 	}
-	return cfg, nil
-}
-
-func GetCMSConfig() (*models.CMSConfig, error) {
-	return GetCMSConfigForRuntime(config.CurrentSiteRuntime())
+	var rawConfig map[string]interface{}
+	if err := yaml.Unmarshal(content, &rawConfig); err != nil {
+		return nil, err
+	}
+	rawConfig["_config_source"] = source
+	return rawConfig, nil
 }
 
 func GetCMSConfigForRuntime(runtime config.SiteRuntime) (*models.CMSConfig, error) {
-	configPath := filepath.Join(runtime.RepoPath, runtime.StaticDir, "admin", "config.yml")
+	cfg, _, err := LoadCMSConfigForRuntime(runtime)
+	return cfg, err
+}
+
+func LoadCMSConfigForRuntime(runtime config.SiteRuntime) (*models.CMSConfig, string, error) {
+	homePath := filepath.Join(runtime.RepoPath, homeCMSConfigFile)
+	if _, err := os.Stat(homePath); err == nil {
+		cfg, err := readHomeCMSConfig(homePath)
+		return cfg, homeCMSConfigFile, err
+	} else if !os.IsNotExist(err) {
+		return nil, homeCMSConfigFile, err
+	}
+
+	configPath := filepath.Join(runtime.RepoPath, runtime.StaticDir, "admin", legacyCMSConfigFile)
 	content, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, err
+		return nil, legacyCMSConfigFile, err
 	}
 
 	var cfg models.CMSConfig
 	if err := yaml.Unmarshal(content, &cfg); err != nil {
+		return nil, legacyCMSConfigFile, err
+	}
+	return &cfg, legacyCMSConfigFile, nil
+}
+
+func readHomeCMSConfig(path string) (*models.CMSConfig, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
 		return nil, err
 	}
+
+	var home models.HomeCMSConfig
+	if err := yaml.Unmarshal(content, &home); err != nil {
+		return nil, err
+	}
+	if home.Version != 0 && home.Version != 1 {
+		return nil, fmt.Errorf("unsupported .homecms.yml version %d", home.Version)
+	}
+
+	cfg := models.CMSConfig{
+		MediaFolder:  cleanConfigPath(home.Media.Folder),
+		PublicFolder: cleanPublicPath(home.Media.PublicPath),
+		Collections:  make([]models.Collection, 0, len(home.Content.Collections)),
+	}
+	for _, collection := range home.Content.Collections {
+		cfg.Collections = append(cfg.Collections, models.Collection{
+			Name:         collection.Name,
+			Label:        collection.Label,
+			Folder:       cleanConfigPath(collection.Folder),
+			Path:         collection.Path,
+			Extension:    collection.Extension,
+			Format:       homeFrontMatterFormat(collection.FrontMatter),
+			MediaFolder:  cleanConfigPath(collection.MediaFolder),
+			PublicFolder: cleanPublicPath(collection.PublicFolder),
+			Fields:       collection.Fields,
+		})
+	}
 	return &cfg, nil
+}
+
+func homeFrontMatterFormat(frontMatter string) string {
+	switch strings.ToLower(strings.TrimSpace(frontMatter)) {
+	case "", "yaml", "yml":
+		return "yaml-frontmatter"
+	case "toml":
+		return "toml-frontmatter"
+	case "json":
+		return "json-frontmatter"
+	default:
+		return frontMatter
+	}
+}
+
+func cleanConfigPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || filepath.IsAbs(path) || strings.HasPrefix(path, "/") || strings.HasPrefix(path, `\`) {
+		return ""
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(path))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return ""
+	}
+	return cleaned
+}
+
+func cleanPublicPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	path = "/" + strings.Trim(path, "/")
+	if path == "/" {
+		return ""
+	}
+	return path
 }
 
 func ResolvePath(collection models.Collection, fields map[string]interface{}) (string, error) {
@@ -243,10 +325,6 @@ func ResolvePath(collection models.Collection, fields map[string]interface{}) (s
 	return resolvedPath, nil
 }
 
-func GetCollectionForPath(relPath string) (*models.Collection, error) {
-	return GetCollectionForPathForRuntime(config.CurrentSiteRuntime(), relPath)
-}
-
 func GetCollectionForPathForRuntime(runtime config.SiteRuntime, relPath string) (*models.Collection, error) {
 	cfg, err := GetCMSConfigForRuntime(runtime)
 	if err != nil {
@@ -266,10 +344,6 @@ func GetCollectionForPathForRuntime(runtime config.SiteRuntime, relPath string) 
 		}
 	}
 	return nil, fmt.Errorf("no collection found")
-}
-
-func CollectionFolderWithinContent(collection models.Collection) (string, error) {
-	return CollectionFolderWithinContentForRuntime(config.CurrentSiteRuntime(), collection)
 }
 
 func CollectionFolderWithinContentForRuntime(runtime config.SiteRuntime, collection models.Collection) (string, error) {

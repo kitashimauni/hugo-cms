@@ -243,12 +243,12 @@ func TestGetOverallStatus(t *testing.T) {
 	}
 }
 
-func TestGetHugoStatusMessage(t *testing.T) {
-	if got := getHugoStatusMessage(true); got != "Hugo server is running" {
-		t.Errorf("getHugoStatusMessage(true) = %q, want %q", got, "Hugo server is running")
+func TestGetPreviewStatusMessage(t *testing.T) {
+	if got := getPreviewStatusMessage(true); got != "Preview server is running" {
+		t.Errorf("getPreviewStatusMessage(true) = %q, want %q", got, "Preview server is running")
 	}
-	if got := getHugoStatusMessage(false); got != "Hugo server is not running" {
-		t.Errorf("getHugoStatusMessage(false) = %q, want %q", got, "Hugo server is not running")
+	if got := getPreviewStatusMessage(false); got != "Preview server is not running" {
+		t.Errorf("getPreviewStatusMessage(false) = %q, want %q", got, "Preview server is not running")
 	}
 }
 

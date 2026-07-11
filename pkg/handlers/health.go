@@ -30,19 +30,20 @@ func HealthCheck(c *gin.Context) {
 func ReadinessCheck(c *gin.Context) {
 	checks := make(map[string]interface{})
 	allHealthy := true
+	runtime := config.CurrentSiteRuntime()
 
-	// Check 1: Hugo server is running
-	hugoHealthy := services.IsHugoServerRunning()
-	checks["hugo_server"] = gin.H{
-		"healthy": hugoHealthy,
-		"message": getHugoStatusMessage(hugoHealthy),
+	// Check 1: default preview server is running
+	previewHealthy := services.IsPreviewRunningForRuntime(runtime)
+	checks["preview_server"] = gin.H{
+		"healthy": previewHealthy,
+		"message": getPreviewStatusMessage(previewHealthy),
 	}
-	if !hugoHealthy {
+	if !previewHealthy {
 		allHealthy = false
 	}
 
 	// Check 2: Content directory is accessible
-	contentDir := filepath.Join(config.RepoPath, config.ContentDir)
+	contentDir := filepath.Join(runtime.RepoPath, runtime.ContentDir)
 	contentAccessible := isDirAccessible(contentDir)
 	checks["content_dir"] = gin.H{
 		"healthy": contentAccessible,
@@ -52,7 +53,7 @@ func ReadinessCheck(c *gin.Context) {
 	}
 
 	// Check 3: Git repository status
-	gitHealthy := isGitRepoHealthy(config.RepoPath)
+	gitHealthy := isGitRepoHealthy(runtime.RepoPath)
 	checks["git_repo"] = gin.H{
 		"healthy": gitHealthy,
 	}
@@ -81,11 +82,11 @@ func getOverallStatus(healthy bool) string {
 	return "degraded"
 }
 
-func getHugoStatusMessage(running bool) string {
+func getPreviewStatusMessage(running bool) string {
 	if running {
-		return "Hugo server is running"
+		return "Preview server is running"
 	}
-	return "Hugo server is not running"
+	return "Preview server is not running"
 }
 
 func isDirAccessible(path string) bool {

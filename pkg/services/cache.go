@@ -20,10 +20,6 @@ var (
 	cacheMutex    sync.Mutex
 )
 
-func GetArticlesCache() ([]models.Article, error) {
-	return GetArticlesCacheForRuntime(config.CurrentSiteRuntime())
-}
-
 func GetArticlesCacheForRuntime(runtime config.SiteRuntime) ([]models.Article, error) {
 	start := time.Now()
 	cacheMutex.Lock()
@@ -161,18 +157,10 @@ func getGitDirtyFiles(runtime config.SiteRuntime) (map[string]bool, error) {
 	return dirty, nil
 }
 
-func InvalidateCache() {
-	InvalidateCacheForRuntime(config.CurrentSiteRuntime())
-}
-
 func InvalidateCacheForRuntime(runtime config.SiteRuntime) {
 	cacheMutex.Lock()
 	defer cacheMutex.Unlock()
 	delete(articleCaches, articleCacheKeyForRuntime(runtime))
-}
-
-func UpdateCache(relPath string) {
-	UpdateCacheForRuntime(config.CurrentSiteRuntime(), relPath)
 }
 
 func UpdateCacheForRuntime(runtime config.SiteRuntime, relPath string) {
@@ -239,10 +227,6 @@ func UpdateCacheForRuntime(runtime config.SiteRuntime, relPath string) {
 		articleCache = append(articleCache, newArt)
 	}
 	articleCaches[cacheKey] = articleCache
-}
-
-func articleCacheKey() string {
-	return articleCacheKeyForRuntime(config.CurrentSiteRuntime())
 }
 
 func articleCacheKeyForRuntime(runtime config.SiteRuntime) string {

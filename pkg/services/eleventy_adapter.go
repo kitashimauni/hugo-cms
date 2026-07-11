@@ -124,7 +124,10 @@ func (*EleventyAdapter) CreateContent(runtime config.SiteRuntime, path string) (
 
 	relContentPath := filepath.Join(runtime.ContentDir, path)
 	for _, collection := range cmsConfig.Collections {
-		collFolder := filepath.Clean(collection.Folder)
+		collFolder, folderErr := CollectionFolderWithinContentForRuntime(runtime, collection)
+		if folderErr != nil {
+			continue
+		}
 		targetFolder := filepath.Dir(relContentPath)
 		if !isPathWithin(collFolder, targetFolder) {
 			continue
