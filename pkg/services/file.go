@@ -140,6 +140,9 @@ func GetConfigForRuntime(runtime config.SiteRuntime) (map[string]interface{}, er
 		return nil, err
 	}
 
+	if rawConfig == nil {
+		rawConfig = map[string]interface{}{}
+	}
 	rawConfig["_config_source"] = source
 	return rawConfig, nil
 }

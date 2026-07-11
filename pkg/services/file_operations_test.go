@@ -126,6 +126,34 @@ collections:
 	}
 }
 
+func TestGetConfigForRuntimeHandlesEmptyLegacyConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "empty", content: ""},
+		{name: "null", content: "null\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath := t.TempDir()
+			writeTestFile(t, filepath.Join(repoPath, "static", "admin", "config.yml"), tt.content)
+
+			conf, err := GetConfigForRuntime(testRuntime(repoPath))
+			if err != nil {
+				t.Fatalf("GetConfigForRuntime() error = %v", err)
+			}
+			if conf == nil {
+				t.Fatal("GetConfigForRuntime() returned nil map")
+			}
+			if conf["_config_source"] != "config.yml" {
+				t.Fatalf("_config_source = %q, want config.yml", conf["_config_source"])
+			}
+		})
+	}
+}
+
 func TestHomeCMSConfigTakesPrecedenceOverLegacyConfig(t *testing.T) {
 	repoPath := t.TempDir()
 	writeTestFile(t, filepath.Join(repoPath, ".homecms.yml"), `
