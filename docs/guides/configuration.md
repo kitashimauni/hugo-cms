@@ -186,6 +186,7 @@ content:
       extension: md
       frontmatter: yaml
       fields:
+        - { name: slug, label: Slug, widget: string }
         - { name: title, label: Title, widget: string }
         - { name: body, label: Body, widget: markdown }
 
@@ -195,6 +196,8 @@ media:
 ```
 
 `media.folder`はリポジトリルート基準です。`static_media_dir` / `STATIC_MEDIA_DIR`を明示していないサイトでは、この値がstatic media modeの保存先になります。
+
+`content.collections[].path`で`{{slug}}`のような変数を使う場合は、作成フォームから値を送信できるように同名のfieldを定義してください。
 
 ### Preview
 
