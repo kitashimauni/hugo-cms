@@ -270,6 +270,49 @@ func TestPublishChangesSingleFileDoesNotRequireStaticDir(t *testing.T) {
 	}
 }
 
+func TestPublishChangesSingleFileStagesConfiguredStaticMedia(t *testing.T) {
+	repoPath := setupPublishRepositoryWithoutStatic(t)
+	if err := os.WriteFile(filepath.Join(repoPath, ".homecms.yml"), []byte(`
+version: 1
+content:
+  collections:
+    - name: posts
+      folder: content/posts
+media:
+  folder: assets/images
+  public_path: /images
+`), 0644); err != nil {
+		t.Fatalf("write .homecms.yml: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoPath, "assets", "images"), 0755); err != nil {
+		t.Fatalf("create configured media dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "assets", "images", "photo.png"), []byte("image\n"), 0644); err != nil {
+		t.Fatalf("write media: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "content", "post.md"), []byte("![photo](/images/photo.png)\n"), 0644); err != nil {
+		t.Fatalf("modify content: %v", err)
+	}
+
+	pushCalled := false
+	runtime := runtimeForPublishTest(repoPath)
+	_, err := publishChanges(runtime, "token", "content/post.md", func(string, string, ...string) (string, error) {
+		pushCalled = true
+		return "pushed", nil
+	})
+	if err != nil {
+		t.Fatalf("publishChanges() unexpected error: %v", err)
+	}
+	if !pushCalled {
+		t.Fatal("publishChanges() did not push after committing configured media")
+	}
+
+	output := runGitOutputForTest(t, repoPath, "show", "HEAD:assets/images/photo.png")
+	if string(output) != "image\n" {
+		t.Fatalf("committed media = %q, want image", output)
+	}
+}
+
 func setupPublishRepository(t *testing.T) string {
 	t.Helper()
 	return setupPublishRepositoryWithOptions(t, true)

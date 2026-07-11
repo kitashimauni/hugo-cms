@@ -261,9 +261,8 @@ func publishChanges(runtime config.SiteRuntime, token, path string, push gitPush
 		// Add static/media changes that may be referenced by the article, but
 		// do not require sites to have a static directory before any media is
 		// uploaded.
-		if dirExists(filepath.Join(runtime.RepoPath, runtime.StaticDir)) {
-			filesToAdd = append(filesToAdd, runtime.StaticDir)
-		}
+		filesToAdd = appendExistingRepoDir(filesToAdd, runtime, runtime.StaticDir)
+		filesToAdd = appendExistingRepoDir(filesToAdd, runtime, staticMediaTargetForRuntime(runtime).repoRelDir)
 
 		// Check for Page Bundle
 		if strings.HasSuffix(path, "index.md") || strings.HasSuffix(path, "_index.md") {
@@ -321,6 +320,25 @@ func publishChanges(runtime config.SiteRuntime, token, path string, push gitPush
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func appendExistingRepoDir(files []string, runtime config.SiteRuntime, repoRelDir string) []string {
+	repoRelDir = filepath.ToSlash(filepath.Clean(repoRelDir))
+	if repoRelDir == "" || repoRelDir == "." {
+		return files
+	}
+	if SafeJoin(runtime.RepoPath, "", repoRelDir) == "" {
+		return files
+	}
+	for _, file := range files {
+		if filepath.ToSlash(filepath.Clean(file)) == repoRelDir {
+			return files
+		}
+	}
+	if dirExists(filepath.Join(runtime.RepoPath, filepath.FromSlash(repoRelDir))) {
+		return append(files, repoRelDir)
+	}
+	return files
 }
 
 func DiffForRuntime(runtime config.SiteRuntime, f1Path, f2Path, relPath string) (string, string) {

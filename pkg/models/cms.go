@@ -52,6 +52,7 @@ type Collection struct {
 
 type Field struct {
 	Name    string      `yaml:"name"`
+	Label   string      `yaml:"label,omitempty"`
 	Widget  string      `yaml:"widget"`
 	Default interface{} `yaml:"default,omitempty"`
 }

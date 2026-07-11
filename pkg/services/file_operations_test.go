@@ -37,6 +37,10 @@ content:
     - name: posts
       folder: content/posts
       frontmatter: yaml
+      fields:
+        - name: title
+          label: Title Label
+          widget: string
 media:
   folder: assets/images
   public_path: /images
@@ -47,6 +51,22 @@ media:
 	}
 	if conf == nil || conf["_config_source"] != ".homecms.yml" {
 		t.Fatalf("GetConfigForRuntime() = %#v, want .homecms.yml source", conf)
+	}
+	collections, ok := conf["collections"].([]interface{})
+	if !ok || len(collections) != 1 {
+		t.Fatalf("collections = %#v, want one collection", conf["collections"])
+	}
+	collection, ok := collections[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("collection = %#v, want map", collections[0])
+	}
+	fields, ok := collection["fields"].([]interface{})
+	if !ok || len(fields) != 1 {
+		t.Fatalf("fields = %#v, want one field", collection["fields"])
+	}
+	field, ok := fields[0].(map[string]interface{})
+	if !ok || field["label"] != "Title Label" {
+		t.Fatalf("field = %#v, want preserved HomeCMS label", fields[0])
 	}
 }
 
