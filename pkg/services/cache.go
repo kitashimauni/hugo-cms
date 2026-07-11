@@ -21,11 +21,15 @@ var (
 )
 
 func GetArticlesCache() ([]models.Article, error) {
+	return GetArticlesCacheForRuntime(config.CurrentSiteRuntime())
+}
+
+func GetArticlesCacheForRuntime(runtime config.SiteRuntime) ([]models.Article, error) {
 	start := time.Now()
 	cacheMutex.Lock()
 	defer cacheMutex.Unlock()
 
-	cacheKey := articleCacheKey()
+	cacheKey := articleCacheKeyForRuntime(runtime)
 	if articleCache, ok := articleCaches[cacheKey]; ok {
 		return articleCache, nil
 	}
@@ -34,8 +38,8 @@ func GetArticlesCache() ([]models.Article, error) {
 		slog.Info("Cache rebuild completed", "site_cache_key", cacheKey, "duration", time.Since(start), "count", len(articleCaches[cacheKey]))
 	}()
 
-	contentDir := filepath.Join(config.RepoPath, config.ContentDir)
-	dirtyFiles, _ := getGitDirtyFiles(config.RepoPath)
+	contentDir := filepath.Join(runtime.RepoPath, runtime.ContentDir)
+	dirtyFiles, _ := getGitDirtyFiles(runtime)
 
 	var paths []string
 	err := filepath.WalkDir(contentDir, func(path string, d fs.DirEntry, err error) error {
@@ -65,7 +69,7 @@ func GetArticlesCache() ([]models.Article, error) {
 
 			relPath, _ := filepath.Rel(contentDir, path)
 
-			repoRelPath, _ := filepath.Rel(config.RepoPath, path)
+			repoRelPath, _ := filepath.Rel(runtime.RepoPath, path)
 			repoRelPath = filepath.ToSlash(repoRelPath)
 			isDirty := dirtyFiles[repoRelPath]
 
@@ -111,12 +115,12 @@ func readHead(path string, limit int64) ([]byte, error) {
 	return buf[:n], nil
 }
 
-func getGitDirtyFiles(dir string) (map[string]bool, error) {
+func getGitDirtyFiles(runtime config.SiteRuntime) (map[string]bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1", "-z", "--", config.ContentDir)
-	cmd.Dir = dir
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1", "-z", "--", runtime.ContentDir)
+	cmd.Dir = runtime.RepoPath
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -130,14 +134,14 @@ func getGitDirtyFiles(dir string) (map[string]bool, error) {
 		path := strings.TrimSpace(entry[3:])
 		path = filepath.ToSlash(path)
 
-		diff, diffErr := CheckSemanticDiff(path)
+		diff, diffErr := CheckSemanticDiffForRuntime(runtime, path)
 		if diffErr != nil || diff {
 			dirty[path] = true
 		}
 	}
 
-	cmdUntracked := exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard", "-z", "--", config.ContentDir)
-	cmdUntracked.Dir = dir
+	cmdUntracked := exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard", "-z", "--", runtime.ContentDir)
+	cmdUntracked.Dir = runtime.RepoPath
 	if outUntracked, errUntracked := cmdUntracked.Output(); errUntracked == nil {
 		for _, raw := range strings.Split(string(outUntracked), "\x00") {
 			path := strings.TrimSpace(raw)
@@ -148,7 +152,7 @@ func getGitDirtyFiles(dir string) (map[string]bool, error) {
 			if _, exists := dirty[path]; exists {
 				continue
 			}
-			diff, diffErr := CheckSemanticDiff(path)
+			diff, diffErr := CheckSemanticDiffForRuntime(runtime, path)
 			if diffErr != nil || diff {
 				dirty[path] = true
 			}
@@ -158,12 +162,20 @@ func getGitDirtyFiles(dir string) (map[string]bool, error) {
 }
 
 func InvalidateCache() {
+	InvalidateCacheForRuntime(config.CurrentSiteRuntime())
+}
+
+func InvalidateCacheForRuntime(runtime config.SiteRuntime) {
 	cacheMutex.Lock()
 	defer cacheMutex.Unlock()
-	delete(articleCaches, articleCacheKey())
+	delete(articleCaches, articleCacheKeyForRuntime(runtime))
 }
 
 func UpdateCache(relPath string) {
+	UpdateCacheForRuntime(config.CurrentSiteRuntime(), relPath)
+}
+
+func UpdateCacheForRuntime(runtime config.SiteRuntime, relPath string) {
 	start := time.Now()
 	defer func() {
 		slog.Debug("Cache update single", "path", relPath, "duration", time.Since(start))
@@ -172,13 +184,13 @@ func UpdateCache(relPath string) {
 	cacheMutex.Lock()
 	defer cacheMutex.Unlock()
 
-	cacheKey := articleCacheKey()
+	cacheKey := articleCacheKeyForRuntime(runtime)
 	articleCache, cacheLoaded := articleCaches[cacheKey]
 	if !cacheLoaded {
 		return // Next Get will rebuild
 	}
 
-	fullPath := filepath.Join(config.RepoPath, config.ContentDir, relPath)
+	fullPath := filepath.Join(runtime.RepoPath, runtime.ContentDir, relPath)
 
 	// Check if file exists
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
@@ -207,7 +219,7 @@ func UpdateCache(relPath string) {
 		}
 	}
 
-	isDirty, _ := getGitFileStatus(relPath)
+	isDirty, _ := getGitFileStatus(runtime, relPath)
 
 	newArt := models.Article{
 		Path:    relPath,
@@ -230,26 +242,30 @@ func UpdateCache(relPath string) {
 }
 
 func articleCacheKey() string {
-	return filepath.ToSlash(filepath.Clean(config.RepoPath)) + "\x00" + filepath.ToSlash(filepath.Clean(config.ContentDir))
+	return articleCacheKeyForRuntime(config.CurrentSiteRuntime())
 }
 
-func getGitFileStatus(relPath string) (bool, error) {
+func articleCacheKeyForRuntime(runtime config.SiteRuntime) string {
+	return filepath.ToSlash(filepath.Clean(runtime.RepoPath)) + "\x00" + filepath.ToSlash(filepath.Clean(runtime.ContentDir))
+}
+
+func getGitFileStatus(runtime config.SiteRuntime, relPath string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
 	defer cancel()
 
 	// git status --porcelain content/posts/xxx.md
 	// Note: relPath is relative to content/, but git needs relative to RepoPath
-	target := filepath.Join(config.ContentDir, relPath)
+	target := filepath.Join(runtime.ContentDir, relPath)
 	targetGit := filepath.ToSlash(target)
 	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain", targetGit)
-	cmd.Dir = config.RepoPath
+	cmd.Dir = runtime.RepoPath
 	out, err := cmd.Output()
 	if err != nil {
 		return false, err
 	}
 	if len(strings.TrimSpace(string(out))) > 0 {
 		// Verify semantically
-		return CheckSemanticDiff(targetGit)
+		return CheckSemanticDiffForRuntime(runtime, targetGit)
 	}
 	return false, nil
 }

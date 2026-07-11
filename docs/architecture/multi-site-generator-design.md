@@ -1,10 +1,10 @@
 # マルチサイト・マルチジェネレーター設計
 
-最終更新日: 2026-07-10
+最終更新日: 2026-07-11
 
 ## ステータス
 
-段階実装中。現在のHugo向け動作を維持しながら、Site Registry、site-aware API、site別preview processを導入済み。次の焦点はprocess-wide runtime bridgeを縮小し、サービスへ`SiteRuntime`を明示的に渡すことである。
+段階実装中。現在のHugo向け動作を維持しながら、Site Registry、site-aware API、site別preview processを導入済み。記事、ファイル、メディア、Gitの主要サービスは`SiteRuntime`を明示的に受け取る形へ移行し、handler層でprocess-wide runtimeを一時変更する範囲を縮小した。
 
 ## 背景
 
@@ -199,18 +199,19 @@ preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:
 
 ### Site Runtime Bridge
 
-既存サービスの多くは`config.RepoPath`などのprocess-wide runtime値を参照している。現在は互換性を保つため、HTTP handler層で選択サイトを解決し、短時間だけruntime値を適用するbridgeを使っている。
+既存サービスの一部には`config.RepoPath`などのprocess-wide runtime値を参照する互換ラッパーが残っている。新しいsite-aware APIの主要経路では、HTTP handler層で選択サイトを`SiteRuntime`へ解決し、その値をサービスへ明示的に渡す。
 
 `SiteRuntime`は、Site Registry由来の`SiteConfig`に、現在グローバルで管理している実行時設定（Git設定、App URL、解決済みPublicPathなど）を合わせたサービス向けの値オブジェクトである。新規または改修するサービスは、`SiteConfig`やprocess-wide globalsではなく`SiteRuntime`を受け取る。
 
 - site-scoped APIは`?site=`または`X-CMS-Site`で対象サイトを指定する。
 - preview process管理はサイト設定を明示的に受け取り、site IDごとにadapterを保持する。
 - generator adapterのpreview/build/createは`SiteRuntime`を明示的に受け取り、Hugo/Eleventyコマンド生成では`config.RepoPath`等のprocess-wide値を直接読まない。
+- 記事一覧、記事保存、記事作成、差分、削除、メディア、Git sync/publish、スニペット読み込みは`SiteRuntime`を明示的に受け取る経路を使う。
 - 記事キャッシュは`repo_path + content_dir`でkey分割する。
 - process-wide runtimeを読むscope外処理はruntime lockで保護する。
 - preview adapter mapのlockはmapアクセス中だけ保持し、preview process操作やruntime bridge呼び出し中には保持しない。`/ready`などがruntime lockを先に取るため、lock順序の反転を避ける。
 
-今後の最終形は、記事・メディア・Gitサービスにも`SiteRuntime`を明示的に渡し、process-wide runtime mutationを削減することである。
+今後の最終形は、互換ラッパーとprocess-wide runtime mutationに依存する残りの経路を減らし、サービス単体テストも`SiteRuntime`を直接渡す形へ寄せることである。
 
 ## ジェネレーターごとの差異
 
@@ -385,7 +386,7 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 
 - `/admin/sites/{siteID}/api/...`形式のpath-based site API
 - サイトごとのmise実行
-- `SiteRuntime`の全サービスへの展開
+- process-wide runtime互換ラッパーの完全撤去
 
 ### Phase 3: コンテンツとメディアの共通化
 

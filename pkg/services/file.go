@@ -97,7 +97,11 @@ func isResolvedPathWithin(root, target string) bool {
 }
 
 func DeleteFile(targetPath string) error {
-	fullPath := SafeJoin(config.RepoPath, config.ContentDir, targetPath)
+	return DeleteFileForRuntime(config.CurrentSiteRuntime(), targetPath)
+}
+
+func DeleteFileForRuntime(runtime config.SiteRuntime, targetPath string) error {
+	fullPath := SafeJoin(runtime.RepoPath, runtime.ContentDir, targetPath)
 	if fullPath == "" {
 		return fmt.Errorf("invalid path")
 	}
@@ -108,7 +112,7 @@ func DeleteFile(targetPath string) error {
 	// Try to remove empty parent directories (e.g. bundle folders)
 	// But ensure we don't remove top-level collection folders (e.g. content/posts)
 	dir := filepath.Dir(fullPath)
-	contentRoot := filepath.Join(config.RepoPath, config.ContentDir)
+	contentRoot := filepath.Join(runtime.RepoPath, runtime.ContentDir)
 
 	rel, err := filepath.Rel(contentRoot, dir)
 	if err != nil {
@@ -240,7 +244,11 @@ func ResolvePath(collection models.Collection, fields map[string]interface{}) (s
 }
 
 func GetCollectionForPath(relPath string) (*models.Collection, error) {
-	cfg, err := GetCMSConfig()
+	return GetCollectionForPathForRuntime(config.CurrentSiteRuntime(), relPath)
+}
+
+func GetCollectionForPathForRuntime(runtime config.SiteRuntime, relPath string) (*models.Collection, error) {
+	cfg, err := GetCMSConfigForRuntime(runtime)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +257,7 @@ func GetCollectionForPath(relPath string) (*models.Collection, error) {
 
 	for i := range cfg.Collections {
 		col := &cfg.Collections[i]
-		colFolder, err := CollectionFolderWithinContent(*col)
+		colFolder, err := CollectionFolderWithinContentForRuntime(runtime, *col)
 		if err != nil {
 			continue
 		}
@@ -261,8 +269,12 @@ func GetCollectionForPath(relPath string) (*models.Collection, error) {
 }
 
 func CollectionFolderWithinContent(collection models.Collection) (string, error) {
+	return CollectionFolderWithinContentForRuntime(config.CurrentSiteRuntime(), collection)
+}
+
+func CollectionFolderWithinContentForRuntime(runtime config.SiteRuntime, collection models.Collection) (string, error) {
 	folder := filepath.ToSlash(filepath.Clean(collection.Folder))
-	contentDir := filepath.ToSlash(filepath.Clean(config.ContentDir))
+	contentDir := filepath.ToSlash(filepath.Clean(runtime.ContentDir))
 	if folder == "." || filepath.IsAbs(folder) || strings.HasPrefix(folder, "/") || strings.HasPrefix(folder, "../") || folder == ".." {
 		return "", fmt.Errorf("Invalid collection folder")
 	}
@@ -284,5 +296,5 @@ func CollectionFolderWithinContent(collection models.Collection) (string, error)
 		}
 	}
 
-	return "", fmt.Errorf("Collection folder must be under %s", config.ContentDir)
+	return "", fmt.Errorf("Collection folder must be under %s", runtime.ContentDir)
 }

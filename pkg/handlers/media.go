@@ -12,9 +12,14 @@ import (
 )
 
 func ListMedia(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	mode := c.Query("mode")
 	articlePath := c.Query("path")
-	files, err := services.ListMediaFiles(mode, articlePath)
+	files, err := services.ListMediaFilesForRuntime(runtime, mode, articlePath)
 	if err != nil {
 		if errors.Is(err, services.ErrInvalidMedia) {
 			ErrorBadRequest(c, "Invalid media request")
@@ -23,14 +28,18 @@ func ListMedia(c *gin.Context) {
 		ErrorInternal(c, "Failed to list media: "+err.Error())
 		return
 	}
-	siteID := currentSiteID(c)
 	for i := range files {
-		files[i].URL = addSiteQuery(files[i].URL, siteID)
+		files[i].URL = addSiteQuery(files[i].URL, runtime.ID)
 	}
 	c.JSON(http.StatusOK, files)
 }
 
 func UploadMedia(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	mode := c.PostForm("mode")
 	articlePath := c.PostForm("path")
 	file, err := c.FormFile("file")
@@ -50,7 +59,7 @@ func UploadMedia(c *gin.Context) {
 		return
 	}
 
-	info, err := services.SaveMediaFile(file, mode, articlePath)
+	info, err := services.SaveMediaFileForRuntime(runtime, file, mode, articlePath)
 	if err != nil {
 		if errors.Is(err, services.ErrInvalidMedia) {
 			ErrorBadRequest(c, err.Error())
@@ -59,12 +68,17 @@ func UploadMedia(c *gin.Context) {
 		ErrorInternal(c, "Failed to save file: "+err.Error())
 		return
 	}
-	info.URL = addSiteQuery(info.URL, currentSiteID(c))
+	info.URL = addSiteQuery(info.URL, runtime.ID)
 
 	c.JSON(http.StatusOK, info)
 }
 
 func DeleteMedia(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	var req struct {
 		RepoPath string `json:"repo_path"`
 	}
@@ -79,12 +93,12 @@ func DeleteMedia(c *gin.Context) {
 		return
 	}
 
-	if !services.ValidateMediaRepoPath(req.RepoPath) {
+	if !services.ValidateMediaRepoPathForRuntime(runtime, req.RepoPath) {
 		ErrorBadRequest(c, "Invalid media path")
 		return
 	}
 
-	if err := services.DeleteMediaFile(req.RepoPath); err != nil {
+	if err := services.DeleteMediaFileForRuntime(runtime, req.RepoPath); err != nil {
 		ErrorInternal(c, "Failed to delete: "+err.Error())
 		return
 	}
@@ -92,17 +106,22 @@ func DeleteMedia(c *gin.Context) {
 }
 
 func ServeMediaRaw(c *gin.Context) {
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		ErrorBadRequest(c, err.Error())
+		return
+	}
 	targetPath := c.Query("path")
 	if targetPath == "" {
 		ErrorBadRequest(c, "Path parameter required")
 		return
 	}
-	if !services.ValidateMediaRepoPath(targetPath) {
+	if !services.ValidateMediaRepoPathForRuntime(runtime, targetPath) {
 		ErrorNotFound(c, "Invalid media path")
 		return
 	}
 
-	fullPath := services.SafeJoin(config.RepoPath, "", targetPath)
+	fullPath := services.SafeJoin(runtime.RepoPath, "", targetPath)
 	if fullPath == "" {
 		ErrorNotFound(c, "Invalid path")
 		return
