@@ -16,7 +16,7 @@ import (
 )
 
 func HandleBuild(c *gin.Context) {
-	runtime, err := requestedRuntime(c)
+	runtime, err := requestedPreviewRuntime(c)
 	if err != nil {
 		ErrorBadRequest(c, err.Error())
 		return
@@ -29,7 +29,7 @@ func HandleBuild(c *gin.Context) {
 }
 
 func HandleRestart(c *gin.Context) {
-	runtime, err := requestedRuntime(c)
+	runtime, err := requestedPreviewRuntime(c)
 	if err != nil {
 		ErrorBadRequest(c, err.Error())
 		return

@@ -73,6 +73,15 @@ func requestedRuntime(c *gin.Context) (config.SiteRuntime, error) {
 	return config.NewSiteRuntime(site), nil
 }
 
+func requestedPreviewRuntime(c *gin.Context) (config.SiteRuntime, error) {
+	site, err := requestedSite(c)
+	if err != nil {
+		return config.SiteRuntime{}, err
+	}
+	c.Set(siteContextKey, site.ID)
+	return services.PreviewRuntimeForSite(site), nil
+}
+
 func currentSiteID(c *gin.Context) string {
 	if v, ok := c.Get(siteContextKey); ok {
 		if siteID, ok := v.(string); ok {

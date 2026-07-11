@@ -106,7 +106,7 @@ func CreateContentForRuntime(runtime config.SiteRuntime, path string) (string, e
 }
 
 func StartPreviewForSite(site config.SiteConfig) error {
-	return StartPreviewForRuntime(previewRuntime(site))
+	return StartPreviewForRuntime(PreviewRuntimeForSite(site))
 }
 
 func StartPreviewForRuntime(runtime config.SiteRuntime) error {
@@ -130,7 +130,7 @@ func StopPreviewForRuntime(runtime config.SiteRuntime) error {
 }
 
 func RestartPreviewForSite(site config.SiteConfig) error {
-	return RestartPreviewForRuntime(previewRuntime(site))
+	return RestartPreviewForRuntime(PreviewRuntimeForSite(site))
 }
 
 func RestartPreviewForRuntime(runtime config.SiteRuntime) error {
@@ -213,7 +213,14 @@ func defaultPreviewSite() config.SiteConfig {
 }
 
 func previewRuntimeSite(site config.SiteConfig) config.SiteConfig {
-	return previewRuntime(site).SiteConfig()
+	return PreviewRuntimeForSite(site).SiteConfig()
+}
+
+// PreviewRuntimeForSite resolves the runtime used by preview processes.
+// Site previews must render with the authenticated proxy route as their base
+// URL so root-relative links and assets stay under /admin/preview/<site>/.
+func PreviewRuntimeForSite(site config.SiteConfig) config.SiteRuntime {
+	return previewRuntime(site)
 }
 
 func previewRuntime(site config.SiteConfig) config.SiteRuntime {
