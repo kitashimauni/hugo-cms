@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"hugo-cms/pkg/config"
 	"net/http"
@@ -266,6 +267,255 @@ content:
 	}
 	if !strings.Contains(w.Body.String(), `"warnings":[]`) {
 		t.Fatalf("GetConfig() body = %s, want warnings empty array", w.Body.String())
+	}
+}
+
+func TestSelectedSiteArticleAPIsUseSelectedRuntime(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	restoreSiteScopeConfig(t)
+
+	defaultRepo := t.TempDir()
+	selectedRepo := t.TempDir()
+	writeSnippetFile(t, filepath.Join(defaultRepo, "content", "posts", "default.md"), `---
+title: Default Post
+---
+default body
+`)
+	writeSnippetFile(t, filepath.Join(selectedRepo, "src", "docs", "selected.md"), `---
+title: Selected Post
+---
+selected body
+`)
+
+	config.DefaultSiteID = "default"
+	config.Sites = []config.SiteConfig{
+		{
+			ID:             "default",
+			RepoPath:       defaultRepo,
+			Generator:      "hugo",
+			ContentDir:     "content",
+			StaticDir:      "static",
+			PublicDir:      "public",
+			PreviewURL:     "/",
+			HugoServerPort: "1314",
+			HugoServerBind: "127.0.0.1",
+		},
+		{
+			ID:             "docs",
+			RepoPath:       selectedRepo,
+			Generator:      "eleventy",
+			ContentDir:     "src",
+			StaticDir:      "public-assets",
+			PublicDir:      "_site",
+			PreviewURL:     "/docs/",
+			HugoServerPort: "1315",
+			HugoServerBind: "127.0.0.1",
+		},
+	}
+	config.ApplySiteRuntime(config.Sites[0])
+
+	listW := httptest.NewRecorder()
+	listC, _ := gin.CreateTestContext(listW)
+	listC.Request = httptest.NewRequest(http.MethodGet, "/admin/api/articles?site=docs", nil)
+
+	ListArticles(listC)
+
+	if listW.Code != http.StatusOK {
+		t.Fatalf("ListArticles() status = %d, body = %s", listW.Code, listW.Body.String())
+	}
+	var articles []map[string]interface{}
+	if err := json.Unmarshal(listW.Body.Bytes(), &articles); err != nil {
+		t.Fatalf("unmarshal articles: %v", err)
+	}
+	if len(articles) != 1 || articles[0]["path"] != "docs/selected.md" || articles[0]["title"] != "Selected Post" {
+		t.Fatalf("articles = %#v, want only selected site article", articles)
+	}
+
+	getW := httptest.NewRecorder()
+	getC, _ := gin.CreateTestContext(getW)
+	getC.Request = httptest.NewRequest(http.MethodGet, "/admin/api/article?site=docs&path=docs/selected.md", nil)
+
+	GetArticle(getC)
+
+	if getW.Code != http.StatusOK {
+		t.Fatalf("GetArticle() status = %d, body = %s", getW.Code, getW.Body.String())
+	}
+	var article map[string]interface{}
+	if err := json.Unmarshal(getW.Body.Bytes(), &article); err != nil {
+		t.Fatalf("unmarshal article: %v", err)
+	}
+	frontmatter, ok := article["frontmatter"].(map[string]interface{})
+	if !ok || frontmatter["title"] != "Selected Post" || article["body"] != "selected body" {
+		t.Fatalf("article = %#v, want selected site article content", article)
+	}
+	if config.RepoPath != defaultRepo || config.ContentDir != "content" {
+		t.Fatalf("global runtime leaked: repo=%q content=%q", config.RepoPath, config.ContentDir)
+	}
+}
+
+func TestSelectedSiteCreateArticleUsesSelectedConfigAndContentDir(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	restoreSiteScopeConfig(t)
+
+	defaultRepo := t.TempDir()
+	selectedRepo := t.TempDir()
+	writeSnippetFile(t, filepath.Join(defaultRepo, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: posts
+      folder: content/posts
+      path: "{{slug}}"
+      fields:
+        - { name: slug, widget: string }
+        - { name: title, widget: string }
+        - { name: body, widget: markdown }
+`)
+	writeSnippetFile(t, filepath.Join(selectedRepo, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: docs
+      folder: src/docs
+      path: "{{slug}}"
+      fields:
+        - { name: slug, widget: string }
+        - { name: title, widget: string }
+        - { name: body, widget: markdown }
+`)
+
+	config.DefaultSiteID = "default"
+	config.Sites = []config.SiteConfig{
+		{
+			ID:             "default",
+			RepoPath:       defaultRepo,
+			Generator:      "hugo",
+			ContentDir:     "content",
+			StaticDir:      "static",
+			PublicDir:      "public",
+			PreviewURL:     "/",
+			HugoServerPort: "1314",
+			HugoServerBind: "127.0.0.1",
+		},
+		{
+			ID:             "docs",
+			RepoPath:       selectedRepo,
+			Generator:      "eleventy",
+			ContentDir:     "src",
+			StaticDir:      "public-assets",
+			PublicDir:      "_site",
+			PreviewURL:     "/docs/",
+			HugoServerPort: "1315",
+			HugoServerBind: "127.0.0.1",
+		},
+	}
+	config.ApplySiteRuntime(config.Sites[0])
+
+	body := []byte(`{"collection":"docs","fields":{"slug":"launch","title":"Launch Notes","body":"Ready."}}`)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/admin/api/create?site=docs", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	CreateArticle(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("CreateArticle() status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(selectedRepo, "src", "docs", "launch.md")); err != nil {
+		t.Fatalf("created article should be under selected site content dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(defaultRepo, "content", "docs", "launch.md")); !os.IsNotExist(err) {
+		t.Fatalf("article should not be created under default site, stat err = %v", err)
+	}
+	if config.RepoPath != defaultRepo || config.ContentDir != "content" {
+		t.Fatalf("global runtime leaked: repo=%q content=%q", config.RepoPath, config.ContentDir)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp["path"] != "docs/launch.md" {
+		t.Fatalf("response path = %q, want docs/launch.md", resp["path"])
+	}
+}
+
+func TestSelectedSiteGetConfigIncludesSelectedMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	restoreSiteScopeConfig(t)
+
+	defaultRepo := t.TempDir()
+	selectedRepo := t.TempDir()
+	writeSnippetFile(t, filepath.Join(selectedRepo, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: docs
+      folder: src/docs
+      path: "{{slug}}"
+      fields:
+        - { name: slug, widget: string }
+        - { name: title, widget: string }
+`)
+
+	config.DefaultSiteID = "default"
+	config.Sites = []config.SiteConfig{
+		{
+			ID:             "default",
+			RepoPath:       defaultRepo,
+			Generator:      "hugo",
+			ContentDir:     "content",
+			StaticDir:      "static",
+			PublicDir:      "public",
+			PreviewURL:     "/",
+			HugoServerPort: "1314",
+			HugoServerBind: "127.0.0.1",
+		},
+		{
+			ID:             "docs",
+			RepoPath:       selectedRepo,
+			Generator:      "eleventy",
+			ContentDir:     "src",
+			StaticDir:      "public-assets",
+			PublicDir:      "_site",
+			PreviewURL:     "/docs/",
+			HugoServerPort: "1315",
+			HugoServerBind: "127.0.0.1",
+		},
+	}
+	config.ApplySiteRuntime(config.Sites[0])
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/admin/api/config?site=docs", nil)
+
+	GetConfig(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetConfig() status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	meta, ok := body["_cms"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("_cms = %#v, want metadata map", body["_cms"])
+	}
+	if meta["site_id"] != "docs" ||
+		meta["content_dir"] != "src" ||
+		meta["static_dir"] != "public-assets" ||
+		meta["public_dir"] != "_site" ||
+		meta["site_generator"] != "eleventy" ||
+		meta["config_source"] != ".homecms.yml" {
+		t.Fatalf("_cms = %#v, want selected site metadata", meta)
+	}
+	if warnings, ok := meta["warnings"].([]interface{}); !ok || warnings == nil {
+		t.Fatalf("warnings = %#v, want array", meta["warnings"])
+	}
+	if config.RepoPath != defaultRepo || config.ContentDir != "content" {
+		t.Fatalf("global runtime leaked: repo=%q content=%q", config.RepoPath, config.ContentDir)
 	}
 }
 

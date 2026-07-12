@@ -1,0 +1,79 @@
+# リリース前チェックリスト
+
+このCMSをリリース可能な状態にする前に確認する項目です。機能追加PRではなく、リリース候補を作るPRではこのチェックリストを基準にします。
+
+## 1. 自動検証
+
+ローカルでは次を通します。
+
+```powershell
+mise run check
+git diff --check
+```
+
+`mise` を使わない場合は個別に実行します。
+
+```powershell
+go test ./...
+go vet ./...
+go build -buildvcs=false ./...
+npm run test:js
+git diff --check
+```
+
+## 2. 設定検証
+
+代表的なサイト構成で `/admin/api/config` を確認します。
+
+- `.homecms.yml` の `_cms.config_source` が `.homecms.yml`
+- legacy `static/admin/config.yml` の `_cms.config_source` が実ファイルに対応
+- warningがない設定では `_cms.warnings` が `[]`
+- warningがある設定ではサイドバーに表示される
+- `content_dir` / `static_dir` / `public_dir` / `site_generator` / `site_id` が選択サイトの値
+
+## 3. 単一サイトの基本動作
+
+- ログインできる
+- 記事一覧が表示される
+- 記事を開く、保存する、Diffを見る、削除する
+- 新規作成が `content_dir` 配下に作成される
+- メディア一覧、アップロード、削除、Markdown挿入が動く
+- スニペット挿入が動く
+- Preview / Restart Preview が動く
+- Publish が対象記事と関連メディアをcommit/pushする
+
+## 4. 複数サイトの基本動作
+
+Site Registryありで、少なくとも2サイトを用意して確認します。
+
+- Site selectorで切り替えられる
+- 記事一覧、記事取得、作成、保存、削除が選択サイトだけを対象にする
+- APIの `?site=<site_id>` と `X-CMS-Site` が同じ結果になる
+- default siteの `/ready` と選択site APIが混ざらない
+- siteごとの preview port が重複していない
+- 非default site previewのroot-relative URLがdefault siteへ落ちない
+- siteごとの snippets / media / Git設定が使われる
+
+## 5. Hugo / Eleventy
+
+Hugoサイトでは次を確認します。
+
+- `CONTENT_DIR` / Site Registryの `content_dir` を変えた場合も `hugo server` / `hugo build` が対象contentを読む
+- `hugo new content <path>` のfallback作成が期待通り
+
+Eleventyサイトでは次を確認します。
+
+- `package.json` とlockfileがある
+- lockfileに対応するpackage managerでpreview/buildされる
+- preview停止時にwrapperの子プロセスが残らない
+
+## 6. PR確認
+
+PR本文には次を含めます。
+
+- 変更概要
+- 動作確認コマンド
+- 手動確認した範囲
+- リリース時の注意点や既知の未対応
+
+リリース候補PRは、CIとレビューが通ったあとに draft を解除します。
