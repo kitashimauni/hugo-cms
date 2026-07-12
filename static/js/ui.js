@@ -98,10 +98,17 @@ export function renderConfigWarnings(config) {
     }
 
     panel.classList.remove('hidden');
-    const title = document.createElement('div');
-    title.className = 'config-warning-title';
-    title.textContent = `Config warnings (${warnings.length})`;
-    panel.appendChild(title);
+    const details = document.createElement('details');
+    details.className = 'config-warning-details';
+    details.open = warnings.some(warning => warning.severity === 'error');
+
+    const summary = document.createElement('summary');
+    summary.className = 'config-warning-title';
+    const errorCount = warnings.filter(warning => warning.severity === 'error').length;
+    summary.textContent = errorCount > 0
+        ? `Config warnings (${warnings.length}, ${errorCount} error${errorCount === 1 ? '' : 's'})`
+        : `Config warnings (${warnings.length})`;
+    details.appendChild(summary);
 
     warnings.forEach(warning => {
         const item = document.createElement('div');
@@ -120,8 +127,10 @@ export function renderConfigWarnings(config) {
             item.appendChild(meta);
         }
 
-        panel.appendChild(item);
+        details.appendChild(item);
     });
+
+    panel.appendChild(details);
 }
 
 export async function showLoadingEditor() {
