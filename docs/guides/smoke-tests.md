@@ -4,6 +4,8 @@
 
 大きめの変更やSite Registry変更後に、最低限確認する項目です。
 
+リリース候補PRでは、ここに加えて[リリース前チェックリスト](release-checklist.md)も確認してください。
+
 ## 1. 共通
 
 ```powershell
