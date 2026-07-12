@@ -86,7 +86,9 @@ sites:
     content_dir: src
 ```
 
-この例では、`docs` サイトの collection folder は `src/posts` のように `docs` リポジトリ内の `content_dir` 配下を指す必要があります。`folder: content/posts` のような旧Hugo前提の値は、`content_dir: src` のサイトでは作成時に拒否されます。
+この例では、`docs` サイトの新規 `.homecms.yml` では `src/posts` のように、そのサイトの `content_dir` 配下を明示することを推奨します。
+
+一方、既存の legacy config から移行する場合、`folder: content/posts` のような旧Hugo前提の値は互換処理で `src/posts` として扱われます。そのため、動作している既存設定を急いで書き換える必要はありません。新しく設定を書く場合や、互換挙動に依存したくない場合は、現在の `content_dir` に合わせた `folder` へ整理してください。
 
 ## 移行後の確認
 
