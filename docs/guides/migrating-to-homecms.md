@@ -59,6 +59,7 @@ content:
       fields:
         - { name: slug, label: Slug, widget: string }
         - { name: title, label: Title, widget: string }
+        - { name: permalink, label: Permalink, widget: string }
         - { name: body, label: Body, widget: markdown }
 
 media:
