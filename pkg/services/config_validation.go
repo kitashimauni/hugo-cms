@@ -91,7 +91,7 @@ func validateHomeCMSConfig(home models.HomeCMSConfig) []ConfigWarning {
 }
 
 func validateCMSConfig(cfg models.CMSConfig, source string) []ConfigWarning {
-	var warnings []ConfigWarning
+	warnings := []ConfigWarning{}
 	if len(cfg.Collections) == 0 {
 		warnings = append(warnings, configWarning("error", "missing_collections", collectionRootPath(source), "CMS config should define at least one collection."))
 	}
@@ -158,7 +158,7 @@ func validatePathTemplate(source, path, template string, fieldNames map[string]b
 		template = "{{slug}}"
 	}
 
-	var warnings []ConfigWarning
+	warnings := []ConfigWarning{}
 	for _, variable := range pathTemplateVariables(template) {
 		if isBuiltInPathVariable(variable) || fieldNames[variable] {
 			continue

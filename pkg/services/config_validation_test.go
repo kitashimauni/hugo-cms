@@ -72,6 +72,33 @@ media:
 	assertWarningCode(t, warnings, "unsupported_widget")
 }
 
+func TestValidateConfigForRuntimeReturnsEmptySliceForCleanHomeCMSConfig(t *testing.T) {
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: posts
+      folder: content/posts
+      path: "{{slug}}"
+      frontmatter: yaml
+      fields:
+        - { name: slug, widget: string }
+        - { name: title, widget: string }
+        - { name: permalink, widget: string }
+preview:
+  url_field: permalink
+`)
+
+	warnings := ValidateConfigForRuntime(testRuntime(repoPath), ".homecms.yml")
+	if warnings == nil {
+		t.Fatal("ValidateConfigForRuntime() returned nil warnings, want empty slice")
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %#v, want empty slice", warnings)
+	}
+}
+
 func assertWarningCode(t *testing.T, warnings []ConfigWarning, code string) {
 	t.Helper()
 	for _, warning := range warnings {
