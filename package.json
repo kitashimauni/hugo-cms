@@ -1,0 +1,9 @@
+{
+  "name": "hugo-cms",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npm run test:js",
+    "test:js": "node --test static/js/*.test.mjs"
+  }
+}

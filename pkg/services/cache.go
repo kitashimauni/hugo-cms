@@ -64,6 +64,7 @@ func GetArticlesCacheForRuntime(runtime config.SiteRuntime) ([]models.Article, e
 			defer func() { <-sem }()
 
 			relPath, _ := filepath.Rel(contentDir, path)
+			relPath = filepath.ToSlash(relPath)
 
 			repoRelPath, _ := filepath.Rel(runtime.RepoPath, path)
 			repoRelPath = filepath.ToSlash(repoRelPath)

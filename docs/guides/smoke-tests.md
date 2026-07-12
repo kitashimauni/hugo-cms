@@ -10,8 +10,17 @@
 go test ./...
 go vet ./...
 go build -buildvcs=false ./...
+npm run test:js
 git diff --check
 ```
+
+miseを使う場合は、同じ検証をまとめて実行できます。
+
+```powershell
+mise run check
+```
+
+`mise run check`はGoのtest/vet/buildに加えて、Node標準テストランナーによるフロントエンドの軽量テストも実行します。
 
 ブラウザでは以下を確認します。
 

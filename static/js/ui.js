@@ -437,7 +437,7 @@ export function collectFrontMatter() {
     return fm;
 }
 
-function previewUrlFromPath(path) {
+export function previewUrlFromPath(path) {
     let previewPath = path.replace(/\.md$/, "");
 
     if (previewPath.endsWith("/index") || previewPath.endsWith("/_index")) {
@@ -450,7 +450,7 @@ function previewUrlFromPath(path) {
     return rootRelativePath + (rootRelativePath.endsWith("/") ? "" : "/");
 }
 
-function previewUrlFromFrontMatter(config, frontmatter) {
+export function previewUrlFromFrontMatter(config, frontmatter) {
     const fieldName = config?.preview?.url_field;
     if (!fieldName || !frontmatter || frontmatter[fieldName] === undefined || frontmatter[fieldName] === null) {
         return "";
@@ -475,12 +475,12 @@ function previewUrlFromFrontMatter(config, frontmatter) {
     return "/" + rawValue.replace(/^\//, "");
 }
 
-function addCacheBuster(url) {
+export function addCacheBuster(url, now = Date.now()) {
     const hashIndex = url.indexOf("#");
     const base = hashIndex === -1 ? url : url.slice(0, hashIndex);
     const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
     const separator = base.includes("?") ? "&" : "?";
-    return base + separator + "t=" + Date.now() + hash;
+    return base + separator + "t=" + now + hash;
 }
 
 export function setPreviewUrl(path, config, frontmatter) {
