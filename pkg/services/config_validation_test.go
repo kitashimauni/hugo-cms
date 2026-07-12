@@ -46,6 +46,30 @@ collections:
 	assertNoWarningCode(t, warnings, "unknown_path_variable")
 }
 
+func TestValidateConfigForRuntimeReportsLegacyConfigPathWithStaticDir(t *testing.T) {
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, "public-assets", "admin", "config.yml"), `
+collections:
+  - name: posts
+    folder: content/posts
+    fields:
+      - name: slug
+        widget: string
+`)
+
+	runtime := config.NewSiteRuntime(config.SiteConfig{
+		ID:         "test",
+		RepoPath:   repoPath,
+		ContentDir: "content",
+		StaticDir:  "public-assets",
+	})
+	warnings := ValidateConfigForRuntime(runtime, "config.yml")
+	warning := findWarningCode(t, warnings, "legacy_config")
+	if warning.Path != "public-assets/admin/config.yml" {
+		t.Fatalf("legacy warning path = %q, want public-assets/admin/config.yml", warning.Path)
+	}
+}
+
 func TestValidateConfigForRuntimeWarnsAboutInvalidPaths(t *testing.T) {
 	repoPath := t.TempDir()
 	writeTestFile(t, filepath.Join(repoPath, ".homecms.yml"), `
@@ -70,6 +94,28 @@ media:
 	assertWarningCode(t, warnings, "invalid_collection_folder")
 	assertWarningCode(t, warnings, "invalid_media_folder")
 	assertWarningCode(t, warnings, "unsupported_widget")
+}
+
+func TestValidateConfigForRuntimeWarnsAboutCollectionOutsideContentDir(t *testing.T) {
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: posts
+      folder: assets/posts
+      path: "{{slug}}"
+      fields:
+        - { name: slug, widget: string }
+`)
+
+	warnings := ValidateConfigForRuntime(config.NewSiteRuntime(config.SiteConfig{
+		ID:         "test",
+		RepoPath:   repoPath,
+		ContentDir: "content",
+		StaticDir:  "static",
+	}), ".homecms.yml")
+	assertWarningCode(t, warnings, "invalid_collection_folder")
 }
 
 func TestValidateConfigForRuntimeReturnsEmptySliceForCleanHomeCMSConfig(t *testing.T) {
@@ -101,12 +147,18 @@ preview:
 
 func assertWarningCode(t *testing.T, warnings []ConfigWarning, code string) {
 	t.Helper()
+	_ = findWarningCode(t, warnings, code)
+}
+
+func findWarningCode(t *testing.T, warnings []ConfigWarning, code string) ConfigWarning {
+	t.Helper()
 	for _, warning := range warnings {
 		if warning.Code == code {
-			return
+			return warning
 		}
 	}
 	t.Fatalf("warning code %q not found in %#v", code, warnings)
+	return ConfigWarning{}
 }
 
 func assertNoWarningCode(t *testing.T, warnings []ConfigWarning, code string) {

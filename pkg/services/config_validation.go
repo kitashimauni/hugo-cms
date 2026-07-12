@@ -22,7 +22,7 @@ type ConfigWarning struct {
 func ValidateConfigForRuntime(runtime config.SiteRuntime, source string) []ConfigWarning {
 	switch source {
 	case homeCMSConfigFile:
-		return validateHomeCMSConfigFile(filepath.Join(runtime.RepoPath, homeCMSConfigFile))
+		return validateHomeCMSConfigFile(runtime, filepath.Join(runtime.RepoPath, homeCMSConfigFile))
 	case legacyCMSConfigFile:
 		return validateLegacyCMSConfigFile(runtime)
 	default:
@@ -34,7 +34,7 @@ func ValidateConfigForRuntime(runtime config.SiteRuntime, source string) []Confi
 	}
 }
 
-func validateHomeCMSConfigFile(path string) []ConfigWarning {
+func validateHomeCMSConfigFile(runtime config.SiteRuntime, path string) []ConfigWarning {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return []ConfigWarning{configWarning("error", "config_read_failed", ".homecms.yml", "Failed to read .homecms.yml: "+err.Error())}
@@ -43,29 +43,30 @@ func validateHomeCMSConfigFile(path string) []ConfigWarning {
 	if err := yaml.Unmarshal(content, &home); err != nil {
 		return []ConfigWarning{configWarning("error", "config_parse_failed", ".homecms.yml", "Failed to parse .homecms.yml: "+err.Error())}
 	}
-	return validateHomeCMSConfig(home)
+	return validateHomeCMSConfig(runtime, home)
 }
 
 func validateLegacyCMSConfigFile(runtime config.SiteRuntime) []ConfigWarning {
+	legacyPath := filepath.ToSlash(filepath.Join(runtime.StaticDir, "admin", legacyCMSConfigFile))
 	warnings := []ConfigWarning{configWarning(
 		"warning",
 		"legacy_config",
-		"static/admin/config.yml",
-		"Legacy static/admin/config.yml is loaded for compatibility. Prefer .homecms.yml for new configuration and new features.",
+		legacyPath,
+		fmt.Sprintf("Legacy %s is loaded for compatibility. Prefer .homecms.yml for new configuration and new features.", legacyPath),
 	)}
 
 	content, err := os.ReadFile(legacyCMSConfigPath(runtime))
 	if err != nil {
-		return append(warnings, configWarning("error", "config_read_failed", "static/admin/config.yml", "Failed to read legacy CMS config: "+err.Error()))
+		return append(warnings, configWarning("error", "config_read_failed", legacyPath, "Failed to read legacy CMS config: "+err.Error()))
 	}
 	var cfg models.CMSConfig
 	if err := yaml.Unmarshal(content, &cfg); err != nil {
-		return append(warnings, configWarning("error", "config_parse_failed", "static/admin/config.yml", "Failed to parse legacy CMS config: "+err.Error()))
+		return append(warnings, configWarning("error", "config_parse_failed", legacyPath, "Failed to parse legacy CMS config: "+err.Error()))
 	}
-	return append(warnings, validateCMSConfig(cfg, legacyCMSConfigFile)...)
+	return append(warnings, validateCMSConfig(runtime, cfg, legacyCMSConfigFile)...)
 }
 
-func validateHomeCMSConfig(home models.HomeCMSConfig) []ConfigWarning {
+func validateHomeCMSConfig(runtime config.SiteRuntime, home models.HomeCMSConfig) []ConfigWarning {
 	cfg := models.CMSConfig{
 		MediaFolder:  home.Media.Folder,
 		PublicFolder: home.Media.PublicPath,
@@ -87,10 +88,10 @@ func validateHomeCMSConfig(home models.HomeCMSConfig) []ConfigWarning {
 			Fields:       collection.Fields,
 		})
 	}
-	return validateCMSConfig(cfg, homeCMSConfigFile)
+	return validateCMSConfig(runtime, cfg, homeCMSConfigFile)
 }
 
-func validateCMSConfig(cfg models.CMSConfig, source string) []ConfigWarning {
+func validateCMSConfig(runtime config.SiteRuntime, cfg models.CMSConfig, source string) []ConfigWarning {
 	warnings := []ConfigWarning{}
 	if len(cfg.Collections) == 0 {
 		warnings = append(warnings, configWarning("error", "missing_collections", collectionRootPath(source), "CMS config should define at least one collection."))
@@ -124,8 +125,8 @@ func validateCMSConfig(cfg models.CMSConfig, source string) []ConfigWarning {
 		folder := strings.TrimSpace(collection.Folder)
 		if folder == "" {
 			warnings = append(warnings, configWarning("error", "missing_collection_folder", pathPrefix+".folder", "Collection folder is required."))
-		} else if cleanConfigPath(folder) == "" {
-			warnings = append(warnings, configWarning("error", "invalid_collection_folder", pathPrefix+".folder", "Collection folder must be a safe relative path inside the repository."))
+		} else if _, err := CollectionFolderWithinContentForRuntime(runtime, collection); err != nil {
+			warnings = append(warnings, configWarning("error", "invalid_collection_folder", pathPrefix+".folder", fmt.Sprintf("Collection folder must be a safe relative path under %s.", runtime.ContentDir)))
 		}
 
 		if format := strings.TrimSpace(collection.Format); format != "" && !isSupportedFrontMatterFormat(format, source) {
