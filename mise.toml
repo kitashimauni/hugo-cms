@@ -1,5 +1,6 @@
 [tools]
 go = "1.24.11"
+node = "22"
 
 [tasks.format]
 description = "Format Go source files"
@@ -9,13 +10,17 @@ run = "go fmt ./..."
 description = "Run tests"
 run = "go test ./..."
 
+[tasks.test-js]
+description = "Run frontend JavaScript tests"
+run = "npm run test:js"
+
 [tasks.vet]
 description = "Run go vet"
 run = "go vet ./..."
 
 [tasks.build]
 description = "Compile all packages"
-run = "go build ./..."
+run = "go build -buildvcs=false ./..."
 
 [tasks.dev]
 description = "Start the CMS"
@@ -23,4 +28,4 @@ run = "go run ."
 
 [tasks.check]
 description = "Run all non-mutating checks"
-depends = ["vet", "test", "build"]
+depends = ["vet", "test", "test-js", "build"]
