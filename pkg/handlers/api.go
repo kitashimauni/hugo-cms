@@ -446,6 +446,7 @@ func GetConfig(c *gin.Context) {
 	}
 	configSource, _ := cfg["_config_source"].(string)
 	delete(cfg, "_config_source")
+	warnings := services.ValidateConfigForRuntime(runtime, configSource)
 	cfg["_cms"] = gin.H{
 		"content_dir":    runtime.ContentDir,
 		"static_dir":     runtime.StaticDir,
@@ -454,6 +455,7 @@ func GetConfig(c *gin.Context) {
 		"default_site":   config.DefaultSiteID,
 		"site_id":        runtime.ID,
 		"config_source":  configSource,
+		"warnings":       warnings,
 	}
 	c.JSON(http.StatusOK, cfg)
 }
