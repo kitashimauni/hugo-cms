@@ -232,7 +232,10 @@ func readHomeCMSConfig(path string) (*models.CMSConfig, error) {
 	cfg := models.CMSConfig{
 		MediaFolder:  cleanConfigPath(home.Media.Folder),
 		PublicFolder: cleanPublicPath(home.Media.PublicPath),
-		Collections:  make([]models.Collection, 0, len(home.Content.Collections)),
+		Preview: models.CMSPreview{
+			URLField: strings.TrimSpace(home.Preview.URLField),
+		},
+		Collections: make([]models.Collection, 0, len(home.Content.Collections)),
 	}
 	for _, collection := range home.Content.Collections {
 		cfg.Collections = append(cfg.Collections, models.Collection{

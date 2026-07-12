@@ -437,8 +437,7 @@ export function collectFrontMatter() {
     return fm;
 }
 
-export function setPreviewUrl(path) {
-    const frame = document.getElementById('preview-frame');
+function previewUrlFromPath(path) {
     let previewPath = path.replace(/\.md$/, "");
 
     if (previewPath.endsWith("/index") || previewPath.endsWith("/_index")) {
@@ -448,11 +447,49 @@ export function setPreviewUrl(path) {
     }
 
     const rootRelativePath = "/" + previewPath.replace(/^\//, "");
-    const targetUrl = rootRelativePath + (rootRelativePath.endsWith("/") ? "" : "/");
+    return rootRelativePath + (rootRelativePath.endsWith("/") ? "" : "/");
+}
+
+function previewUrlFromFrontMatter(config, frontmatter) {
+    const fieldName = config?.preview?.url_field;
+    if (!fieldName || !frontmatter || frontmatter[fieldName] === undefined || frontmatter[fieldName] === null) {
+        return "";
+    }
+
+    const rawValue = String(frontmatter[fieldName]).trim();
+    if (rawValue === "") return "";
+
+    try {
+        if (/^https?:\/\//i.test(rawValue)) {
+            const parsed = new URL(rawValue);
+            return parsed.pathname + parsed.search + parsed.hash;
+        }
+    } catch (e) {
+        return "";
+    }
+
+    if (/^[a-z][a-z0-9+.-]*:/i.test(rawValue) || rawValue.startsWith("//")) {
+        return "";
+    }
+
+    return "/" + rawValue.replace(/^\//, "");
+}
+
+function addCacheBuster(url) {
+    const hashIndex = url.indexOf("#");
+    const base = hashIndex === -1 ? url : url.slice(0, hashIndex);
+    const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
+    const separator = base.includes("?") ? "&" : "?";
+    return base + separator + "t=" + Date.now() + hash;
+}
+
+export function setPreviewUrl(path, config, frontmatter) {
+    const frame = document.getElementById('preview-frame');
+    const targetUrl = previewUrlFromFrontMatter(config, frontmatter) || previewUrlFromPath(path);
     const siteID = API.getCurrentSite();
     const previewBase = siteID ? `/admin/preview/${encodeURIComponent(siteID)}` : "";
 
-    frame.src = previewBase + targetUrl + "?t=" + Date.now();
+    frame.src = previewBase + addCacheBuster(targetUrl);
 }
 
 export function showDiffModal(diffText) {

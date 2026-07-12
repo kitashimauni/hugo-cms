@@ -116,7 +116,7 @@ async function init() {
             UI.showToast("Server Restarted", "success");
             // Reload iframe
             const currentPath = Editor.getCurrentPath();
-            if (currentPath) UI.setPreviewUrl(currentPath);
+            if (currentPath) UI.setPreviewUrl(currentPath, cmsConfig);
         } catch (e) {
             UI.showToast("Restart Failed", "error");
         }

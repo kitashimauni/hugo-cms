@@ -3,7 +3,12 @@ package models
 type CMSConfig struct {
 	MediaFolder  string       `yaml:"media_folder"`
 	PublicFolder string       `yaml:"public_folder"`
+	Preview      CMSPreview   `yaml:"preview"`
 	Collections  []Collection `yaml:"collections"`
+}
+
+type CMSPreview struct {
+	URLField string `yaml:"url_field"`
 }
 
 type HomeCMSConfig struct {

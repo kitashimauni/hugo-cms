@@ -44,6 +44,8 @@ content:
 media:
   folder: assets/images
   public_path: /images
+preview:
+  url_field: permalink
 `)
 	conf, err := GetConfigForRuntime(testRuntime(repoPath))
 	if err != nil {
@@ -67,6 +69,10 @@ media:
 	field, ok := fields[0].(map[string]interface{})
 	if !ok || field["label"] != "Title Label" {
 		t.Fatalf("field = %#v, want preserved HomeCMS label", fields[0])
+	}
+	preview, ok := conf["preview"].(map[string]interface{})
+	if !ok || preview["url_field"] != "permalink" {
+		t.Fatalf("preview = %#v, want url_field permalink", conf["preview"])
 	}
 }
 
