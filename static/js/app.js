@@ -128,6 +128,7 @@ async function init() {
 async function loadSiteData() {
     cmsConfig = await API.fetchConfig();
     Editor.setConfig(cmsConfig);
+    UI.renderConfigWarnings(cmsConfig);
     await refreshFileList();
 }
 
