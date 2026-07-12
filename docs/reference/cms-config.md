@@ -3,7 +3,7 @@
 HomeCMSのコレクションとフィールドの設定方法について説明します。
 
 推奨設定ファイルは、サイトリポジトリ直下の `{REPO_PATH}/.homecms.yml` です。
-既存サイト向けの後方互換として `{REPO_PATH}/static/admin/config.yml` も読み込みますが、両方が存在する場合は `.homecms.yml` を優先します。
+既存サイト向けの後方互換として `{REPO_PATH}/static/admin/config.yml` も読み込みますが、両方が存在する場合は `.homecms.yml` を優先します。新規設定と新機能は `.homecms.yml` を前提に追加します。legacy configを読み込んだ場合、管理画面には互換読み込みのwarningが表示されます。
 
 ## `.homecms.yml` の基本構造
 
@@ -19,7 +19,9 @@ content:
       extension: md
       frontmatter: yaml
       fields:
+        - { label: "Slug", name: "slug", widget: "string" }
         - { label: "タイトル", name: "title", widget: "string" }
+        - { label: "Permalink", name: "permalink", widget: "string" }
         - { label: "本文", name: "body", widget: "markdown" }
 
 media:
@@ -34,7 +36,22 @@ preview:
 
 `media.folder` はリポジトリルート基準の保存先です。Site Registryや環境変数で `static_media_dir` / `STATIC_MEDIA_DIR` が指定されていない場合、static media mode の一覧・アップロード・削除・raw配信はこのフォルダを使います。`media.public_path` はMarkdownへ挿入する公開パスのベースです。
 
-`GET /admin/api/config` のレスポンスでは `_cms.config_source` に `.homecms.yml` または `config.yml` が入ります。
+`GET /admin/api/config` のレスポンスでは `_cms.config_source` に `.homecms.yml` または `config.yml` が入り、設定上の注意点がある場合は `_cms.warnings` に入ります。
+
+## 設定validation
+
+HomeCMSは設定を読み込むときに、編集・作成・previewで事故につながりやすい項目を検査します。検査結果は `/admin/api/config` の `_cms.warnings` に入り、管理画面のサイドバーにも表示されます。
+
+主な検査項目:
+
+- `content.collections[].name` と `folder` が指定されているか
+- `folder` や `media.folder` がリポジトリ外へ出ない安全な相対パスか
+- `path` に含まれる `{{slug}}` や `{{field_name}}` に対応するfieldがあるか
+- `preview.url_field` に指定したfieldが定義されているか
+- `frontmatter` が `yaml` / `toml` / `json` のいずれかか
+- 未対応のwidgetを使っていないか
+
+`path` を省略した場合は `{{slug}}` として扱われるため、記事作成UIを使うcollectionでは `slug` fieldを定義してください。
 
 ## 旧 `static/admin/config.yml` の基本構造
 

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -167,6 +168,104 @@ func TestGetSnippetsUsesSelectedSitePaths(t *testing.T) {
 	}
 	if _, ok := snippets["Default Snippet"]; ok {
 		t.Fatalf("snippets = %#v, should not include default site snippet", snippets)
+	}
+}
+
+func TestGetConfigIncludesValidationWarnings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	restoreSiteScopeConfig(t)
+
+	repoPath := t.TempDir()
+	writeSnippetFile(t, filepath.Join(repoPath, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: posts
+      folder: content/posts
+      path: "{{slug}}"
+      fields:
+        - { name: title, widget: string }
+preview:
+  url_field: permalink
+`)
+	config.DefaultSiteID = "default"
+	config.Sites = []config.SiteConfig{{
+		ID:             "default",
+		RepoPath:       repoPath,
+		Generator:      "hugo",
+		ContentDir:     "content",
+		StaticDir:      "static",
+		PublicDir:      "public",
+		PreviewURL:     "/",
+		HugoServerPort: "1314",
+		HugoServerBind: "127.0.0.1",
+	}}
+	config.ApplySiteRuntime(config.Sites[0])
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
+
+	GetConfig(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetConfig() status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	meta, ok := body["_cms"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("_cms = %#v, want metadata map", body["_cms"])
+	}
+	warnings, ok := meta["warnings"].([]interface{})
+	if !ok || len(warnings) == 0 {
+		t.Fatalf("warnings = %#v, want validation warnings", meta["warnings"])
+	}
+}
+
+func TestGetConfigReturnsEmptyWarningsArrayForCleanConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	restoreSiteScopeConfig(t)
+
+	repoPath := t.TempDir()
+	writeSnippetFile(t, filepath.Join(repoPath, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: posts
+      folder: content/posts
+      path: "{{slug}}"
+      fields:
+        - { name: slug, widget: string }
+        - { name: title, widget: string }
+`)
+	config.DefaultSiteID = "default"
+	config.Sites = []config.SiteConfig{{
+		ID:             "default",
+		RepoPath:       repoPath,
+		Generator:      "hugo",
+		ContentDir:     "content",
+		StaticDir:      "static",
+		PublicDir:      "public",
+		PreviewURL:     "/",
+		HugoServerPort: "1314",
+		HugoServerBind: "127.0.0.1",
+	}}
+	config.ApplySiteRuntime(config.Sites[0])
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/admin/api/config", nil)
+
+	GetConfig(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetConfig() status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"warnings":[]`) {
+		t.Fatalf("GetConfig() body = %s, want warnings empty array", w.Body.String())
 	}
 }
 

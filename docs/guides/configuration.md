@@ -199,6 +199,10 @@ media:
 
 `content.collections[].path`で`{{slug}}`のような変数を使う場合は、作成フォームから値を送信できるように同名のfieldを定義してください。
 
+CMSは設定読み込み時に、collection名・folder・path変数・`preview.url_field`・media folderなどを検査します。注意点がある場合は`GET /admin/api/config`の`_cms.warnings`に入り、管理画面のサイドバーにも表示されます。
+
+既存互換の`<static_dir>/admin/config.yml`は引き続き読み込めますが、新規設定と新機能は`.homecms.yml`を基準にします。legacy configを使用しているサイトでは、移行を促すwarningが表示されます。
+
 ### Preview
 
 プレビューはサイトごとに独立したプロセスとして管理されます。選択中サイトのiframeは次の内部proxyを参照します。

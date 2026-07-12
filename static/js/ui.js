@@ -86,6 +86,44 @@ export function renderSiteSelector(registry, selectedSiteID, onChange) {
     container.appendChild(select);
 }
 
+export function renderConfigWarnings(config) {
+    const panel = document.getElementById('config-warning-panel');
+    if (!panel) return;
+
+    const warnings = Array.isArray(config?._cms?.warnings) ? config._cms.warnings : [];
+    panel.innerHTML = '';
+    if (warnings.length === 0) {
+        panel.classList.add('hidden');
+        return;
+    }
+
+    panel.classList.remove('hidden');
+    const title = document.createElement('div');
+    title.className = 'config-warning-title';
+    title.textContent = `Config warnings (${warnings.length})`;
+    panel.appendChild(title);
+
+    warnings.forEach(warning => {
+        const item = document.createElement('div');
+        const severity = warning.severity === 'error' ? 'error' : 'warning';
+        item.className = `config-warning-item ${severity}`;
+
+        const message = document.createElement('div');
+        message.className = 'config-warning-message';
+        message.textContent = warning.message || warning.code || 'Configuration warning';
+        item.appendChild(message);
+
+        if (warning.path || warning.code) {
+            const meta = document.createElement('div');
+            meta.className = 'config-warning-meta';
+            meta.textContent = [warning.path, warning.code].filter(Boolean).join(' · ');
+            item.appendChild(meta);
+        }
+
+        panel.appendChild(item);
+    });
+}
+
 export async function showLoadingEditor() {
     const fmContainer = document.getElementById('fm-container');
     const editor = document.getElementById('editor');
