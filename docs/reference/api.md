@@ -482,10 +482,20 @@ CMS設定を取得します。サイトリポジトリ直下の `.homecms.yml` �
         "static_dir": "static",
         "public_dir": "public",
         "site_generator": "hugo",
-        "config_source": ".homecms.yml"
+        "config_source": ".homecms.yml",
+        "warnings": [
+            {
+                "severity": "warning",
+                "code": "unknown_preview_url_field",
+                "path": "preview.url_field",
+                "message": "preview.url_field \"permalink\" is not defined in any collection fields; previews may fall back to file paths."
+            }
+        ]
     }
 }
 ```
+
+`_cms.warnings`は設定上の注意点がない場合は空配列です。`severity`は`warning`または`error`で、parse不能な設定は従来通りAPIエラーになります。
 
 ---
 

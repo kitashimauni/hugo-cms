@@ -76,6 +76,8 @@ sites:
 - `/admin/api/articles?site=<id>` が対象サイトの内容を返す
 - `/admin/api/config?site=<id>` の `_cms.site_id` が対象サイトになる
 - `.homecms.yml`があるサイトでは`/admin/api/config?site=<id>` の `_cms.config_source` が `.homecms.yml` になる
+- 設定に注意点がある場合、`/admin/api/config?site=<id>` の `_cms.warnings` と管理画面サイドバーに表示される
+- legacy `static/admin/config.yml` を使うサイトでは互換読み込みwarningが表示される
 - 記事の作成、保存、Diff、削除が選択サイトの`content_dir`配下だけを対象にする
 - メディア一覧、アップロード、削除、raw配信が選択サイトの`static_dir`/記事別メディア設定だけを対象にする
 - `static_media_dir`未指定かつ`.homecms.yml`の`media.folder`があるサイトでは、そのフォルダへstatic media uploadされ、`media.public_path`がMarkdown挿入パスに使われる
