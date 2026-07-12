@@ -1,8 +1,42 @@
-# CMS設定 (config.yml)
+# CMS設定
 
-Hugo CMSのコレクションとフィールドの設定方法について説明します。
+HomeCMSのコレクションとフィールドの設定方法について説明します。
 
-設定ファイルは `{REPO_PATH}/static/admin/config.yml` に配置します。
+推奨設定ファイルは、サイトリポジトリ直下の `{REPO_PATH}/.homecms.yml` です。
+既存サイト向けの後方互換として `{REPO_PATH}/static/admin/config.yml` も読み込みますが、両方が存在する場合は `.homecms.yml` を優先します。
+
+## `.homecms.yml` の基本構造
+
+```yaml
+version: 1
+
+content:
+  collections:
+    - name: posts
+      label: Blog Posts
+      folder: content/posts
+      path: "{{slug}}"
+      extension: md
+      frontmatter: yaml
+      fields:
+        - { label: "タイトル", name: "title", widget: "string" }
+        - { label: "本文", name: "body", widget: "markdown" }
+
+media:
+  folder: static/images
+  public_path: /images
+
+preview:
+  url_field: permalink
+```
+
+`.homecms.yml` はジェネレーター非依存の設定です。`content.collections` は既存UIが利用する `collections` 形式へサーバー側で変換されます。`frontmatter` は `yaml`、`toml`、`json` を指定できます。
+
+`media.folder` はリポジトリルート基準の保存先です。Site Registryや環境変数で `static_media_dir` / `STATIC_MEDIA_DIR` が指定されていない場合、static media mode の一覧・アップロード・削除・raw配信はこのフォルダを使います。`media.public_path` はMarkdownへ挿入する公開パスのベースです。
+
+`GET /admin/api/config` のレスポンスでは `_cms.config_source` に `.homecms.yml` または `config.yml` が入ります。
+
+## 旧 `static/admin/config.yml` の基本構造
 
 ## 基本構造
 

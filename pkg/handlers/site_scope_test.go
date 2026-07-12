@@ -40,7 +40,7 @@ func restoreSiteScopeConfig(t *testing.T) {
 	})
 }
 
-func TestSiteScopedAppliesRequestedSiteAndRestoresRuntime(t *testing.T) {
+func TestRequestedRuntimeResolvesSelectedSiteWithoutMutatingGlobals(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	restoreSiteScopeConfig(t)
 
@@ -81,37 +81,25 @@ func TestSiteScopedAppliesRequestedSiteAndRestoresRuntime(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/admin/api/config?site=docs", nil)
 
-	SiteScoped(func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"site":        currentSiteID(c),
-			"repo_path":   config.RepoPath,
-			"content_dir": config.ContentDir,
-			"generator":   config.SiteGenerator,
-		})
-	})(c)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("SiteScoped() status = %d, body = %s", w.Code, w.Body.String())
+	runtime, err := requestedRuntime(c)
+	if err != nil {
+		t.Fatalf("requestedRuntime() error = %v", err)
 	}
 	if config.RepoPath != defaultRepo {
-		t.Fatalf("RepoPath after scoped request = %q, want restored %q", config.RepoPath, defaultRepo)
+		t.Fatalf("RepoPath after runtime resolution = %q, want unchanged default %q", config.RepoPath, defaultRepo)
 	}
 	if config.ContentDir != "content" {
-		t.Fatalf("ContentDir after scoped request = %q, want content", config.ContentDir)
+		t.Fatalf("ContentDir after runtime resolution = %q, want content", config.ContentDir)
 	}
-	var response map[string]string
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-	if response["site"] != "docs" ||
-		response["repo_path"] != selectedRepo ||
-		response["content_dir"] != "src" ||
-		response["generator"] != "eleventy" {
-		t.Fatalf("response = %#v, want selected site runtime fields", response)
+	if currentSiteID(c) != "docs" ||
+		runtime.RepoPath != selectedRepo ||
+		runtime.ContentDir != "src" ||
+		runtime.Generator != "eleventy" {
+		t.Fatalf("runtime = %#v, want selected site runtime fields", runtime)
 	}
 }
 
-func TestSiteScopedSnippetsUseSelectedSitePaths(t *testing.T) {
+func TestGetSnippetsUsesSelectedSitePaths(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	restoreSiteScopeConfig(t)
 
@@ -165,7 +153,7 @@ func TestSiteScopedSnippetsUseSelectedSitePaths(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/admin/api/snippets?site=docs", nil)
 
-	SiteScoped(GetSnippets)(c)
+	GetSnippets(c)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("GetSnippets() status = %d, body = %s", w.Code, w.Body.String())
@@ -193,7 +181,7 @@ func writeSnippetFile(t *testing.T, path, content string) {
 	}
 }
 
-func TestSiteScopedRejectsUnknownSite(t *testing.T) {
+func TestSelectedSiteHandlersRejectUnknownSite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	restoreSiteScopeConfig(t)
 
@@ -205,11 +193,9 @@ func TestSiteScopedRejectsUnknownSite(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/admin/api/articles?site=missing", nil)
 
-	SiteScoped(func(c *gin.Context) {
-		c.Status(http.StatusNoContent)
-	})(c)
+	GetSnippets(c)
 
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("SiteScoped() status = %d, want %d", w.Code, http.StatusBadRequest)
+		t.Fatalf("GetSnippets() status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }

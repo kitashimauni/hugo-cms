@@ -16,10 +16,6 @@ import (
 	"time"
 )
 
-func CheckSemanticDiff(relPath string) (bool, error) {
-	return CheckSemanticDiffForRuntime(config.CurrentSiteRuntime(), relPath)
-}
-
 func CheckSemanticDiffForRuntime(runtime config.SiteRuntime, relPath string) (bool, error) {
 	gitPath := filepath.ToSlash(relPath)
 
@@ -214,10 +210,6 @@ func createAskPassScript() (string, error) {
 	return f.Name(), nil
 }
 
-func SyncRepo(token string) (string, error) {
-	return SyncRepoForRuntime(config.CurrentSiteRuntime(), token)
-}
-
 func SyncRepoForRuntime(runtime config.SiteRuntime, token string) (string, error) {
 	unlock := LockRepositoryOperation()
 	defer unlock()
@@ -227,10 +219,6 @@ func SyncRepoForRuntime(runtime config.SiteRuntime, token string) (string, error
 		InvalidateCacheForRuntime(runtime)
 	}
 	return log, err
-}
-
-func PublishChanges(token, path string) (string, error) {
-	return PublishChangesForRuntime(config.CurrentSiteRuntime(), token, path)
 }
 
 func PublishChangesForRuntime(runtime config.SiteRuntime, token, path string) (string, error) {
@@ -273,9 +261,8 @@ func publishChanges(runtime config.SiteRuntime, token, path string, push gitPush
 		// Add static/media changes that may be referenced by the article, but
 		// do not require sites to have a static directory before any media is
 		// uploaded.
-		if dirExists(filepath.Join(runtime.RepoPath, runtime.StaticDir)) {
-			filesToAdd = append(filesToAdd, runtime.StaticDir)
-		}
+		filesToAdd = appendExistingRepoDir(filesToAdd, runtime, runtime.StaticDir)
+		filesToAdd = appendExistingRepoDir(filesToAdd, runtime, staticMediaTargetForRuntime(runtime).repoRelDir)
 
 		// Check for Page Bundle
 		if strings.HasSuffix(path, "index.md") || strings.HasSuffix(path, "_index.md") {
@@ -335,8 +322,23 @@ func dirExists(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-func Diff(f1Path, f2Path, relPath string) (string, string) {
-	return DiffForRuntime(config.CurrentSiteRuntime(), f1Path, f2Path, relPath)
+func appendExistingRepoDir(files []string, runtime config.SiteRuntime, repoRelDir string) []string {
+	repoRelDir = filepath.ToSlash(filepath.Clean(repoRelDir))
+	if repoRelDir == "" || repoRelDir == "." {
+		return files
+	}
+	if SafeJoin(runtime.RepoPath, "", repoRelDir) == "" {
+		return files
+	}
+	for _, file := range files {
+		if filepath.ToSlash(filepath.Clean(file)) == repoRelDir {
+			return files
+		}
+	}
+	if dirExists(filepath.Join(runtime.RepoPath, filepath.FromSlash(repoRelDir))) {
+		return append(files, repoRelDir)
+	}
+	return files
 }
 
 func DiffForRuntime(runtime config.SiteRuntime, f1Path, f2Path, relPath string) (string, string) {

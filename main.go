@@ -205,7 +205,7 @@ func SetupRouter() (*gin.Engine, error) {
 
 	// --- Health Check Endpoints (Public) ---
 	r.GET("/health", handlers.HealthCheck)
-	r.GET("/ready", handlers.RuntimeLocked(handlers.ReadinessCheck))
+	r.GET("/ready", handlers.ReadinessCheck)
 
 	// --- Admin Routes ---
 	admin := r.Group("/admin")
@@ -319,7 +319,7 @@ func main() {
 	}
 
 	// Start default preview server
-	if err := services.StartHugoServer(); err != nil {
+	if err := services.StartPreviewForSite(services.DefaultPreviewSite()); err != nil {
 		slog.Error("Failed to start default preview server", "error", err)
 	}
 

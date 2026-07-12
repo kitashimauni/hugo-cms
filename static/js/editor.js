@@ -93,7 +93,7 @@ function updateSaveStatus(msg, type) {
 }
 
 function reloadPreviewIfNeeded() {
-    if (currentPath) UI.setPreviewUrl(currentPath);
+    if (currentPath) UI.setPreviewUrl(currentPath, cmsConfig, UI.collectFrontMatter());
 }
 
 export async function execAutoSave() {
@@ -174,7 +174,7 @@ export async function loadFile(path) {
 
         lastSavedPayload = JSON.stringify(getPayload());
         lastQueuedPayload = "";
-        UI.setPreviewUrl(path);
+        UI.setPreviewUrl(path, cmsConfig, data.frontmatter);
 
     } catch (e) {
         UI.showEditorError(e);

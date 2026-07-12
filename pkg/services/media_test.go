@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -34,35 +35,33 @@ func testFileHeader(t *testing.T, filename string, content []byte) *multipart.Fi
 	return request.MultipartForm.File["file"][0]
 }
 
-func withMediaConfig(t *testing.T, repoPath string) {
+func withMediaConfig(t *testing.T, repoPath string) config.SiteRuntime {
 	t.Helper()
 
-	originalRepoPath := config.RepoPath
-	originalContentDir := config.ContentDir
-	originalStaticRoot := config.StaticDir
-	originalStaticDir := config.StaticMediaDir
-	originalArticleDir := config.ArticleMediaDir
 	originalMaxSize := config.MaxUploadSize
 	t.Cleanup(func() {
-		config.RepoPath = originalRepoPath
-		config.ContentDir = originalContentDir
-		config.StaticDir = originalStaticRoot
-		config.StaticMediaDir = originalStaticDir
-		config.ArticleMediaDir = originalArticleDir
 		config.MaxUploadSize = originalMaxSize
 	})
 
-	config.RepoPath = repoPath
-	config.ContentDir = "content"
-	config.StaticDir = "static"
-	config.StaticMediaDir = "images"
-	config.ArticleMediaDir = "images"
 	config.MaxUploadSize = 1024 * 1024
+	return config.NewSiteRuntime(config.SiteConfig{
+		ID:              "test",
+		RepoPath:        repoPath,
+		Generator:       "hugo",
+		ContentDir:      "content",
+		StaticDir:       "static",
+		PublicDir:       "public",
+		PreviewURL:      "/",
+		HugoServerBind:  "127.0.0.1",
+		HugoServerPort:  "1314",
+		StaticMediaDir:  "images",
+		ArticleMediaDir: "images",
+	})
 }
 
 func TestListMediaFiles(t *testing.T) {
 	repoPath := t.TempDir()
-	withMediaConfig(t, repoPath)
+	runtime := withMediaConfig(t, repoPath)
 
 	staticDir := filepath.Join(repoPath, "static", "images")
 	if err := os.MkdirAll(staticDir, 0755); err != nil {
@@ -75,7 +74,7 @@ func TestListMediaFiles(t *testing.T) {
 		}
 	}
 
-	files, err := ListMediaFiles("static", "")
+	files, err := ListMediaFilesForRuntime(runtime, "static", "")
 	if err != nil {
 		t.Fatalf("ListMediaFiles() unexpected error: %v", err)
 	}
@@ -84,7 +83,7 @@ func TestListMediaFiles(t *testing.T) {
 	}
 
 	t.Run("Content mode requires article path", func(t *testing.T) {
-		files, err := ListMediaFiles("content", "")
+		files, err := ListMediaFilesForRuntime(runtime, "content", "")
 		// Should return empty without error since articlePath is empty
 		if err != nil {
 			t.Errorf("ListMediaFiles() unexpected error: %v", err)
@@ -160,13 +159,14 @@ func TestDeleteMediaFile(t *testing.T) {
 }
 
 func TestDeleteMediaFile_InvalidPath(t *testing.T) {
+	runtime := withMediaConfig(t, t.TempDir())
 	// DeleteMediaFile should return error for invalid paths
-	err := DeleteMediaFile("")
+	err := DeleteMediaFileForRuntime(runtime, "")
 	if err == nil {
 		t.Error("DeleteMediaFile(\"\") should return error for empty path")
 	}
 
-	err = DeleteMediaFile("../../../etc/passwd")
+	err = DeleteMediaFileForRuntime(runtime, "../../../etc/passwd")
 	if err == nil {
 		t.Error("DeleteMediaFile should return error for path traversal attempt")
 	}
@@ -178,12 +178,12 @@ func TestSaveMediaFileRejectsArticlePathTraversal(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoPath, "content"), 0755); err != nil {
 		t.Fatalf("create content directory: %v", err)
 	}
-	withMediaConfig(t, repoPath)
+	runtime := withMediaConfig(t, repoPath)
 
 	header := testFileHeader(t, "image.png", []byte{
 		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 	})
-	if _, err := SaveMediaFile(header, "content", "../../outside/index.md"); err == nil {
+	if _, err := SaveMediaFileForRuntime(runtime, header, "content", "../../outside/index.md"); err == nil {
 		t.Fatal("SaveMediaFile() should reject an article path outside content")
 	}
 
@@ -197,10 +197,10 @@ func TestSaveMediaFileRejectsMismatchedContent(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoPath, "static", "images"), 0755); err != nil {
 		t.Fatalf("create static directory: %v", err)
 	}
-	withMediaConfig(t, repoPath)
+	runtime := withMediaConfig(t, repoPath)
 
 	header := testFileHeader(t, "not-an-image.jpg", []byte("%PDF-1.7\n"))
-	if _, err := SaveMediaFile(header, "static", ""); err == nil {
+	if _, err := SaveMediaFileForRuntime(runtime, header, "static", ""); err == nil {
 		t.Fatal("SaveMediaFile() should reject content that does not match its extension")
 	}
 }
@@ -210,20 +210,139 @@ func TestSaveMediaFileWritesValidatedImage(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoPath, "static", "images"), 0755); err != nil {
 		t.Fatalf("create static directory: %v", err)
 	}
-	withMediaConfig(t, repoPath)
+	runtime := withMediaConfig(t, repoPath)
 
 	header := testFileHeader(t, "image.png", []byte{
 		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
 	})
-	media, err := SaveMediaFile(header, "static", "")
+	media, err := SaveMediaFileForRuntime(runtime, header, "static", "")
 	if err != nil {
 		t.Fatalf("SaveMediaFile() unexpected error: %v", err)
 	}
-	if !ValidateMediaRepoPath(media.RepoPath) {
+	if !ValidateMediaRepoPathForRuntime(runtime, media.RepoPath) {
 		t.Fatalf("SaveMediaFile() returned invalid repository path %q", media.RepoPath)
 	}
 	if _, err := os.Stat(filepath.Join(repoPath, filepath.FromSlash(media.RepoPath))); err != nil {
 		t.Fatalf("saved media file not found: %v", err)
+	}
+}
+
+func TestSaveMediaFileUsesHomeCMSMediaFolder(t *testing.T) {
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: posts
+      folder: content/posts
+media:
+  folder: assets/images
+  public_path: /images
+`)
+	runtime := config.NewSiteRuntime(config.SiteConfig{
+		ID:             "test",
+		RepoPath:       repoPath,
+		Generator:      "eleventy",
+		ContentDir:     "content",
+		StaticDir:      "static",
+		PublicDir:      "_site",
+		PreviewURL:     "/",
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: "1314",
+	})
+
+	header := testFileHeader(t, "image.png", []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+	})
+	media, err := SaveMediaFileForRuntime(runtime, header, "static", "")
+	if err != nil {
+		t.Fatalf("SaveMediaFileForRuntime() unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(media.RepoPath, "assets/images/") {
+		t.Fatalf("RepoPath = %q, want assets/images prefix", media.RepoPath)
+	}
+	if !strings.HasPrefix(media.Path, "/images/") {
+		t.Fatalf("Path = %q, want /images prefix", media.Path)
+	}
+	if !ValidateMediaRepoPathForRuntime(runtime, media.RepoPath) {
+		t.Fatalf("media repo path %q should be valid", media.RepoPath)
+	}
+}
+
+func TestSaveMediaFileUsesRootPublicPathForStaticMediaRoot(t *testing.T) {
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, ".homecms.yml"), `
+version: 1
+content:
+  collections:
+    - name: posts
+      folder: content/posts
+media:
+  folder: static
+`)
+	runtime := config.NewSiteRuntime(config.SiteConfig{
+		ID:             "test",
+		RepoPath:       repoPath,
+		Generator:      "hugo",
+		ContentDir:     "content",
+		StaticDir:      "static",
+		PublicDir:      "public",
+		PreviewURL:     "/",
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: "1314",
+	})
+
+	header := testFileHeader(t, "image.png", []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+	})
+	media, err := SaveMediaFileForRuntime(runtime, header, "static", "")
+	if err != nil {
+		t.Fatalf("SaveMediaFileForRuntime() unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(media.RepoPath, "static/") {
+		t.Fatalf("RepoPath = %q, want static prefix", media.RepoPath)
+	}
+	if strings.HasPrefix(media.Path, "/static/") {
+		t.Fatalf("Path = %q, should not include static directory prefix", media.Path)
+	}
+	if !strings.HasPrefix(media.Path, "/image_") || !strings.HasSuffix(media.Path, ".png") {
+		t.Fatalf("Path = %q, want root-relative generated image path", media.Path)
+	}
+}
+
+func TestSaveMediaFileNormalizesLegacyAbsoluteMediaFolder(t *testing.T) {
+	repoPath := t.TempDir()
+	writeTestFile(t, filepath.Join(repoPath, "static", "admin", "config.yml"), `
+media_folder: /static/images
+public_folder: /images
+collections:
+  - name: posts
+    folder: content/posts
+`)
+	runtime := config.NewSiteRuntime(config.SiteConfig{
+		ID:             "test",
+		RepoPath:       repoPath,
+		Generator:      "hugo",
+		ContentDir:     "content",
+		StaticDir:      "static",
+		PublicDir:      "public",
+		PreviewURL:     "/",
+		HugoServerBind: "127.0.0.1",
+		HugoServerPort: "1314",
+	})
+
+	header := testFileHeader(t, "image.png", []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+	})
+	media, err := SaveMediaFileForRuntime(runtime, header, "static", "")
+	if err != nil {
+		t.Fatalf("SaveMediaFileForRuntime() unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(media.RepoPath, "static/images/") {
+		t.Fatalf("RepoPath = %q, want static/images prefix", media.RepoPath)
+	}
+	if !strings.HasPrefix(media.Path, "/images/") {
+		t.Fatalf("Path = %q, want /images prefix", media.Path)
 	}
 }
 
@@ -232,7 +351,7 @@ func TestValidateMediaRepoPath(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoPath, "static", "images"), 0755); err != nil {
 		t.Fatalf("create static directory: %v", err)
 	}
-	withMediaConfig(t, repoPath)
+	runtime := withMediaConfig(t, repoPath)
 
 	tests := []struct {
 		path string
@@ -249,7 +368,7 @@ func TestValidateMediaRepoPath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		if got := ValidateMediaRepoPath(tt.path); got != tt.want {
+		if got := ValidateMediaRepoPathForRuntime(runtime, tt.path); got != tt.want {
 			t.Errorf("ValidateMediaRepoPath(%q) = %v, want %v", tt.path, got, tt.want)
 		}
 	}

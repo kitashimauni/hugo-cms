@@ -11,37 +11,6 @@ import (
 
 const siteContextKey = "cms_site_id"
 
-func SiteScoped(handler gin.HandlerFunc) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		site, err := requestedSite(c)
-		if err != nil {
-			ErrorBadRequest(c, err.Error())
-			return
-		}
-		c.Set(siteContextKey, site.ID)
-
-		if err := services.WithSiteRuntime(site, func() error {
-			handler(c)
-			return nil
-		}); err != nil {
-			ErrorInternal(c, "Failed to apply site configuration: "+err.Error())
-			return
-		}
-	}
-}
-
-func RuntimeLocked(handler gin.HandlerFunc) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if err := services.WithSiteRuntimeLock(func() error {
-			handler(c)
-			return nil
-		}); err != nil {
-			ErrorInternal(c, "Failed to acquire site runtime lock: "+err.Error())
-			return
-		}
-	}
-}
-
 func requestedSite(c *gin.Context) (config.SiteConfig, error) {
 	siteID := ""
 	if c.Request != nil {

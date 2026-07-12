@@ -48,8 +48,9 @@ func isAllowedImageExtension(path string) bool {
 	return ok && strings.HasPrefix(mediaType, "image/")
 }
 
-func ValidateMediaRepoPath(repoPath string) bool {
-	return ValidateMediaRepoPathForRuntime(config.CurrentSiteRuntime(), repoPath)
+type staticMediaTarget struct {
+	repoRelDir string
+	publicBase string
 }
 
 func ValidateMediaRepoPathForRuntime(runtime config.SiteRuntime, repoPath string) bool {
@@ -59,15 +60,15 @@ func ValidateMediaRepoPathForRuntime(runtime config.SiteRuntime, repoPath string
 	normalized := filepath.ToSlash(filepath.Clean(repoPath))
 	staticPrefix := filepath.ToSlash(filepath.Clean(runtime.StaticDir)) + "/"
 	contentPrefix := filepath.ToSlash(filepath.Clean(runtime.ContentDir)) + "/"
+	staticMedia := staticMediaTargetForRuntime(runtime)
+	staticMediaPrefix := filepath.ToSlash(filepath.Clean(staticMedia.repoRelDir)) + "/"
 	if normalized == "." ||
-		(!strings.HasPrefix(normalized, staticPrefix) && !strings.HasPrefix(normalized, contentPrefix)) {
+		(!strings.HasPrefix(normalized, staticPrefix) &&
+			!strings.HasPrefix(normalized, staticMediaPrefix) &&
+			!strings.HasPrefix(normalized, contentPrefix)) {
 		return false
 	}
 	return SafeJoin(runtime.RepoPath, "", normalized) != ""
-}
-
-func ListMediaFiles(mode, articlePath string) ([]MediaFile, error) {
-	return ListMediaFilesForRuntime(config.CurrentSiteRuntime(), mode, articlePath)
 }
 
 func ListMediaFilesForRuntime(runtime config.SiteRuntime, mode, articlePath string) ([]MediaFile, error) {
@@ -78,8 +79,8 @@ func ListMediaFilesForRuntime(runtime config.SiteRuntime, mode, articlePath stri
 
 	// Determine search roots based on mode
 	if mode == "static" {
-		// List all files in repo/static/{StaticMediaDir}
-		staticDir := SafeJoin(runtime.RepoPath, runtime.StaticDir, runtime.StaticMediaDir)
+		staticMedia := staticMediaTargetForRuntime(runtime)
+		staticDir := SafeJoin(runtime.RepoPath, "", staticMedia.repoRelDir)
 		if staticDir == "" {
 			return nil, fmt.Errorf("%w: invalid static media directory", ErrInvalidMedia)
 		}
@@ -130,15 +131,12 @@ func ListMediaFilesForRuntime(runtime config.SiteRuntime, mode, articlePath stri
 				// Determine Usage Path
 				usagePath := ""
 				if mode == "static" {
-					// repo/static/sub/img.png -> /sub/img.png (relative to static)
-					// BUT usually Hugo static files are served at root.
-					// So if StaticMediaDir is "uploads", path is repo/static/uploads/img.png
-					// Usage path: /uploads/img.png
-					staticRel, relErr := filepath.Rel(filepath.Join(runtime.RepoPath, runtime.StaticDir), path)
+					staticMedia := staticMediaTargetForRuntime(runtime)
+					staticRel, relErr := filepath.Rel(filepath.Join(runtime.RepoPath, filepath.FromSlash(staticMedia.repoRelDir)), path)
 					if relErr != nil {
 						return relErr
 					}
-					usagePath = "/" + filepath.ToSlash(staticRel)
+					usagePath = joinPublicPath(staticMedia.publicBase, filepath.ToSlash(staticRel))
 				} else {
 					// content/posts/slug/img.png -> img.png (Page Bundle)
 					// Or if in subfolder src/img.png -> src/img.png
@@ -170,10 +168,6 @@ func ListMediaFilesForRuntime(runtime config.SiteRuntime, mode, articlePath stri
 	return files, nil
 }
 
-func SaveMediaFile(header *multipart.FileHeader, mode, articlePath string) (*MediaFile, error) {
-	return SaveMediaFileForRuntime(config.CurrentSiteRuntime(), header, mode, articlePath)
-}
-
 func SaveMediaFileForRuntime(runtime config.SiteRuntime, header *multipart.FileHeader, mode, articlePath string) (*MediaFile, error) {
 	unlock := LockRepositoryOperation()
 	defer unlock()
@@ -201,9 +195,10 @@ func SaveMediaFileForRuntime(runtime config.SiteRuntime, header *multipart.FileH
 	filename = fmt.Sprintf("%s_%d%s", name, time.Now().UnixNano(), ext)
 
 	var targetDir string
+	staticMedia := staticMediaTargetForRuntime(runtime)
 
 	if mode == "static" {
-		targetDir = SafeJoin(runtime.RepoPath, runtime.StaticDir, runtime.StaticMediaDir)
+		targetDir = SafeJoin(runtime.RepoPath, "", staticMedia.repoRelDir)
 	} else if mode == "content" {
 		// Content mode
 		if articlePath == "" {
@@ -274,11 +269,11 @@ func SaveMediaFileForRuntime(runtime config.SiteRuntime, header *multipart.FileH
 
 	usagePath := ""
 	if mode == "static" {
-		staticRel, relErr := filepath.Rel(filepath.Join(runtime.RepoPath, runtime.StaticDir), fullMediaPath)
+		staticRel, relErr := filepath.Rel(filepath.Join(runtime.RepoPath, filepath.FromSlash(staticMedia.repoRelDir)), fullMediaPath)
 		if relErr != nil {
 			return nil, relErr
 		}
-		usagePath = "/" + filepath.ToSlash(staticRel)
+		usagePath = joinPublicPath(staticMedia.publicBase, filepath.ToSlash(staticRel))
 	} else {
 		// Relative to bundle root
 		// targetDir is bundle + subDir
@@ -302,10 +297,6 @@ func SaveMediaFileForRuntime(runtime config.SiteRuntime, header *multipart.FileH
 	}, nil
 }
 
-func DeleteMediaFile(repoPath string) error {
-	return DeleteMediaFileForRuntime(config.CurrentSiteRuntime(), repoPath)
-}
-
 func DeleteMediaFileForRuntime(runtime config.SiteRuntime, repoPath string) error {
 	unlock := LockRepositoryOperation()
 	defer unlock()
@@ -318,4 +309,65 @@ func DeleteMediaFileForRuntime(runtime config.SiteRuntime, repoPath string) erro
 		return fmt.Errorf("%w: invalid media path", ErrInvalidMedia)
 	}
 	return os.Remove(fullMediaPath)
+}
+
+func staticMediaTargetForRuntime(runtime config.SiteRuntime) staticMediaTarget {
+	if runtime.StaticMediaDir != "" {
+		return staticMediaTarget{
+			repoRelDir: filepath.ToSlash(filepath.Join(runtime.StaticDir, runtime.StaticMediaDir)),
+			publicBase: "/" + strings.Trim(filepath.ToSlash(runtime.StaticMediaDir), "/"),
+		}
+	}
+
+	if cfg, err := GetCMSConfigForRuntime(runtime); err == nil && cfg.MediaFolder != "" {
+		repoRelDir := cleanMediaRepoRelDir(cfg.MediaFolder)
+		if repoRelDir == "" {
+			return staticMediaTarget{
+				repoRelDir: filepath.ToSlash(filepath.Clean(runtime.StaticDir)),
+				publicBase: "",
+			}
+		}
+		publicBase := cfg.PublicFolder
+		if publicBase == "" {
+			if repoRelDir == filepath.ToSlash(filepath.Clean(runtime.StaticDir)) {
+				publicBase = ""
+			} else {
+				publicBase = "/" + strings.Trim(filepath.ToSlash(filepath.Base(repoRelDir)), "/")
+			}
+		}
+		return staticMediaTarget{
+			repoRelDir: repoRelDir,
+			publicBase: cleanPublicPath(publicBase),
+		}
+	}
+
+	return staticMediaTarget{
+		repoRelDir: filepath.ToSlash(filepath.Clean(runtime.StaticDir)),
+		publicBase: "",
+	}
+}
+
+func joinPublicPath(base, rel string) string {
+	rel = strings.Trim(filepath.ToSlash(rel), "/")
+	base = cleanPublicPath(base)
+	if base == "" {
+		return "/" + rel
+	}
+	if rel == "" {
+		return base
+	}
+	return base + "/" + rel
+}
+
+func cleanMediaRepoRelDir(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	path = filepath.ToSlash(path)
+	path = strings.TrimLeft(path, "/")
+	if strings.Contains(path, ":") {
+		return ""
+	}
+	return cleanConfigPath(path)
 }

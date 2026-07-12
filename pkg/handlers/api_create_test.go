@@ -86,7 +86,8 @@ collections:
 func TestCollectionFolderWithinContentRejectsOutsideFolder(t *testing.T) {
 	restoreArticleCreateConfig(t, t.TempDir(), "src", "static")
 
-	if _, err := services.CollectionFolderWithinContent(models.Collection{Folder: "assets/posts"}); err == nil {
+	runtime := config.CurrentSiteRuntime()
+	if _, err := services.CollectionFolderWithinContentForRuntime(runtime, models.Collection{Folder: "assets/posts"}); err == nil {
 		t.Fatal("collectionFolderWithinContent() should reject folders outside configured content dir")
 	}
 }

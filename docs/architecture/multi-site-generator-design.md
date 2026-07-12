@@ -4,7 +4,7 @@
 
 ## ステータス
 
-段階実装中。現在のHugo向け動作を維持しながら、Site Registry、site-aware API、site別preview processを導入済み。記事、ファイル、メディア、Gitの主要サービスは`SiteRuntime`を明示的に受け取る形へ移行し、handler層でprocess-wide runtimeを一時変更する範囲を縮小した。
+段階実装中。現在のHugo向け動作を維持しながら、Site Registry、site-aware API、site別preview processを導入済み。記事、ファイル、メディア、Gitの主要サービスは`SiteRuntime`を明示的に受け取る形へ移行し、handler層でprocess-wide runtimeを一時変更するbridgeは撤去した。サイトリポジトリ直下の`.homecms.yml`も最小対応済み。
 
 ## 背景
 
@@ -199,7 +199,7 @@ preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:
 
 ### Site Runtime Bridge
 
-既存サービスの一部には`config.RepoPath`などのprocess-wide runtime値を参照する互換ラッパーが残っている。新しいsite-aware APIの主要経路では、HTTP handler層で選択サイトを`SiteRuntime`へ解決し、その値をサービスへ明示的に渡す。
+新しいsite-aware APIの主要経路では、HTTP handler層で選択サイトを`SiteRuntime`へ解決し、その値をサービスへ明示的に渡す。以前のようにリクエスト処理中だけ`config.RepoPath`などのprocess-wide runtime値を書き換えるbridgeは撤去済みである。
 
 `SiteRuntime`は、Site Registry由来の`SiteConfig`に、現在グローバルで管理している実行時設定（Git設定、App URL、解決済みPublicPathなど）を合わせたサービス向けの値オブジェクトである。新規または改修するサービスは、`SiteConfig`やprocess-wide globalsではなく`SiteRuntime`を受け取る。
 
@@ -208,10 +208,9 @@ preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:
 - generator adapterのpreview/build/createは`SiteRuntime`を明示的に受け取り、Hugo/Eleventyコマンド生成では`config.RepoPath`等のprocess-wide値を直接読まない。
 - 記事一覧、記事保存、記事作成、差分、削除、メディア、Git sync/publish、スニペット読み込みは`SiteRuntime`を明示的に受け取る経路を使う。
 - 記事キャッシュは`repo_path + content_dir`でkey分割する。
-- process-wide runtimeを読むscope外処理はruntime lockで保護する。
-- preview adapter mapのlockはmapアクセス中だけ保持し、preview process操作やruntime bridge呼び出し中には保持しない。`/ready`などがruntime lockを先に取るため、lock順序の反転を避ける。
+- preview adapter mapのlockはmapアクセス中だけ保持し、preview process操作中には保持しない。
 
-今後の最終形は、互換ラッパーとprocess-wide runtime mutationに依存する残りの経路を減らし、サービス単体テストも`SiteRuntime`を直接渡す形へ寄せることである。
+今後の最終形は、process-wide runtime値を読むdefault site向け起動・readiness経路も必要に応じて`SiteRuntime`生成へ寄せ、テストを含めてグローバル設定への依存をさらに減らすことである。
 
 ## ジェネレーターごとの差異
 
@@ -363,7 +362,7 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 - 現在のHugo起動・ビルド処理を`HugoAdapter`へ移す。
 - 動作とAPIは変更しない。
 
-`pkg/services/generator.go`に共通インターフェースと互換ラッパーを置き、`pkg/services/hugo_adapter.go`へHugo固有処理を分離した。プレビューのプロセス状態は`ProcessManager`が終了を待ってから更新する。
+`pkg/services/generator.go`に共通インターフェースを置き、`pkg/services/hugo_adapter.go`へHugo固有処理を分離した。プレビューのプロセス状態は`ProcessManager`が終了を待ってから更新する。
 
 ### Phase 2: マルチサイト対応（一部実装）
 
@@ -386,7 +385,6 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 
 - `/admin/sites/{siteID}/api/...`形式のpath-based site API
 - サイトごとのmise実行
-- process-wide runtime互換ラッパーの完全撤去
 
 ### Phase 3: コンテンツとメディアの共通化
 
@@ -395,7 +393,7 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 - Front Matter codecを分離する。
 - プレビューURL解決をアダプター化する。
 
-`CONTENT_DIR`、`STATIC_DIR`、`PUBLIC_DIR`を追加し、記事、メディア、Hugo build/newの主要パスを設定値へ寄せた。`.homecms.yml`とプレビューURL解決の完全なアダプター化は未実装。
+`CONTENT_DIR`、`STATIC_DIR`、`PUBLIC_DIR`を追加し、記事、メディア、Hugo build/newの主要パスを設定値へ寄せた。`.homecms.yml`は最小対応済みで、`content.collections`を既存のCMS config形式へ変換し、`media.folder`/`media.public_path`をstatic media modeの保存先・公開パスとして使える。プレビューURL解決の完全なアダプター化は未実装。
 
 ### Phase 4: 実行環境の隔離
 

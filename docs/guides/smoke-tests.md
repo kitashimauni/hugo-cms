@@ -66,8 +66,10 @@ sites:
 - 切り替え後、記事一覧が選択サイトの内容になる
 - `/admin/api/articles?site=<id>` が対象サイトの内容を返す
 - `/admin/api/config?site=<id>` の `_cms.site_id` が対象サイトになる
+- `.homecms.yml`があるサイトでは`/admin/api/config?site=<id>` の `_cms.config_source` が `.homecms.yml` になる
 - 記事の作成、保存、Diff、削除が選択サイトの`content_dir`配下だけを対象にする
 - メディア一覧、アップロード、削除、raw配信が選択サイトの`static_dir`/記事別メディア設定だけを対象にする
+- `static_media_dir`未指定かつ`.homecms.yml`の`media.folder`があるサイトでは、そのフォルダへstatic media uploadされ、`media.public_path`がMarkdown挿入パスに使われる
 - スニペットが選択サイトの`snippet_paths`または`<repo_path>/.vscode/md.code-snippets`から読み込まれる
 - Preview iframe が `/admin/preview/<site_id>/...` を参照する
 - 初回previewでも、preview process起動直後のport未listenによる一時的な`502`にならない
@@ -105,4 +107,4 @@ sites:
 
 - preview bind/portはサイト間で重複させないでください。重複したSite Registryは起動時に拒否されます。
 - preview processはCMSサーバー上でサイトのコードを実行します。Site Registryには信頼済みリポジトリだけを登録してください。
-- 主要なsite-aware APIは`SiteRuntime`を明示的にサービスへ渡します。互換ラッパーやscope外のruntime readsが残る経路では、default siteと選択siteが混ざらないことを重点的に確認してください。
+- 主要なsite-aware APIは`SiteRuntime`を明示的にサービスへ渡します。default site向け起動・readiness経路と選択siteのAPI結果が混ざらないことを重点的に確認してください。
