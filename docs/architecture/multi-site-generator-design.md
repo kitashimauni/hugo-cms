@@ -171,6 +171,8 @@ type GeneratorAdapter interface {
 
 未登録の任意コマンドをリポジトリ設定から直接実行してはならない。標準アダプターで対応できないサイト向けのカスタムコマンドは、管理者の明示承認と隔離環境を必須とする。
 
+generator processの作業ディレクトリは`cmd.Dir=repo_path`で一度だけ固定する。relativeな`repo_path`を子process内で再解決しないよう、miseは`mise exec -C . -- ...`、Hugoは`--source .`で実行する。Eleventyのpackage managerとHugoの`new content`も同じ作業ディレクトリを使う。
+
 ### Preview Process Supervisor
 
 単一グローバルなHugoプロセスではなく、サイトIDをキーにしたプロセス管理を行う。

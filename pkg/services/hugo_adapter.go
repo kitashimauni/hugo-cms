@@ -73,7 +73,7 @@ func (*HugoAdapter) Build(runtime config.SiteRuntime) (string, error) {
 func hugoServerArgs(runtime config.SiteRuntime) []string {
 	return []string{
 		"server",
-		"--source", runtime.RepoPath,
+		"--source", ".",
 		"--contentDir", runtime.ContentDir,
 		"--bind", runtime.HugoServerBind,
 		"--port", runtime.HugoServerPort,
@@ -87,7 +87,7 @@ func hugoServerArgs(runtime config.SiteRuntime) []string {
 
 func hugoBuildArgs(runtime config.SiteRuntime) []string {
 	return []string{
-		"--source", runtime.RepoPath,
+		"--source", ".",
 		"--contentDir", runtime.ContentDir,
 		"--destination", runtime.PublicDir,
 		"--baseURL", runtime.AppURL + runtime.PreviewURL,

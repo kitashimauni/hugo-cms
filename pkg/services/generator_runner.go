@@ -33,7 +33,7 @@ func generatorCommandContextWithEnv(ctx context.Context, runtime config.SiteRunt
 
 func generatorCommandSpec(runtime config.SiteRuntime, name string, args ...string) (string, []string) {
 	if useMiseRuntime(runtime) {
-		miseArgs := []string{"exec", "-C", runtime.RepoPath, "--", name}
+		miseArgs := []string{"exec", "-C", ".", "--", name}
 		miseArgs = append(miseArgs, args...)
 		return "mise", miseArgs
 	}
