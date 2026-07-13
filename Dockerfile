@@ -14,6 +14,19 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 
 FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
 
+ARG HUGO_CMS_UID=10001
+ARG HUGO_CMS_GID=10001
+RUN case "${HUGO_CMS_UID}" in \
+        ""|*[!0-9]*) echo "HUGO_CMS_UID must be a positive integer" >&2; exit 1 ;; \
+        *[1-9]*) : ;; \
+        *) echo "HUGO_CMS_UID must be a positive integer" >&2; exit 1 ;; \
+    esac \
+    && case "${HUGO_CMS_GID}" in \
+        ""|*[!0-9]*) echo "HUGO_CMS_GID must be a positive integer" >&2; exit 1 ;; \
+        *[1-9]*) : ;; \
+        *) echo "HUGO_CMS_GID must be a positive integer" >&2; exit 1 ;; \
+    esac
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash \
@@ -32,11 +45,7 @@ RUN curl -fsSL https://mise.run \
     | MISE_VERSION="${MISE_VERSION}" MISE_INSTALL_PATH=/usr/local/bin/mise sh \
     && chmod 0755 /usr/local/bin/mise
 
-ARG HUGO_CMS_UID=10001
-ARG HUGO_CMS_GID=10001
-RUN case "${HUGO_CMS_UID}" in ""|*[!0-9]*|0) echo "HUGO_CMS_UID must be a positive integer" >&2; exit 1 ;; esac \
-    && case "${HUGO_CMS_GID}" in ""|*[!0-9]*|0) echo "HUGO_CMS_GID must be a positive integer" >&2; exit 1 ;; esac \
-    && if ! getent group "${HUGO_CMS_GID}" >/dev/null; then \
+RUN if ! getent group "${HUGO_CMS_GID}" >/dev/null; then \
         groupadd --gid "${HUGO_CMS_GID}" hugo-cms; \
     fi \
     && if ! getent passwd "${HUGO_CMS_UID}" >/dev/null; then \

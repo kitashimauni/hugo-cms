@@ -75,6 +75,23 @@ jobs:
           docker compose config --format json \
             | jq -e '.services["hugo-cms"].ports[0].host_ip == "127.0.0.1"'
 
+      - name: Reject root-equivalent runtime IDs
+        run: |
+          if docker build \
+            --build-arg HUGO_CMS_UID=00 \
+            --build-arg HUGO_CMS_GID=27 \
+            --tag hugo-cms:invalid-uid .; then
+            echo "zero-padded root UID was accepted" >&2
+            exit 1
+          fi
+          if docker build \
+            --build-arg HUGO_CMS_UID=1000 \
+            --build-arg HUGO_CMS_GID=000 \
+            --tag hugo-cms:invalid-gid .; then
+            echo "zero-padded root GID was accepted" >&2
+            exit 1
+          fi
+
       - name: Build image
         run: docker compose build hugo-cms
 

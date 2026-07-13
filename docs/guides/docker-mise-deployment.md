@@ -89,7 +89,7 @@ sed -i "s/^HUGO_CMS_UID=.*/HUGO_CMS_UID=$(id -u)/" .env
 sed -i "s/^HUGO_CMS_GID=.*/HUGO_CMS_GID=$(id -g)/" .env
 ```
 
-UID/GIDを変更した場合はimageを再buildしてください。`root`相当の`0`は指定しないでください。Docker Desktopでは通常、配布時の既定値を利用できます。
+UID/GIDを変更した場合はimageを再buildしてください。`root`相当の`0`は、`00`などのゼロ埋め表現を含めて指定できません。Docker Desktopでは通常、配布時の既定値を利用できます。
 
 指定したUID/GIDがbase image内ですでに使われている場合、imageはその数値IDを再利用します。container内のuser/group名ではなく、`HUGO_CMS_UID`と`HUGO_CMS_GID`の数値が実行権限の基準です。
 
