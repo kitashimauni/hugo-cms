@@ -1,78 +1,84 @@
 # Docker + mise デプロイガイド
 
-新規サーバーでは、Hugo CMS本体・mise・Hugo/Nodeなどのサイト別ツールチェーンをDocker内に閉じ込める構成を推奨します。
+新規サーバーでは、CMS本体とサイト別ツールチェーンをDocker内で実行する構成を推奨します。ホストOSへHugo、Node.js、miseをインストールする必要はありません。
 
-この構成では、ホストOSにHugoやmiseを直接インストールしません。サイトリポジトリごとの `mise.toml` / `.mise.toml` / `.tool-versions` をコンテナ内のmiseが読み、HugoやNode.jsを `/data/mise` volumeへインストールします。
+この構成では、アプリケーションの起動とツール準備を分離します。
 
-## 方針
+- `hugo-cms` は非rootでCMSだけを起動し、`mise install`や所有者変更を行わない
+- `tool-bootstrap` は`tools` profileのone-shot serviceとして、管理者が明示したときだけ実行する
+- `HUGO_CMS_REPOS`にUnixの`:`区切りで列挙したリポジトリだけを準備する
+- tool bootstrapにはGitHub OAuthやセッションの秘密情報を渡さない
+- miseのtools/cacheは`mise-data` named volumeへ保存する
+- CMSはホストのloopbackだけに公開し、外部公開はリバースプロキシ経由にする
 
-- CMSコンテナ内に `mise` を同梱する
-- generator実行は `GENERATOR_RUNTIME=mise` で `mise exec -C <repo> -- ...` 経由にする
-- サイトリポジトリは `/data/repos` にmountする
-- miseのtools/cacheは `/data/mise` にmountする
-- ホスト上では `mise` を実行しない
+## セキュリティ境界
 
-## サーバー側の準備
+サイトリポジトリはMarkdown置き場ではなく、実行コードとして扱います。mise設定は環境変数やhookを定義でき、Node.js依存のinstall scriptもコードを実行できます。
 
-```bash
-sudo mkdir -p /opt
-sudo chown "$USER:$USER" /opt
-```
+Composeのruntimeと`tool-bootstrap`は次の境界を守ります。
 
-DockerとDocker Compose pluginを用意してください。
+- `/data/repos`を一括探索せず、`HUGO_CMS_REPOS`の明示allowlistだけを処理する
+- appのgenerator runtimeとbootstrapがtrustできるpathを同じallowlistへ制限する
+- `.env`を補間に利用しても、`tool-bootstrap`コンテナには`GITHUB_CLIENT_SECRET`、`SESSION_SECRET`などのapp環境変数を渡さない
+- appコンテナは依存準備を行わず、準備失敗によってCMS自体を再起動ループにしない
+
+allowlistへ追加する前に、リポジトリの`mise.toml`、`package.json`、lockfile、install scriptをレビューしてください。
+
+## 前提条件
+
+- Docker Engine
+- Docker Compose plugin 2.x
+- Git
+- GitHub OAuth App
 
 ```bash
 docker version
 docker compose version
 ```
 
-## CMSリポジトリを配置
-
-CMSリポジトリをサーバーへcloneします。rootの `compose.yml` はローカルbuild前提なので、GHCRなどのimage配布を待たずに使えます。
+## サーバーへ配置
 
 ```bash
+sudo mkdir -p /opt
+sudo chown "$USER:$USER" /opt
 git clone https://github.com/kitashimauni/hugo-cms.git /opt/hugo-cms
 cd /opt/hugo-cms
-mkdir -p repos mise-data
+mkdir -p repos
 cp deploy/.env.example .env
 ```
 
-## サイトリポジトリをclone
+`.env`は必須です。Composeは設定ファイルがない状態では起動しません。
+
+## コンテナUID/GID
+
+appはbuild時に指定したUID/GIDの非rootユーザーで動作し、bind mountしたリポジトリを`chown`しません。Linuxではホスト上の所有者に合わせます。
+
+```bash
+sed -i "s/^HUGO_CMS_UID=.*/HUGO_CMS_UID=$(id -u)/" .env
+sed -i "s/^HUGO_CMS_GID=.*/HUGO_CMS_GID=$(id -g)/" .env
+```
+
+UID/GIDを変更した場合はimageを再buildしてください。`root`相当の`0`は指定しないでください。Docker Desktopでは通常、配布時の既定値を利用できます。
+
+サイトリポジトリはappユーザーが記事やGit metadataを書き込める権限で配置します。コンテナは権限を自動修復しないため、permission errorはホスト側のUID/GIDとディレクトリ権限を確認してください。
+
+## サイトリポジトリ
 
 ```bash
 git clone https://github.com/kitashimauni/techblog.git repos/techblog
-```
-
-remote URLはHTTPS形式にしてください。
-
-```bash
 git -C repos/techblog remote get-url origin
 ```
 
-期待値:
+Git remoteはCMSがOAuth tokenを安全に利用できる`https://github.com/owner/repository.git`形式にしてください。
 
-```text
-https://github.com/kitashimauni/techblog.git
-```
-
-## サイトリポジトリに `mise.toml` を置く
-
-Hugoサイトの例:
+Hugoサイトの`mise.toml`例:
 
 ```toml
 [tools]
 hugo = "0.148.2"
 ```
 
-Node.jsも必要なサイトでは追加します。
-
-```toml
-[tools]
-hugo = "0.148.2"
-node = "22"
-```
-
-Eleventyサイトでは、`node` と使用するpackage managerをサイト側で固定してください。
+EleventyサイトではNode.jsと使用するpackage managerを固定し、`package.json`と対応するlockfileをコミットします。
 
 ```toml
 [tools]
@@ -80,18 +86,17 @@ node = "22"
 pnpm = "10"
 ```
 
-そのうえで、Eleventy本体やプラグインは `package.json` とlockfileで固定します。
+## `.env`
 
-`.env` の最小例:
+単一Hugoサイトの例です。
 
 ```env
 APP_URL=https://cms.example.com
-PORT=8080
 GIN_MODE=release
 
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
-SESSION_SECRET=...
+SESSION_SECRET=32文字以上のランダムな値
 ALLOWED_GITHUB_USERS=kitashimauni
 ALLOW_ALL_GITHUB_USERS=false
 GITHUB_OAUTH_SCOPES=public_repo
@@ -103,6 +108,14 @@ CONTENT_DIR=content
 STATIC_DIR=static
 PUBLIC_DIR=public
 
+# tool-bootstrapが処理してよいリポジトリ。Unixの":"区切り。
+HUGO_CMS_REPOS=/data/repos/techblog
+
+# ホスト側のloopback公開ポート。コンテナ内PORTは常に8080。
+HUGO_CMS_HOST_PORT=8080
+HUGO_CMS_UID=1000
+HUGO_CMS_GID=1000
+
 HUGO_SERVER_BIND=127.0.0.1
 HUGO_SERVER_PORT=1314
 
@@ -110,57 +123,72 @@ GIT_REMOTE=origin
 GIT_BRANCH=main
 ```
 
-private repositoryを使う場合は次にします。
+private repositoryには`GITHUB_OAUTH_SCOPES=repo`を使用します。スコープを変更した利用者は再ログインが必要です。
 
-```env
-GITHUB_OAUTH_SCOPES=repo
-```
+`PORT`はComposeがappコンテナ内で`8080`に固定します。ホスト側のポートだけを`HUGO_CMS_HOST_PORT`で変更します。たとえば`HUGO_CMS_HOST_PORT=18080`なら、`127.0.0.1:18080`からコンテナの8080へ接続します。
 
-## 起動
+## ツールとNode.js依存関係の準備
 
-```bash
-docker compose up -d --build
-```
-
-entrypointは起動前に次を実行します。
-
-1. `/data/repos` と `/data/mise` の権限をコンテナ内ユーザーへ合わせる
-2. `REPO_PATH` と `/data/repos/*` を検出する
-3. `mise.toml` / `.mise.toml` / `.tool-versions` があるrepoで `mise install` を実行する
-4. CMSを起動する
-
-ログ確認:
+appを起動する前に、secret-freeなone-shot serviceを明示実行します。
 
 ```bash
-docker compose logs -f
+docker compose build
+docker compose --profile tools run --rm tool-bootstrap
 ```
 
-miseの状態確認:
+`tool-bootstrap`は`HUGO_CMS_REPOS`をUnixの`:`で分割し、空要素、相対パス、`/data/repos`外のパス、存在しないディレクトリを拒否します。カンマや空白区切り、自動globは使用できません。
+
+各allowlist対象では、mise設定を明示的にtrustして`mise install`を実行します。Node.jsプロジェクトではlockfileに応じて再現可能な依存インストールも実行します。
+
+| lockfile | 準備処理 |
+|---|---|
+| `package-lock.json` / `npm-shrinkwrap.json` | `npm ci` |
+| `pnpm-lock.yaml` | frozen lockfileを使った`pnpm install` |
+| `yarn.lock` | immutable/frozen lockfileを使った`yarn install` |
+| `bun.lock` / `bun.lockb` | frozen lockfileを使った`bun install` |
+
+Node.jsプロジェクトには対応するlockfileをちょうど1種類だけコミットしてください。`package.json`があるのに対応lockfileがない場合や、複数種類を混在させた場合は、意図しない依存解決を避けるためbootstrapが失敗します。エラーやrepo設定を修正したあとは同じコマンドを再実行できます。named volumeと各repoの依存ディレクトリは再利用されます。
+
+サイトのmise設定、lockfile、package manager、依存関係を更新したときも、appを再起動する前にこのone-shotを再実行します。app起動時に自動bootstrapは行われません。
+
+## appの起動
 
 ```bash
-docker compose exec hugo-cms mise ls
+docker compose up -d hugo-cms
+docker compose logs -f hugo-cms
+```
+
+状態確認:
+
+```bash
+curl --fail http://127.0.0.1:8080/health
+curl --fail http://127.0.0.1:8080/ready
 docker compose exec hugo-cms mise exec -C /data/repos/techblog -- hugo version
 ```
 
+ホストの公開先は`127.0.0.1`固定です。外部からはNginxやCaddyでHTTPS終端し、loopbackへproxyしてください。
+`HUGO_CMS_HOST_PORT`を既定値から変更した場合は、上の確認URLも同じポートへ置き換えてください。
+
 ## 複数サイト
 
-`sites.yml` を使う場合は、`compose.yml` のbind mountを有効化します。
+`sites.yml`を使う場合は、`compose.yml`のread-only bind mountを有効にします。
 
 ```yaml
 volumes:
   - ./repos:/data/repos
-  - ./mise-data:/data/mise
+  - mise-data:/data/mise
   - ./sites.yml:/app/sites.yml:ro
 ```
 
-`.env`:
+`.env`では全対象を明示列挙します。
 
 ```env
 SITES_CONFIG_PATH=/app/sites.yml
 GENERATOR_RUNTIME=mise
+HUGO_CMS_REPOS=/data/repos/techblog:/data/repos/docs
 ```
 
-`sites.yml`:
+`sites.yml`例:
 
 ```yaml
 default_site: techblog
@@ -186,46 +214,49 @@ sites:
     hugo_server_port: "1315"
 ```
 
-各サイトのpreview portは重複させないでください。
+各サイトのpreview portは重複させないでください。Site Registryへ登録しただけではbootstrap対象になりません。実行を承認したrepoだけを`HUGO_CMS_REPOS`にも追加します。
 
-## 運用ルール
+## 更新
 
-- ホストでは `mise` を実行しない
-- `mise install` や `hugo version` の確認は `docker compose exec hugo-cms ...` で行う
-- `mise-data` volumeは削除しない。削除すると次回起動時にtoolchainを再インストールします
-- `mise.toml` は信頼済みサイトリポジトリにだけ置く
+```bash
+git pull --ff-only
+docker compose build --pull
+docker compose --profile tools run --rm tool-bootstrap
+docker compose up -d hugo-cms
+```
+
+appだけの更新でもbootstrapを再実行して問題ありません。サイトの実行コードを再評価したくない場合は、変更内容を確認したうえでappだけを再作成します。
+
+`mise-data`はnamed volumeです。通常の`docker compose down`では残ります。`docker compose down --volumes`はtoolchainを削除するため、意図した初期化時だけ実行してください。
 
 ## トラブルシューティング
 
-### `hugo: command not found`
+### `tool-bootstrap`が失敗する
 
-対象repoの `mise.toml` にHugoが定義されているか確認してください。
-
-```bash
-docker compose exec hugo-cms cat /data/repos/techblog/mise.toml
-docker compose exec hugo-cms mise exec -C /data/repos/techblog -- hugo version
-```
-
-### `mise install` が失敗する
-
-ログを確認します。
+one-shotの出力を確認します。
 
 ```bash
-docker compose logs hugo-cms
+docker compose --profile tools run --rm tool-bootstrap
 ```
 
-`/data/mise` が書き込み可能か確認します。
+- `HUGO_CMS_REPOS`がUnixの`:`区切りか
+- 各値が`/data/repos/<name>`の絶対パスか
+- repoのmise設定とlockfileをレビュー済みか
+- host側repoとnamed volumeへ指定UID/GIDで書き込めるか
+- 対応するNode.js lockfileが1種類だけコミットされているか
+
+### `permission denied`
+
+appはbind mountを`chown`しません。build argsとホスト所有者を比較します。
 
 ```bash
-docker compose exec hugo-cms sh -lc 'touch /data/mise/.write-test && rm /data/mise/.write-test'
+id -u
+id -g
+docker compose run --rm --no-deps --entrypoint id hugo-cms
 ```
 
-### pnpm/yarn/bunが見つからない
+値を修正した場合は`docker compose build --no-cache`でappユーザーを作り直します。
 
-Eleventyサイトでnpm以外のlockfileを使う場合、サイトの `mise.toml` に対応するpackage managerも追加してください。
+### `hugo`またはpackage managerが見つからない
 
-```toml
-[tools]
-node = "22"
-pnpm = "10"
-```
+対象repoが`HUGO_CMS_REPOS`に含まれ、そのrepoの`mise.toml`に必要なtoolが固定されていることを確認し、bootstrapを再実行します。app再起動だけではtoolchainは更新されません。

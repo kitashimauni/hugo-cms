@@ -77,6 +77,8 @@ sudo systemctl start hugo-cms
 
 新規サーバーではDockerデプロイを推奨します。HugoやNode.jsのバージョンはホストへ直接入れず、コンテナ内のmiseがサイトリポジトリごとの`mise.toml`を読んで管理します。
 
+app起動時にはtoolchainを変更しません。管理者が明示したリポジトリだけを、秘密情報を持たない`tool-bootstrap` one-shot serviceで準備してからCMSを起動します。
+
 詳細は [Docker + mise デプロイガイド](docker-mise-deployment.md) を参照してください。
 
 #### compose.yml
@@ -84,25 +86,42 @@ sudo systemctl start hugo-cms
 ```yaml
 services:
   hugo-cms:
-    build: .
+    build:
+      context: .
+      args:
+        HUGO_CMS_UID: ${HUGO_CMS_UID:-10001}
+        HUGO_CMS_GID: ${HUGO_CMS_GID:-10001}
     image: hugo-cms:local
     ports:
-      - "8080:8080"
+      - "127.0.0.1:${HUGO_CMS_HOST_PORT:-8080}:8080"
     env_file:
-      - .env
+      - path: .env
+        required: true
     volumes:
       - ./repos:/data/repos
-      - ./mise-data:/data/mise
+      - mise-data:/data/mise
     environment:
       GENERATOR_RUNTIME: mise
+      PORT: "8080"
+      HUGO_CMS_REPOS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
+      MISE_TRUSTED_CONFIG_PATHS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
     restart: unless-stopped
+
+volumes:
+  mise-data:
 ```
 
-#### 起動
+appはbuild ARGで作成した非root UID/GIDで動作し、bind mountを`chown`しません。ホスト公開はloopbackだけです。`PORT`はコンテナ内で`8080`に固定し、ホスト側は`HUGO_CMS_HOST_PORT`で変更します。rootの`compose.yml`には、同じimageとvolumeを使いappの`env_file`を持たない`tool-bootstrap` serviceも定義されています。
+
+#### ツール準備と起動
 
 ```bash
-docker compose up -d
+docker compose build
+docker compose --profile tools run --rm tool-bootstrap
+docker compose up -d hugo-cms
 ```
+
+`HUGO_CMS_REPOS`はUnixの`:`区切りの明示allowlistです。bootstrapは列挙されたrepoだけをtrustして`mise install`を行い、Node.jsサイトではlockfileに応じたfrozen installも実行します。appのGitHub OAuthやセッション秘密情報はbootstrapへ渡しません。
 
 ### 3. リバースプロキシ設定
 
@@ -163,7 +182,7 @@ cms.example.com {
 
 ## 本番環境の設定
 
-### 環境変数
+### バイナリ/systemd環境の環境変数
 
 ```env
 # 必須
@@ -183,6 +202,8 @@ REPO_PATH=/opt/hugo-cms/repo
 # Gin
 GIN_MODE=release
 ```
+
+Dockerでは`REPO_PATH=/data/repos/<site>`を使用し、コンテナ内`PORT=8080`はComposeで固定します。host port、UID/GID、bootstrap allowlistを含む完全な例は[Docker + mise デプロイガイド](docker-mise-deployment.md)を参照してください。
 
 ### GitHub OAuth App設定
 
@@ -218,7 +239,7 @@ git -C repo remote set-url origin https://github.com/username/hugo-site.git
 journalctl -u hugo-cms -f
 
 # Dockerの場合
-docker-compose logs -f hugo-cms
+docker compose logs -f hugo-cms
 ```
 
 ### ヘルスチェック
@@ -278,9 +299,13 @@ sudo systemctl start hugo-cms
 ### Dockerの更新
 
 ```bash
-docker-compose pull
-docker-compose up -d --build
+git pull --ff-only
+docker compose build --pull
+docker compose --profile tools run --rm tool-bootstrap
+docker compose up -d hugo-cms
 ```
+
+サイトのmise設定、lockfile、package manager、依存関係を更新した場合も、appを再作成する前に`tool-bootstrap`を再実行します。appの再起動だけではtoolchainやNode.js依存は変更されません。
 
 ## トラブルシューティング
 

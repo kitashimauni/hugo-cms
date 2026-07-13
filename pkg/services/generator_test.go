@@ -295,12 +295,20 @@ func TestGeneratorProcessEnvironmentDropsSecrets(t *testing.T) {
 	t.Setenv("SESSION_SECRET", "super-secret")
 	t.Setenv("GITHUB_CLIENT_SECRET", "oauth-secret")
 	t.Setenv("PATH", "test-path")
+	t.Setenv("MISE_TRUSTED_CONFIG_PATHS", "/data/repos/techblog")
 
 	env := generatorProcessEnvironment()
+	foundTrustedPaths := false
 	for _, entry := range env {
 		if entry == "SESSION_SECRET=super-secret" || entry == "GITHUB_CLIENT_SECRET=oauth-secret" {
 			t.Fatalf("generatorProcessEnvironment leaked secret entry %q", entry)
 		}
+		if entry == "MISE_TRUSTED_CONFIG_PATHS=/data/repos/techblog" {
+			foundTrustedPaths = true
+		}
+	}
+	if !foundTrustedPaths {
+		t.Fatal("generatorProcessEnvironment omitted MISE_TRUSTED_CONFIG_PATHS")
 	}
 }
 

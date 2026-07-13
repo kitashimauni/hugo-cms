@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.24-bookworm@sha256:1a6d4452c65dea36aac2e2d606b01b4a029ec90cc1ae53890540ce6173ea77ac AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -12,7 +12,7 @@ ARG TARGETARCH=amd64
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -buildvcs=false -ldflags="-s -w" -o /out/hugo-cms .
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -20,7 +20,6 @@ RUN apt-get update \
         ca-certificates \
         curl \
         git \
-        gosu \
         gzip \
         tini \
         tar \
@@ -28,35 +27,37 @@ RUN apt-get update \
         xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://mise.run | sh \
-    && mv /root/.local/bin/mise /usr/local/bin/mise \
-    && chmod +x /usr/local/bin/mise
+ARG MISE_VERSION=v2026.7.5
+RUN curl -fsSL https://mise.run \
+    | MISE_VERSION="${MISE_VERSION}" MISE_INSTALL_PATH=/usr/local/bin/mise sh \
+    && chmod 0755 /usr/local/bin/mise
 
-RUN groupadd --system --gid 10001 hugo-cms \
-    && useradd --system --uid 10001 --gid hugo-cms \
+ARG HUGO_CMS_UID=10001
+ARG HUGO_CMS_GID=10001
+RUN groupadd --gid "${HUGO_CMS_GID}" hugo-cms \
+    && useradd --uid "${HUGO_CMS_UID}" --gid hugo-cms \
         --home-dir /home/hugo-cms --create-home --shell /usr/sbin/nologin hugo-cms
 
 WORKDIR /app
 COPY --from=builder /out/hugo-cms /app/hugo-cms
 COPY static /app/static
 COPY templates /app/templates
-COPY deploy/docker-entrypoint.sh /usr/local/bin/hugo-cms-entrypoint
+COPY deploy/docker-tool-bootstrap.sh /usr/local/bin/docker-tool-bootstrap
 
-RUN chmod +x /app/hugo-cms /usr/local/bin/hugo-cms-entrypoint \
+RUN chmod 0755 /app/hugo-cms /usr/local/bin/docker-tool-bootstrap \
     && mkdir -p /data/repos /data/mise /home/hugo-cms \
-    && chown -R hugo-cms:hugo-cms /app /data /home/hugo-cms
+    && chown -R hugo-cms:hugo-cms /data/mise /home/hugo-cms
 
 ENV HOME=/home/hugo-cms \
     MISE_DATA_DIR=/data/mise \
     MISE_CACHE_DIR=/data/mise/cache \
-    MISE_TRUSTED_CONFIG_PATHS=/data/repos \
     PATH=/data/mise/shims:/usr/local/bin:/usr/bin:/bin \
     GIN_MODE=release \
     PORT=8080 \
     GENERATOR_RUNTIME=mise
 
-VOLUME ["/data"]
 EXPOSE 8080
 
-ENTRYPOINT ["tini", "--", "hugo-cms-entrypoint"]
+USER hugo-cms:hugo-cms
+ENTRYPOINT ["tini", "--"]
 CMD ["/app/hugo-cms"]
