@@ -1,0 +1,25 @@
+services:
+  hugo-cms:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hugo-cms:local
+    container_name: hugo-cms
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      GIN_MODE: release
+      GENERATOR_RUNTIME: mise
+      HOME: /home/hugo-cms
+      MISE_DATA_DIR: /data/mise
+      MISE_CACHE_DIR: /data/mise/cache
+      MISE_TRUSTED_CONFIG_PATHS: /data/repos
+    volumes:
+      - ./repos:/data/repos
+      - ./mise-data:/data/mise
+      # Enable this bind mount when using SITES_CONFIG_PATH=/app/sites.yml.
+      # - ./sites.yml:/app/sites.yml:ro

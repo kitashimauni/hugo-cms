@@ -1,0 +1,11 @@
+.git
+.env
+repo
+repos
+mise-data
+tmp
+*.log
+hugo-cms
+hugo-cms.exe
+coverage.out
+node_modules
