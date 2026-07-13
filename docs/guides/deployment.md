@@ -75,56 +75,33 @@ sudo systemctl start hugo-cms
 
 ### 2. Dockerデプロイ
 
-#### Dockerfile
+新規サーバーではDockerデプロイを推奨します。HugoやNode.jsのバージョンはホストへ直接入れず、コンテナ内のmiseがサイトリポジトリごとの`mise.toml`を読んで管理します。
 
-```dockerfile
-FROM golang:1.24-alpine AS builder
+詳細は [Docker + mise デプロイガイド](docker-mise-deployment.md) を参照してください。
 
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
-
-COPY . .
-RUN CGO_ENABLED=0 go build -o hugo-cms .
-
-FROM alpine:latest
-
-# Hugoをインストール
-RUN apk add --no-cache hugo git
-
-WORKDIR /app
-COPY --from=builder /app/hugo-cms .
-COPY --from=builder /app/static ./static
-COPY --from=builder /app/templates ./templates
-
-EXPOSE 8080
-
-CMD ["./hugo-cms"]
-```
-
-#### docker-compose.yml
+#### compose.yml
 
 ```yaml
-version: '3.8'
-
 services:
   hugo-cms:
     build: .
+    image: hugo-cms:local
     ports:
       - "8080:8080"
+    env_file:
+      - .env
     volumes:
-      - ./repo:/app/repo
-      - ./.env:/app/.env:ro
+      - ./repos:/data/repos
+      - ./mise-data:/data/mise
     environment:
-      - GIN_MODE=release
-      - HUGO_SERVER_BIND=0.0.0.0
+      GENERATOR_RUNTIME: mise
     restart: unless-stopped
 ```
 
 #### 起動
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### 3. リバースプロキシ設定
@@ -322,7 +299,8 @@ docker-compose up -d --build
 
 #### Hugoサーバーが起動しない
 
-- `hugo` コマンドがPATHにあるか確認
+- Docker + mise運用では、対象サイトの`mise.toml`に`hugo`が定義されているか確認
+- バイナリ/systemd運用では、`hugo` コマンドがPATHにあるか確認
 - リポジトリパスが正しいか確認
 - `/ready` エンドポイントで詳細を確認
 

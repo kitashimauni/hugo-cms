@@ -103,6 +103,7 @@ mise run dev
 | `APP_URL` | アプリケーションURL | `http://localhost:8080` |
 | `REPO_PATH` | Hugoリポジトリのパス | `./repo` |
 | `SITE_GENERATOR` | サイトジェネレーター (`hugo` / `eleventy`) | `hugo` |
+| `GENERATOR_RUNTIME` | generatorコマンドの実行方式 (`direct` / `mise`) | `direct` |
 | `CONTENT_DIR` | リポジトリ内の記事ディレクトリ | `content` |
 | `STATIC_DIR` | リポジトリ内の静的ファイルディレクトリ | `static` |
 | `PUBLIC_DIR` | リポジトリ内のビルド出力ディレクトリ | `public` |
@@ -122,6 +123,7 @@ mise run dev
 
 - [ドキュメント一覧](docs/README.md) - 目的別の索引
 - [設定ガイド](docs/guides/configuration.md) - 詳細な設定オプション
+- [Docker + mise デプロイガイド](docs/guides/docker-mise-deployment.md) - 新規サーバーでの推奨デプロイ
 - [CMS設定](docs/reference/cms-config.md) - コレクションとフィールドの設定
 - [現行アーキテクチャ](docs/architecture/current-architecture.md) - 現在のシステム構成
 - [マルチサイト・マルチジェネレーター設計](docs/architecture/multi-site-generator-design.md) - 複数HugoサイトとEleventy等への対応方針

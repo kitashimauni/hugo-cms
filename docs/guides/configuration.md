@@ -109,6 +109,26 @@ SITE_GENERATOR=eleventy
 （`package-lock.json`、`pnpm-lock.yaml`、`yarn.lock`など）が必要です。
 CMSは初期対応として任意のnpm scriptではなく、lockfileに対応するpackage managerでローカル依存のEleventyを実行します。
 
+#### `GENERATOR_RUNTIME`
+
+Hugo/Eleventyなどのgeneratorコマンドをどのruntimeで実行するかを指定します。デフォルトは`direct`です。
+
+```env
+# 従来通り、PATH上のhugo/npm/pnpm等を直接使う
+GENERATOR_RUNTIME=direct
+
+# 対象リポジトリのmise設定を使う
+GENERATOR_RUNTIME=mise
+```
+
+`mise`を指定すると、CMSはgeneratorコマンドを次の形で実行します。
+
+```bash
+mise exec -C <repo_path> -- hugo ...
+```
+
+Docker運用では`GENERATOR_RUNTIME=mise`を推奨します。ホストではなくコンテナ内のmiseが、各サイトリポジトリの`mise.toml` / `.mise.toml` / `.tool-versions`を読みます。
+
 #### `CONTENT_DIR` / `STATIC_DIR` / `PUBLIC_DIR`
 
 対象リポジトリ内の主要ディレクトリ。Hugoの標準構成では変更不要です。
@@ -145,6 +165,7 @@ sites:
     name: Tech Blog
     repo_path: D:/sites/techblog
     generator: hugo
+    runtime: mise
     content_dir: content
     static_dir: static
     public_dir: public
@@ -156,6 +177,7 @@ sites:
     name: Notes
     repo_path: D:/sites/notes
     generator: eleventy
+    runtime: mise
     content_dir: src
     static_dir: public-assets
     public_dir: _site
@@ -225,6 +247,7 @@ preview iframe内のページ・画像・CSSなどが`/images/foo.png`のよう�
 | `name` | いいえ | UI表示名。未指定時は`id` |
 | `repo_path` | はい | 対象リポジトリ |
 | `generator` | いいえ | `hugo`または`eleventy` |
+| `runtime` | いいえ | `direct`または`mise`。未指定時は`GENERATOR_RUNTIME` |
 | `content_dir` | いいえ | Markdown記事のルート。デフォルト`content` |
 | `static_dir` | いいえ | 静的ファイルのルート。デフォルト`static` |
 | `public_dir` | いいえ | build出力先。デフォルト`public` |
