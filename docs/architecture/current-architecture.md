@@ -140,6 +140,21 @@ GIT_TOKEN=xxx
 
 Hugo/Eleventyなどのサイトジェネレーター子プロセスにはallowlist化した環境変数だけを渡し、CMSのセッション秘密鍵やGitHub OAuth secretを継承させない。
 
+### Docker実行境界
+
+Docker構成はappの可用性とサイト実行コードの準備を分離する。
+
+- `hugo-cms` serviceはbuild ARGで作成した非root UID/GIDでCMSを実行する
+- app起動時に`mise install`、Node.js依存取得、bind mountの`chown`は行わない
+- host portは`127.0.0.1:${HUGO_CMS_HOST_PORT:-8080}`へだけ公開し、container内`PORT`は`8080`に固定する
+- repoはhostから`/data/repos`へbind mountし、mise tools/cacheは`mise-data` named volumeに保持する
+- `tool-bootstrap`は`tools` profileのone-shot serviceで、appのsecret環境変数を受け取らない
+- bootstrap対象は`HUGO_CMS_REPOS`へUnixの`:`区切りで明示したrepoだけであり、`/data/repos/*`は自動実行しない
+
+operatorはサイトのmise設定、package metadata、lockfile、install scriptをレビューしてからbootstrapを実行する。toolchainや依存を更新した場合はone-shotを再実行するが、通常のapp再起動は準備済み環境を変更しない。
+
+この分離はbootstrapへCMS secretを直接渡さないための初期境界であり、サイト生成processは現在もappと同じcontainer内で動く。サイト単位のcontainer分離、リソース制限、別origin previewは未実装である。
+
 #### frontmatter_codec.go - Front Matter codec
 
 YAML、TOML、JSONを共通インターフェースで解析・生成する。JSON Front Matterの終了位置以降をMarkdown本文として保持し、コレクションの`format`指定を新規記事へ反映する。

@@ -6,6 +6,7 @@ Hugo CMSの利用方法、仕様、設計、および監査結果を目的別に
 
 - [設定ガイド](guides/configuration.md) - 環境変数と実行設定
 - [デプロイガイド](guides/deployment.md) - サーバー、Docker、リバースプロキシ
+- [Docker + mise デプロイガイド](guides/docker-mise-deployment.md) - secret-free one-shot bootstrap、非root app、サイト別toolchainの運用
 - [`.homecms.yml` 移行ガイド](guides/migrating-to-homecms.md) - legacy `static/admin/config.yml` からの移行
 - [リリース前チェックリスト](guides/release-checklist.md) - リリース候補PRで確認する項目
 - [Smoke Test Checklist](guides/smoke-tests.md) - 変更後の最低限確認項目

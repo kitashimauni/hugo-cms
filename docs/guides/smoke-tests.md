@@ -1,6 +1,6 @@
 # Smoke Test Checklist
 
-最終更新日: 2026-07-11
+最終更新日: 2026-07-13
 
 大きめの変更やSite Registry変更後に、最低限確認する項目です。
 
@@ -107,8 +107,22 @@ sites:
 - 記事を保存できる
 - Previewが`eleventy --serve`で起動する
 - Buildがlockfileに対応するpackage manager経由で実行される
+- Dockerでは`tool-bootstrap`がlockfileに対応するfrozen installを完了してからPreview/Buildを実行できる
 
-## 5. Git操作
+## 5. Docker
+
+- `.env`がない場合はComposeがapp起動前に明確に失敗する
+- appと`tool-bootstrap`のUID/GIDが非rootで、app起動によってhost repoの所有者が変わらない
+- host portが`127.0.0.1:${HUGO_CMS_HOST_PORT:-8080}`だけに公開され、container内`PORT`が`8080`
+- `mise-data`がnamed volumeで、app再作成後も準備済みtoolchainを利用できる
+- app起動・再起動では`mise install`やNode.js依存installが実行されない
+- `docker compose --profile tools run --rm tool-bootstrap`が`HUGO_CMS_REPOS`のUnix `:`区切りallowlistだけを処理する
+- allowlist外の`/data/repos`配下repoはbootstrapされない
+- `tool-bootstrap`に`GITHUB_CLIENT_SECRET`、`SESSION_SECRET`などのapp secretが存在しない
+- mise設定とlockfileを更新してbootstrapを再実行すると、準備済み環境が安全に更新される
+- bootstrap失敗時も既に起動しているappは停止・再起動されない
+
+## 6. Git操作
 
 - Syncが対象サイトのrepoで実行される
 - 単一記事publishが対象サイトのcontent pathをcommit対象にする
@@ -116,7 +130,7 @@ sites:
 - static directoryが未作成でも単一記事publishが失敗しない
 - push失敗後の再publishで、既存commitがremoteへpushされる
 
-## 6. 注意点
+## 7. 注意点
 
 - preview bind/portはサイト間で重複させないでください。重複したSite Registryは起動時に拒否されます。
 - preview processはCMSサーバー上でサイトのコードを実行します。Site Registryには信頼済みリポジトリだけを登録してください。

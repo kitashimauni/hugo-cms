@@ -7,7 +7,6 @@ import (
 	"hugo-cms/pkg/config"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 )
@@ -45,9 +44,7 @@ func (adapter *EleventyAdapter) StartPreview(runtime config.SiteRuntime) error {
 			"--input", runtime.ContentDir,
 			"--output", runtime.PublicDir,
 		)
-		cmd := exec.Command(pm.Bin, args...)
-		cmd.Dir = runtime.RepoPath
-		cmd.Env = generatorProcessEnvironment("NODE_ENV=development")
+		cmd := generatorCommandWithEnv(runtime, []string{"NODE_ENV=development"}, pm.Bin, args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return newExecManagedProcess(cmd)
@@ -93,9 +90,7 @@ func (*EleventyAdapter) Build(runtime config.SiteRuntime) (string, error) {
 		"--input", runtime.ContentDir,
 		"--output", runtime.PublicDir,
 	)
-	cmd := exec.CommandContext(ctx, pm.Bin, args...)
-	cmd.Dir = runtime.RepoPath
-	cmd.Env = generatorProcessEnvironment("NODE_ENV=production")
+	cmd := generatorCommandContextWithEnv(ctx, runtime, []string{"NODE_ENV=production"}, pm.Bin, args...)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return string(output), fmt.Errorf("eleventy build timed out after 5 minutes")

@@ -27,6 +27,7 @@ func TestNewSiteRuntimeCopiesSiteConfigAndGlobalProcessSettings(t *testing.T) {
 		Name:           "Docs",
 		RepoPath:       filepath.Join("C:", "sites", "docs"),
 		Generator:      "hugo",
+		Runtime:        "mise",
 		ContentDir:     "content",
 		StaticDir:      "static",
 		PublicDir:      "public",
@@ -37,7 +38,7 @@ func TestNewSiteRuntimeCopiesSiteConfigAndGlobalProcessSettings(t *testing.T) {
 	}
 
 	runtime := NewSiteRuntime(site)
-	if runtime.ID != site.ID || runtime.RepoPath != site.RepoPath || runtime.ContentDir != site.ContentDir {
+	if runtime.ID != site.ID || runtime.RepoPath != site.RepoPath || runtime.ContentDir != site.ContentDir || runtime.Runtime != site.Runtime {
 		t.Fatalf("runtime = %#v, want site fields copied", runtime)
 	}
 	if runtime.PublicPath != filepath.Join(site.RepoPath, site.PublicDir) {

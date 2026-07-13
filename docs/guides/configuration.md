@@ -71,6 +71,8 @@ GITHUB_OAUTH_SCOPES=repo
 
 サーバーが待ち受けるポート番号。デフォルト: `8080`
 
+Docker構成ではコンテナ内の`PORT`を`8080`に固定します。ホスト側のloopback公開ポートは`HUGO_CMS_HOST_PORT`で変更してください。
+
 #### `APP_URL`
 
 アプリケーションの公開URL。OAuth リダイレクトやプレビューURLの生成に使用。
@@ -109,6 +111,41 @@ SITE_GENERATOR=eleventy
 （`package-lock.json`、`pnpm-lock.yaml`、`yarn.lock`など）が必要です。
 CMSは初期対応として任意のnpm scriptではなく、lockfileに対応するpackage managerでローカル依存のEleventyを実行します。
 
+#### `GENERATOR_RUNTIME`
+
+Hugo/Eleventyなどのgeneratorコマンドをどのruntimeで実行するかを指定します。デフォルトは`direct`です。
+
+```env
+# 従来通り、PATH上のhugo/npm/pnpm等を直接使う
+GENERATOR_RUNTIME=direct
+
+# 対象リポジトリのmise設定を使う
+GENERATOR_RUNTIME=mise
+```
+
+`mise`を指定すると、CMSはgeneratorコマンドを次の形で実行します。
+
+```bash
+mise exec -C <repo_path> -- hugo ...
+```
+
+Docker運用では`GENERATOR_RUNTIME=mise`を推奨します。ホストではなくコンテナ内のmiseが、各サイトリポジトリの`mise.toml` / `.mise.toml` / `.tool-versions`を読みます。
+
+app起動時には`mise install`やNode.js依存のインストールを行いません。管理者が`HUGO_CMS_REPOS`へ明示したリポジトリだけを、secret-freeな`tool-bootstrap` one-shot serviceで事前準備します。詳細は[Docker + mise デプロイガイド](docker-mise-deployment.md)を参照してください。
+
+### Docker Compose専用設定
+
+次の値はGoアプリケーションの設定ではなく、rootの`compose.yml`がbuild、host port、one-shot bootstrapを構成するために使用します。
+
+| 変数 | 説明 | 既定値 |
+|---|---|---|
+| `HUGO_CMS_UID` | app/tool-bootstrapの非root UID。Linuxではhost userに合わせる | `10001` |
+| `HUGO_CMS_GID` | app/tool-bootstrapの非root GID。Linuxではhost groupに合わせる | `10001` |
+| `HUGO_CMS_HOST_PORT` | hostの`127.0.0.1`へ公開するポート | `8080` |
+| `HUGO_CMS_REPOS` | bootstrapを許可するcontainer内repo絶対パス。Unixの`:`区切り | なし（要指定） |
+
+`HUGO_CMS_REPOS`はカンマや空白区切りではありません。`/data/repos`の自動探索も行わないため、Site Registryへ追加したrepoも、実行を承認したうえで別途allowlistへ列挙します。
+
 #### `CONTENT_DIR` / `STATIC_DIR` / `PUBLIC_DIR`
 
 対象リポジトリ内の主要ディレクトリ。Hugoの標準構成では変更不要です。
@@ -145,6 +182,7 @@ sites:
     name: Tech Blog
     repo_path: D:/sites/techblog
     generator: hugo
+    runtime: mise
     content_dir: content
     static_dir: static
     public_dir: public
@@ -156,6 +194,7 @@ sites:
     name: Notes
     repo_path: D:/sites/notes
     generator: eleventy
+    runtime: mise
     content_dir: src
     static_dir: public-assets
     public_dir: _site
@@ -225,6 +264,7 @@ preview iframe内のページ・画像・CSSなどが`/images/foo.png`のよう�
 | `name` | いいえ | UI表示名。未指定時は`id` |
 | `repo_path` | はい | 対象リポジトリ |
 | `generator` | いいえ | `hugo`または`eleventy` |
+| `runtime` | いいえ | `direct`または`mise`。未指定時は`GENERATOR_RUNTIME` |
 | `content_dir` | いいえ | Markdown記事のルート。デフォルト`content` |
 | `static_dir` | いいえ | 静的ファイルのルート。デフォルト`static` |
 | `public_dir` | いいえ | build出力先。デフォルト`public` |
@@ -311,9 +351,11 @@ Hugoサーバーがバインドするアドレス。デフォルト: `127.0.0.1`
 # ローカルのみ (デフォルト・推奨)
 HUGO_SERVER_BIND=127.0.0.1
 
-# 全インターフェース (Docker等で必要な場合)
+# 全インターフェース（previewを別containerから直接接続する特殊構成）
 HUGO_SERVER_BIND=0.0.0.0
 ```
+
+標準のDocker構成ではCMSとpreview processが同じcontainer内で動くため、`127.0.0.1`のまま使用します。hostへ公開するのはCMSのloopback portだけです。
 
 ### Git設定
 
@@ -390,15 +432,25 @@ GIT_BRANCH=main
 ### Docker環境
 
 ```env
+APP_URL=https://cms.example.com
+GIN_MODE=release
+
 GITHUB_CLIENT_ID=Iv1.xxxxxxxx
 GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxx
 SESSION_SECRET=replace-with-at-least-32-random-characters
 ALLOWED_GITHUB_USERS=your-username
 
-PORT=8080
-APP_URL=http://localhost:8080
-REPO_PATH=/app/repo
+REPO_PATH=/data/repos/techblog
+SITE_GENERATOR=hugo
+GENERATOR_RUNTIME=mise
+HUGO_CMS_REPOS=/data/repos/techblog
 
-HUGO_SERVER_BIND=0.0.0.0
+HUGO_CMS_HOST_PORT=8080
+HUGO_CMS_UID=1000
+HUGO_CMS_GID=1000
+
+HUGO_SERVER_BIND=127.0.0.1
 HUGO_SERVER_PORT=1314
 ```
+
+`.env`は必須です。appのcontainer内`PORT=8080`はCompose側で固定されるため、Docker用`.env`では変更しません。`tool-bootstrap`はこのファイルからallowlist等を補間しますが、app用のsecret環境変数をcontainerへ受け取りません。

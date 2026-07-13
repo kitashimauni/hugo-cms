@@ -71,6 +71,71 @@ func TestPreviewRuntimeSiteUsesSitePreviewProxyBase(t *testing.T) {
 	}
 }
 
+func TestGeneratorCommandSpecUsesMiseRuntime(t *testing.T) {
+	runtime := config.SiteRuntime{
+		RepoPath: "/data/repos/site",
+		Runtime:  "mise",
+	}
+
+	name, args := generatorCommandSpec(runtime, "hugo", "version")
+	if name != "mise" {
+		t.Fatalf("command name = %q, want mise", name)
+	}
+	wantArgs := []string{"exec", "-C", ".", "--", "hugo", "version"}
+	if len(args) != len(wantArgs) {
+		t.Fatalf("args = %#v, want %#v", args, wantArgs)
+	}
+	for i := range args {
+		if args[i] != wantArgs[i] {
+			t.Fatalf("args = %#v, want %#v", args, wantArgs)
+		}
+	}
+}
+
+func TestGeneratorCommandSpecUsesDirectRuntimeByDefault(t *testing.T) {
+	name, args := generatorCommandSpec(config.SiteRuntime{RepoPath: "/data/repos/site"}, "hugo", "version")
+	if name != "hugo" {
+		t.Fatalf("command name = %q, want hugo", name)
+	}
+	if len(args) != 1 || args[0] != "version" {
+		t.Fatalf("args = %#v, want version", args)
+	}
+}
+
+func TestGeneratorCommandKeepsRepoPathAsOnlyWorkingDirectory(t *testing.T) {
+	repoPath := filepath.Join("testdata", "site")
+	tests := []struct {
+		name    string
+		runtime string
+		command string
+		args    []string
+		want    []string
+	}{
+		{name: "direct Hugo", runtime: "direct", command: "hugo", args: []string{"version"}, want: []string{"hugo", "version"}},
+		{name: "mise Hugo", runtime: "mise", command: "hugo", args: []string{"version"}, want: []string{"mise", "exec", "-C", ".", "--", "hugo", "version"}},
+		{name: "direct Eleventy package manager", runtime: "direct", command: "npm", args: []string{"exec", "--", "eleventy"}, want: []string{"npm", "exec", "--", "eleventy"}},
+		{name: "mise Eleventy package manager", runtime: "mise", command: "npm", args: []string{"exec", "--", "eleventy"}, want: []string{"mise", "exec", "-C", ".", "--", "npm", "exec", "--", "eleventy"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := config.SiteRuntime{RepoPath: repoPath, Runtime: tt.runtime}
+			cmd := generatorCommand(runtime, tt.command, tt.args...)
+			if cmd.Dir != repoPath {
+				t.Fatalf("command dir = %q, want %q", cmd.Dir, repoPath)
+			}
+			if len(cmd.Args) != len(tt.want) {
+				t.Fatalf("command args = %#v, want %#v", cmd.Args, tt.want)
+			}
+			for i := range tt.want {
+				if cmd.Args[i] != tt.want[i] {
+					t.Fatalf("command args = %#v, want %#v", cmd.Args, tt.want)
+				}
+			}
+		})
+	}
+}
+
 func TestStartPreviewForSiteDoesNotHoldAdapterMapLockWhileStarting(t *testing.T) {
 	originalPreviewAdapters := previewAdapters
 	originalRepoPath := config.RepoPath
@@ -264,12 +329,20 @@ func TestGeneratorProcessEnvironmentDropsSecrets(t *testing.T) {
 	t.Setenv("SESSION_SECRET", "super-secret")
 	t.Setenv("GITHUB_CLIENT_SECRET", "oauth-secret")
 	t.Setenv("PATH", "test-path")
+	t.Setenv("MISE_TRUSTED_CONFIG_PATHS", "/data/repos/techblog")
 
 	env := generatorProcessEnvironment()
+	foundTrustedPaths := false
 	for _, entry := range env {
 		if entry == "SESSION_SECRET=super-secret" || entry == "GITHUB_CLIENT_SECRET=oauth-secret" {
 			t.Fatalf("generatorProcessEnvironment leaked secret entry %q", entry)
 		}
+		if entry == "MISE_TRUSTED_CONFIG_PATHS=/data/repos/techblog" {
+			foundTrustedPaths = true
+		}
+	}
+	if !foundTrustedPaths {
+		t.Fatal("generatorProcessEnvironment omitted MISE_TRUSTED_CONFIG_PATHS")
 	}
 }
 

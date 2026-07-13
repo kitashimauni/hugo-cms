@@ -219,19 +219,19 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 
 重要な異常系の大半が未テストであるため、修正時は各問題の再現テストを先に追加することを推奨する。
 
-## mise導入の検討
+## mise導入方針
 
 ### 結論
 
-このプロジェクトではmiseの採用を推奨する。
+このプロジェクトでは開発環境とサイト別toolchainにmiseを採用している。ただし両者の設定と信頼境界は分離する。
 
-`go.mod`がGo 1.24.11のtoolchainを指定している一方、READMEやDocker例はGo 1.21のままであり、環境差がすでに問題として現れている。miseを使うことで、開発者・CI・ローカル検証で使用するツールのバージョンと基本コマンドを一か所へ寄せられる。
+CMS rootの`mise.toml`はCMSの開発・テスト用Go/Node.jsを固定する。Hugo、サイト生成用Node.js、package managerは各サイトrepoのmise設定で固定し、CMS全体へ単一バージョンを強制しない。
 
 ### miseで管理する対象
 
-- Go 1.24.11
-- Hugo Extended
-  - 実サイトと本番環境で使用するバージョンを確認してから固定する。
+- CMS開発用Go 1.24.11とNode.js 22
+- サイト別Hugo/Node.js/package manager
+  - 実サイトの要件を確認し、各サイトrepoで固定する。
 - staticcheck
   - Go 1.24対応版へ更新して固定する。
 - 必要に応じてgolangci-lint
@@ -254,10 +254,12 @@ Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレ�
 - `.env`は引き続きGit管理外とし、本番ではサービス管理基盤のSecret機能を使用する。
 - HugoはExtended版が必要かをサイト側で確認し、通常版と混在させない。
 - race detectorはmiseだけでは解決しないため、Linux CIで実行するのが扱いやすい。
+- Dockerではapp起動時にrepo設定を自動trustしない。`HUGO_CMS_REPOS`の明示allowlistとsecret-freeな`tool-bootstrap` one-shotを使用する。
+- Node.js依存はレビュー済みlockfileからfrozen installし、HTTP request処理中やapp起動時には取得しない。
 
 ### 推奨する導入順序
 
-1. `mise.toml`でGo 1.24.11とHugo Extendedを固定する。
+1. CMS rootの`mise.toml`で開発用Go/Node.jsを、各サイトrepoで生成用toolchainを固定する。
 2. READMEとデプロイ文書をmise前提の手順へ更新する。
 3. `mise run test`、`mise run vet`、`mise run build`を定義する。
 4. Go 1.24対応のlintツールを固定する。

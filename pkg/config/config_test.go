@@ -93,6 +93,7 @@ func TestLoadSiteRegistryAppliesDefaultSite(t *testing.T) {
 	originalDefaultSiteID := DefaultSiteID
 	originalRepoPath := RepoPath
 	originalGenerator := SiteGenerator
+	originalRuntime := GeneratorRuntime
 	originalContentDir := ContentDir
 	originalStaticDir := StaticDir
 	originalPublicDir := PublicDir
@@ -106,6 +107,7 @@ func TestLoadSiteRegistryAppliesDefaultSite(t *testing.T) {
 		DefaultSiteID = originalDefaultSiteID
 		RepoPath = originalRepoPath
 		SiteGenerator = originalGenerator
+		GeneratorRuntime = originalRuntime
 		ContentDir = originalContentDir
 		StaticDir = originalStaticDir
 		PublicDir = originalPublicDir
@@ -126,6 +128,7 @@ sites:
   - id: notes
     repo_path: C:/sites/notes
     generator: eleventy
+    runtime: mise
     content_dir: src
     static_dir: public-assets
     public_dir: _site
@@ -152,6 +155,9 @@ sites:
 	}
 	if SiteGenerator != "eleventy" {
 		t.Fatalf("SiteGenerator = %q, want eleventy", SiteGenerator)
+	}
+	if GeneratorRuntime != "mise" {
+		t.Fatalf("GeneratorRuntime = %q, want mise", GeneratorRuntime)
 	}
 	if ContentDir != "src" || StaticDir != "public-assets" || PublicDir != "_site" {
 		t.Fatalf("content/static/public dirs = %q/%q/%q, want src/public-assets/_site", ContentDir, StaticDir, PublicDir)
@@ -412,5 +418,16 @@ func TestNormalizeSiteConfigDefaultsSnippetPathsToSiteRepo(t *testing.T) {
 	want := filepath.Join(site.RepoPath, ".vscode", "md.code-snippets")
 	if len(site.SnippetPaths) != 1 || site.SnippetPaths[0] != want {
 		t.Fatalf("SnippetPaths = %#v, want %q", site.SnippetPaths, want)
+	}
+}
+
+func TestNormalizeSiteConfigSupportsMiseRuntime(t *testing.T) {
+	site := normalizeSiteConfig(SiteConfig{
+		ID:      "docs",
+		Runtime: " mise ",
+	})
+
+	if site.Runtime != "mise" {
+		t.Fatalf("Runtime = %q, want mise", site.Runtime)
 	}
 }

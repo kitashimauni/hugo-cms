@@ -17,16 +17,17 @@ import (
 )
 
 var (
-	RepoPath        = "./repo"
-	PublicPath      = "./repo/public"
-	PreviewURL      = "/"
-	ContentDir      = "content"
-	StaticDir       = "static"
-	PublicDir       = "public"
-	SiteGenerator   = "hugo"
-	DefaultSiteID   = "default"
-	SitesConfigPath = ""
-	Sites           = []SiteConfig{}
+	RepoPath         = "./repo"
+	PublicPath       = "./repo/public"
+	PreviewURL       = "/"
+	ContentDir       = "content"
+	StaticDir        = "static"
+	PublicDir        = "public"
+	SiteGenerator    = "hugo"
+	GeneratorRuntime = "direct"
+	DefaultSiteID    = "default"
+	SitesConfigPath  = ""
+	Sites            = []SiteConfig{}
 
 	// Hugo Server settings
 	HugoServerPort = "1314"
@@ -69,6 +70,7 @@ type SiteConfig struct {
 	Name            string   `yaml:"name" json:"name"`
 	RepoPath        string   `yaml:"repo_path" json:"repo_path"`
 	Generator       string   `yaml:"generator" json:"generator"`
+	Runtime         string   `yaml:"runtime" json:"runtime"`
 	ContentDir      string   `yaml:"content_dir" json:"content_dir"`
 	StaticDir       string   `yaml:"static_dir" json:"static_dir"`
 	PublicDir       string   `yaml:"public_dir" json:"public_dir"`
@@ -109,6 +111,7 @@ func Init() error {
 	PublicPath = getEnv("PUBLIC_PATH", filepath.Join(RepoPath, PublicDir))
 	PreviewURL = getEnv("PREVIEW_URL", "/")
 	SiteGenerator = strings.ToLower(getEnv("SITE_GENERATOR", "hugo"))
+	GeneratorRuntime = cleanGeneratorRuntime(getEnv("GENERATOR_RUNTIME", "direct"))
 	DefaultSiteID = getEnv("DEFAULT_SITE_ID", "default")
 	SitesConfigPath = getEnv("SITES_CONFIG_PATH", "")
 
@@ -233,6 +236,7 @@ func defaultSiteFromGlobals() SiteConfig {
 		Name:            "Default",
 		RepoPath:        RepoPath,
 		Generator:       SiteGenerator,
+		Runtime:         GeneratorRuntime,
 		ContentDir:      ContentDir,
 		StaticDir:       StaticDir,
 		PublicDir:       PublicDir,
@@ -250,6 +254,7 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 	site.Name = strings.TrimSpace(site.Name)
 	site.RepoPath = strings.TrimSpace(site.RepoPath)
 	site.Generator = strings.ToLower(strings.TrimSpace(site.Generator))
+	site.Runtime = cleanGeneratorRuntime(site.Runtime)
 	site.ContentDir = cleanRelativeDir(site.ContentDir, "content")
 	site.StaticDir = cleanRelativeDir(site.StaticDir, "static")
 	site.PublicDir = cleanRelativeDir(site.PublicDir, "public")
@@ -267,6 +272,9 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 	}
 	if site.Generator == "" {
 		site.Generator = "hugo"
+	}
+	if site.Runtime == "" {
+		site.Runtime = GeneratorRuntime
 	}
 	if site.PreviewURL == "" {
 		site.PreviewURL = "/"
@@ -385,6 +393,17 @@ func cleanOptionalRelativeDir(value string) string {
 	return cleaned
 }
 
+func cleanGeneratorRuntime(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "", "direct", "mise":
+		return value
+	default:
+		slog.Warn("Invalid generator runtime; using direct execution", "value", value)
+		return "direct"
+	}
+}
+
 func GetSite(id string) (SiteConfig, bool) {
 	id = strings.TrimSpace(id)
 	for _, site := range Sites {
@@ -410,6 +429,7 @@ func ApplySiteRuntime(site SiteConfig) {
 func ApplyRuntime(runtime SiteRuntime) {
 	RepoPath = runtime.RepoPath
 	SiteGenerator = runtime.Generator
+	GeneratorRuntime = runtime.Runtime
 	ContentDir = runtime.ContentDir
 	StaticDir = runtime.StaticDir
 	PublicDir = runtime.PublicDir

@@ -12,6 +12,7 @@ type SiteRuntime struct {
 	Name            string
 	RepoPath        string
 	Generator       string
+	Runtime         string
 	ContentDir      string
 	StaticDir       string
 	PublicDir       string
@@ -35,6 +36,7 @@ func NewSiteRuntime(site SiteConfig) SiteRuntime {
 		Name:            site.Name,
 		RepoPath:        site.RepoPath,
 		Generator:       site.Generator,
+		Runtime:         site.Runtime,
 		ContentDir:      site.ContentDir,
 		StaticDir:       site.StaticDir,
 		PublicDir:       site.PublicDir,
@@ -59,6 +61,7 @@ func CurrentSiteRuntime() SiteRuntime {
 		Name:            "Current",
 		RepoPath:        RepoPath,
 		Generator:       SiteGenerator,
+		Runtime:         GeneratorRuntime,
 		ContentDir:      ContentDir,
 		StaticDir:       StaticDir,
 		PublicDir:       PublicDir,
@@ -83,6 +86,7 @@ func (runtime SiteRuntime) SiteConfig() SiteConfig {
 		Name:            runtime.Name,
 		RepoPath:        runtime.RepoPath,
 		Generator:       runtime.Generator,
+		Runtime:         runtime.Runtime,
 		ContentDir:      runtime.ContentDir,
 		StaticDir:       runtime.StaticDir,
 		PublicDir:       runtime.PublicDir,

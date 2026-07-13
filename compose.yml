@@ -1,0 +1,65 @@
+services:
+  hugo-cms:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        HUGO_CMS_UID: ${HUGO_CMS_UID:-10001}
+        HUGO_CMS_GID: ${HUGO_CMS_GID:-10001}
+    image: hugo-cms:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HUGO_CMS_HOST_PORT:-8080}:8080"
+    env_file: .env
+    environment:
+      GIN_MODE: release
+      GENERATOR_RUNTIME: mise
+      HOME: /home/hugo-cms
+      PORT: "8080"
+      MISE_DATA_DIR: /data/mise
+      MISE_CACHE_DIR: /data/mise/cache
+      HUGO_CMS_REPOS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
+      MISE_TRUSTED_CONFIG_PATHS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
+    volumes:
+      - ./repos:/data/repos
+      - mise-data:/data/mise
+      # Enable this bind mount when using SITES_CONFIG_PATH=/app/sites.yml.
+      # - ./sites.yml:/app/sites.yml:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  tool-bootstrap:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        HUGO_CMS_UID: ${HUGO_CMS_UID:-10001}
+        HUGO_CMS_GID: ${HUGO_CMS_GID:-10001}
+    image: hugo-cms:local
+    restart: "no"
+    command: ["/usr/local/bin/docker-tool-bootstrap"]
+    environment:
+      HOME: /home/hugo-cms
+      MISE_DATA_DIR: /data/mise
+      MISE_CACHE_DIR: /data/mise/cache
+      HUGO_CMS_REPOS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
+      MISE_TRUSTED_CONFIG_PATHS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
+    volumes:
+      - ./repos:/data/repos
+      - mise-data:/data/mise
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  mise-data:

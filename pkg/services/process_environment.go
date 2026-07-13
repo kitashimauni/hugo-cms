@@ -7,18 +7,19 @@ import (
 )
 
 var generatorEnvironmentAllowList = map[string]bool{
-	"HOME":              true,
-	"PATH":              true,
-	"TMP":               true,
-	"TEMP":              true,
-	"TMPDIR":            true,
-	"USERPROFILE":       true,
-	"LOCALAPPDATA":      true,
-	"APPDATA":           true,
-	"MISE_DATA_DIR":     true,
-	"MISE_CACHE_DIR":    true,
-	"MISE_CONFIG_DIR":   true,
-	"MISE_INSTALL_PATH": true,
+	"HOME":                      true,
+	"PATH":                      true,
+	"TMP":                       true,
+	"TEMP":                      true,
+	"TMPDIR":                    true,
+	"USERPROFILE":               true,
+	"LOCALAPPDATA":              true,
+	"APPDATA":                   true,
+	"MISE_DATA_DIR":             true,
+	"MISE_CACHE_DIR":            true,
+	"MISE_CONFIG_DIR":           true,
+	"MISE_INSTALL_PATH":         true,
+	"MISE_TRUSTED_CONFIG_PATHS": true,
 }
 
 var windowsGeneratorEnvironmentAllowList = map[string]bool{

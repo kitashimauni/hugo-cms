@@ -75,6 +75,12 @@ func TestHugoArgsIncludeConfiguredContentDir(t *testing.T) {
 	if got := argValue(hugoBuildArgs(runtime), "--destination"); got != "_site" {
 		t.Fatalf("hugoBuildArgs destination = %q, want _site", got)
 	}
+	if got := argValue(hugoServerArgs(runtime), "--source"); got != "." {
+		t.Fatalf("hugoServerArgs source = %q, want current working directory", got)
+	}
+	if got := argValue(hugoBuildArgs(runtime), "--source"); got != "." {
+		t.Fatalf("hugoBuildArgs source = %q, want current working directory", got)
+	}
 	newArgs := hugoNewContentArgs(runtime, "posts/a.md")
 	if len(newArgs) < 3 || newArgs[0] != "new" || newArgs[1] != "content" {
 		t.Fatalf("hugoNewContentArgs = %#v, want hugo new content subcommand", newArgs)

@@ -67,7 +67,20 @@ Eleventyサイトでは次を確認します。
 - lockfileに対応するpackage managerでpreview/buildされる
 - preview停止時にwrapperの子プロセスが残らない
 
-## 6. PR確認
+## 6. Docker
+
+- `bash -n deploy/*.sh`と`docker compose config --quiet`が成功する
+- imageを実際にbuildできる
+- appが非rootで動作し、repoを再帰`chown`しない
+- `.env`が必須で、container内`PORT=8080`、host公開がloopbackのみ
+- `mise-data`がnamed volumeとして永続化する
+- `tool-bootstrap`が`tools` profileのone-shotで、app secretを受け取らない
+- `HUGO_CMS_REPOS`へUnixの`:`区切りで列挙したrepoだけをtrust・準備する
+- Hugoの`mise install`と、Eleventyのlockfile別frozen installを確認する
+- app再起動ではbootstrapが暗黙実行されない
+- `/health`のcontainer smoke testが成功する
+
+## 7. PR確認
 
 PR本文には次を含めます。
 

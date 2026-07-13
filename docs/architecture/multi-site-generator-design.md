@@ -31,12 +31,13 @@
 
 ### CMSとサイトのランタイムを分離する
 
-CMSルートの`mise.toml`ではCMS自身のGoバージョンだけを管理する。HugoとNode.jsは各サイトの要件であり、CMS全体へ単一バージョンを固定しない。
+CMSルートの`mise.toml`ではCMS自身の開発・テストに使うGoとNode.jsだけを管理する。サイト生成用のHugo、Node.js、package managerは各サイトの要件であり、CMS全体へ単一バージョンを固定しない。
 
 ```toml
 # hugo-cms/mise.toml
 [tools]
 go = "1.24.11"
+node = "22"
 ```
 
 Hugoサイトの例:
@@ -170,6 +171,8 @@ type GeneratorAdapter interface {
 
 未登録の任意コマンドをリポジトリ設定から直接実行してはならない。標準アダプターで対応できないサイト向けのカスタムコマンドは、管理者の明示承認と隔離環境を必須とする。
 
+generator processの作業ディレクトリは`cmd.Dir=repo_path`で一度だけ固定する。relativeな`repo_path`を子process内で再解決しないよう、miseは`mise exec -C . -- ...`、Hugoは`--source .`で実行する。Eleventyのpackage managerとHugoの`new content`も同じ作業ディレクトリを使う。
+
 ### Preview Process Supervisor
 
 単一グローバルなHugoプロセスではなく、サイトIDをキーにしたプロセス管理を行う。
@@ -273,7 +276,7 @@ Eleventyは入力・出力ディレクトリをサイト設定で変更でき、
 - <https://www.11ty.dev/docs/usage/>
 - <https://www.11ty.dev/docs/config/>
 
-依存関係の取得はHTTPリクエスト処理中に行わない。サイト登録時または管理者が承認した更新処理で`npm ci`を実行し、成功した環境だけをプレビューへ使用する。
+依存関係の取得はHTTPリクエスト処理中やapp起動時に行わない。Docker構成では管理者が`HUGO_CMS_REPOS`へUnixの`:`区切りで明示したrepoだけを、`docker compose --profile tools run --rm tool-bootstrap`で準備する。bootstrapはmise toolchainを導入したあと、lockfileに応じてnpm、pnpm、yarn、bunのfrozen installを実行し、成功した環境だけをプレビューへ使用する。
 
 ## コンテンツ管理の共通化
 
@@ -352,7 +355,9 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 - プレビューを管理画面とは別オリジンで配信する。
 - mise設定のhookや任意タスクを無条件にtrustしない。
 
-信頼できる自社リポジトリだけを対象とする初期版でも、子プロセスへCMSの秘密情報を継承させないことと、プレビューのオリジン分離は先に実施する。
+Dockerのtool bootstrapは`/data/repos`を自動探索せず、`HUGO_CMS_REPOS`で列挙されたrepoだけを個別にtrustする。one-shot serviceへappのenv fileを渡さず、`GITHUB_CLIENT_SECRET`や`SESSION_SECRET`を持たない状態でmise設定とNode.js install scriptを実行する。app自身は`mise install`、依存取得、bind mountの`chown`を行わない。
+
+信頼できる自社リポジトリだけを対象とする初期版でも、子プロセスへCMSの秘密情報を継承させない。プレビューの別オリジン化、サイト単位のコンテナ分離、リソース・ネットワーク制限は引き続き必要である。
 
 ## 移行計画
 
@@ -402,7 +407,7 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 - プレビューを別オリジンに分離する。
 - 依存関係の準備処理を管理者操作として追加する。
 
-Hugo/Eleventyの子プロセスへ渡す環境変数をallowlist方式にし、`SESSION_SECRET`やGitHub OAuth secretなどCMS側の秘密情報を継承しないようにした。リソース制限、別オリジン配信、依存関係準備フローは未実装。
+Hugo/Eleventyの子プロセスへ渡す環境変数をallowlist方式にし、`SESSION_SECRET`やGitHub OAuth secretなどCMS側の秘密情報を継承しないようにした。Dockerではsecret-freeな`tool-bootstrap` one-shot serviceによるmise toolchainとlockfile別Node.js依存の準備フローを追加した。appはbuild ARGで作る非root UID/GIDで動作し、repoを`chown`しない。リソース制限、別オリジン配信、サイト単位のコンテナ分離は未実装。
 
 ### Phase 5: Eleventy対応
 
@@ -430,4 +435,4 @@ Hugo/Eleventyの子プロセスへ渡す環境変数をallowlist方式にし、`
 - サイト設定のスキーマとバージョニング方法。
 - プレビュー用サブドメインまたはオリジンの割り当て方法。
 - Eleventy以外のジェネレーターへカスタムコマンドを許可する範囲。
-- Node.js依存関係キャッシュの共有単位。
+- Node.js依存ディレクトリとmise named volumeの保持・削除ポリシー。
