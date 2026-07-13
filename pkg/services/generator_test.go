@@ -71,6 +71,37 @@ func TestPreviewRuntimeSiteUsesSitePreviewProxyBase(t *testing.T) {
 	}
 }
 
+func TestGeneratorCommandSpecUsesMiseRuntime(t *testing.T) {
+	runtime := config.SiteRuntime{
+		RepoPath: "/data/repos/site",
+		Runtime:  "mise",
+	}
+
+	name, args := generatorCommandSpec(runtime, "hugo", "version")
+	if name != "mise" {
+		t.Fatalf("command name = %q, want mise", name)
+	}
+	wantArgs := []string{"exec", "-C", "/data/repos/site", "--", "hugo", "version"}
+	if len(args) != len(wantArgs) {
+		t.Fatalf("args = %#v, want %#v", args, wantArgs)
+	}
+	for i := range args {
+		if args[i] != wantArgs[i] {
+			t.Fatalf("args = %#v, want %#v", args, wantArgs)
+		}
+	}
+}
+
+func TestGeneratorCommandSpecUsesDirectRuntimeByDefault(t *testing.T) {
+	name, args := generatorCommandSpec(config.SiteRuntime{RepoPath: "/data/repos/site"}, "hugo", "version")
+	if name != "hugo" {
+		t.Fatalf("command name = %q, want hugo", name)
+	}
+	if len(args) != 1 || args[0] != "version" {
+		t.Fatalf("args = %#v, want version", args)
+	}
+}
+
 func TestStartPreviewForSiteDoesNotHoldAdapterMapLockWhileStarting(t *testing.T) {
 	originalPreviewAdapters := previewAdapters
 	originalRepoPath := config.RepoPath

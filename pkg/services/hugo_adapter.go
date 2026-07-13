@@ -6,7 +6,6 @@ import (
 	"hugo-cms/pkg/config"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 )
@@ -27,8 +26,7 @@ func (adapter *HugoAdapter) StartPreview(runtime config.SiteRuntime) error {
 	slog.Info("Starting Hugo server", "site", runtime.ID, "port", runtime.HugoServerPort)
 
 	err := adapter.preview.Start(func() managedProcess {
-		cmd := exec.Command("hugo", hugoServerArgs(runtime)...)
-		cmd.Env = generatorProcessEnvironment()
+		cmd := generatorCommand(runtime, "hugo", hugoServerArgs(runtime)...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return newExecManagedProcess(cmd)
@@ -64,8 +62,7 @@ func (*HugoAdapter) Build(runtime config.SiteRuntime) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "hugo", hugoBuildArgs(runtime)...)
-	cmd.Env = generatorProcessEnvironment()
+	cmd := generatorCommandContext(ctx, runtime, "hugo", hugoBuildArgs(runtime)...)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return string(output), fmt.Errorf("hugo build timed out after 5 minutes")
@@ -145,9 +142,7 @@ func (*HugoAdapter) CreateContent(runtime config.SiteRuntime, path string) (stri
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "hugo", hugoNewContentArgs(runtime, path)...)
-	cmd.Dir = runtime.RepoPath
-	cmd.Env = generatorProcessEnvironment()
+	cmd := generatorCommandContext(ctx, runtime, "hugo", hugoNewContentArgs(runtime, path)...)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return string(output), fmt.Errorf("hugo new timed out")
