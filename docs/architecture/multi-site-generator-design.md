@@ -407,7 +407,7 @@ Dockerのtool bootstrapは`/data/repos`を自動探索せず、`HUGO_CMS_REPOS`�
 - プレビューを別オリジンに分離する。
 - 依存関係の準備処理を管理者操作として追加する。
 
-Hugo/Eleventyの子プロセスへ渡す環境変数をallowlist方式にし、`SESSION_SECRET`やGitHub OAuth secretなどCMS側の秘密情報を継承しないようにした。Dockerではsecret-freeな`tool-bootstrap` one-shot serviceによるmise toolchainとlockfile別Node.js依存の準備フローを追加した。appはbuild ARGで作る非root UID/GIDで動作し、repoを`chown`しない。リソース制限、別オリジン配信、サイト単位のコンテナ分離は未実装。
+Hugo/Eleventyの子プロセスへ渡す環境変数をallowlist方式にし、`SESSION_SECRET`やGitHub OAuth secretなどCMS側の秘密情報を継承しないようにした。Dockerではsecret-freeな`tool-bootstrap` one-shot serviceによるmise toolchainとlockfile別Node.js依存の準備フローを追加した。appはbuild ARGで指定した数値の非root UID/GIDで動作し、base imageに同じIDがあれば再利用する。repoは`chown`しない。リソース制限、別オリジン配信、サイト単位のコンテナ分離は未実装。
 
 ### Phase 5: Eleventy対応
 

@@ -62,6 +62,8 @@ jobs:
           sed -i 's|^ALLOWED_GITHUB_USERS=.*|ALLOWED_GITHUB_USERS=ci-user|' .env
           sed -i 's|^REPO_PATH=.*|REPO_PATH=/data/repos/ci|' .env
           sed -i 's|^HUGO_CMS_REPOS=.*|HUGO_CMS_REPOS=/data/repos/ci|' .env
+          sed -i 's|^HUGO_CMS_UID=.*|HUGO_CMS_UID=1000|' .env
+          sed -i 's|^HUGO_CMS_GID=.*|HUGO_CMS_GID=27|' .env
 
       - name: Validate Compose configuration
         run: docker compose config --quiet
@@ -79,7 +81,9 @@ jobs:
       - name: Verify non-root runtime
         run: |
           runtime_uid="$(docker compose run --rm --no-deps --entrypoint id hugo-cms -u)"
-          test "${runtime_uid}" != "0"
+          runtime_gid="$(docker compose run --rm --no-deps --entrypoint id hugo-cms -g)"
+          test "${runtime_uid}" = "1000"
+          test "${runtime_gid}" = "27"
 
       - name: Verify tools profile without implicit repository discovery
         run: docker compose --profile tools run --rm tool-bootstrap

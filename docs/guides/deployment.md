@@ -111,7 +111,7 @@ volumes:
   mise-data:
 ```
 
-appはbuild ARGで作成した非root UID/GIDで動作し、bind mountを`chown`しません。ホスト公開はloopbackだけです。`PORT`はコンテナ内で`8080`に固定し、ホスト側は`HUGO_CMS_HOST_PORT`で変更します。rootの`compose.yml`には、同じimageとvolumeを使いappの`env_file`を持たない`tool-bootstrap` serviceも定義されています。
+appはbuild ARGで指定した数値の非root UID/GIDで動作し、base imageに同じIDが存在する場合は再利用します。bind mountは`chown`しません。ホスト公開はloopbackだけです。`PORT`はコンテナ内で`8080`に固定し、ホスト側は`HUGO_CMS_HOST_PORT`で変更します。rootの`compose.yml`には、同じimageとvolumeを使いappの`env_file`を持たない`tool-bootstrap` serviceも定義されています。
 
 #### ツール準備と起動
 

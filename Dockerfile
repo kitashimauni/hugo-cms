@@ -34,9 +34,15 @@ RUN curl -fsSL https://mise.run \
 
 ARG HUGO_CMS_UID=10001
 ARG HUGO_CMS_GID=10001
-RUN groupadd --gid "${HUGO_CMS_GID}" hugo-cms \
-    && useradd --uid "${HUGO_CMS_UID}" --gid hugo-cms \
-        --home-dir /home/hugo-cms --create-home --shell /usr/sbin/nologin hugo-cms
+RUN case "${HUGO_CMS_UID}" in ""|*[!0-9]*|0) echo "HUGO_CMS_UID must be a positive integer" >&2; exit 1 ;; esac \
+    && case "${HUGO_CMS_GID}" in ""|*[!0-9]*|0) echo "HUGO_CMS_GID must be a positive integer" >&2; exit 1 ;; esac \
+    && if ! getent group "${HUGO_CMS_GID}" >/dev/null; then \
+        groupadd --gid "${HUGO_CMS_GID}" hugo-cms; \
+    fi \
+    && if ! getent passwd "${HUGO_CMS_UID}" >/dev/null; then \
+        useradd --uid "${HUGO_CMS_UID}" --gid "${HUGO_CMS_GID}" \
+            --home-dir /home/hugo-cms --create-home --shell /usr/sbin/nologin hugo-cms; \
+    fi
 
 WORKDIR /app
 COPY --from=builder /out/hugo-cms /app/hugo-cms
@@ -46,7 +52,7 @@ COPY deploy/docker-tool-bootstrap.sh /usr/local/bin/docker-tool-bootstrap
 
 RUN chmod 0755 /app/hugo-cms /usr/local/bin/docker-tool-bootstrap \
     && mkdir -p /data/repos /data/mise /home/hugo-cms \
-    && chown -R hugo-cms:hugo-cms /data/mise /home/hugo-cms
+    && chown -R "${HUGO_CMS_UID}:${HUGO_CMS_GID}" /data/mise /home/hugo-cms
 
 ENV HOME=/home/hugo-cms \
     MISE_DATA_DIR=/data/mise \
@@ -58,6 +64,6 @@ ENV HOME=/home/hugo-cms \
 
 EXPOSE 8080
 
-USER hugo-cms:hugo-cms
+USER ${HUGO_CMS_UID}:${HUGO_CMS_GID}
 ENTRYPOINT ["tini", "--"]
 CMD ["/app/hugo-cms"]

@@ -60,6 +60,10 @@ sed -i "s/^HUGO_CMS_GID=.*/HUGO_CMS_GID=$(id -g)/" .env
 
 UID/GIDを変更した場合はimageを再buildしてください。`root`相当の`0`は指定しないでください。Docker Desktopでは通常、配布時の既定値を利用できます。
 
+指定したUID/GIDがbase image内ですでに使われている場合、imageはその数値IDを再利用します。container内のuser/group名ではなく、`HUGO_CMS_UID`と`HUGO_CMS_GID`の数値が実行権限の基準です。
+
+すでに`mise-data` volumeを作成したあとでUID/GIDを変更すると、volume内に以前の所有権が残ることがあります。toolchainを再取得できる環境では、意図した初期化として`docker compose down --volumes`を実行してからimageを再buildし、bootstrapをやり直してください。既存volumeを保持する必要がある場合は、削除せず管理者がvolume内の所有権を新しいUID/GIDへ移行してください。
+
 サイトリポジトリはappユーザーが記事やGit metadataを書き込める権限で配置します。コンテナは権限を自動修復しないため、permission errorはホスト側のUID/GIDとディレクトリ権限を確認してください。
 
 ## サイトリポジトリ
@@ -256,6 +260,8 @@ docker compose run --rm --no-deps --entrypoint id hugo-cms
 ```
 
 値を修正した場合は`docker compose build --no-cache`でappユーザーを作り直します。
+
+UID/GIDを変更済みで`mise-data`に以前の所有権が残っている場合は、上記「コンテナUID/GID」のvolume移行手順も確認してください。
 
 ### `hugo`またはpackage managerが見つからない
 
