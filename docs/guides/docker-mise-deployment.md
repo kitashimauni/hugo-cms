@@ -38,16 +38,47 @@ docker compose version
 
 ## サーバーへ配置
 
+単一の管理者が`git`と`docker compose`を実行する構成では、管理者のhome directory配下を推奨します。`/opt`全体の所有者を変更したり、通常運用で`sudo`を付けたりする必要がありません。
+
 ```bash
-sudo mkdir -p /opt
-sudo chown "$USER:$USER" /opt
-git clone https://github.com/kitashimauni/hugo-cms.git /opt/hugo-cms
-cd /opt/hugo-cms
+git clone https://github.com/kitashimauni/hugo-cms.git "$HOME/hugo-cms"
+cd "$HOME/hugo-cms"
 mkdir -p repos
 cp deploy/.env.example .env
 ```
 
 `.env`は必須です。Composeは設定ファイルがない状態では起動しません。
+
+system-managedな配置として`/srv`または`/opt`を使う場合は、親directoryではなくCMS専用directoryだけを管理ユーザーへ委譲します。以後の`git`と`docker compose`は`sudo`なしで実行します。
+
+```bash
+sudo install -d -o "$(id -un)" -g "$(id -gn)" /srv/hugo-cms
+git clone https://github.com/kitashimauni/hugo-cms.git /srv/hugo-cms
+cd /srv/hugo-cms
+```
+
+`/opt/hugo-cms`を選ぶ場合も同様に、`sudo install -d ... /opt/hugo-cms`で対象directoryだけを作成してください。`sudo chown ... /opt`のように`/opt`全体の所有者を変更してはなりません。
+
+すでに`/opt/hugo-cms`へ配置済みでhome directoryへ移す場合は、containerを停止してから移動します。named volumeを保持するため`--volumes`は付けません。
+
+```bash
+cd /opt/hugo-cms
+docker compose down
+cd "$HOME"
+test ! -e "$HOME/hugo-cms"
+sudo mv /opt/hugo-cms "$HOME/hugo-cms"
+sudo chown -R "$(id -un):$(id -gn)" "$HOME/hugo-cms"
+cd "$HOME/hugo-cms"
+docker compose up -d hugo-cms
+```
+
+配置場所にかかわらず`docker compose`だけがpermission errorになる場合は、filesystemではなくDocker daemonへのアクセス権を確認します。
+
+```bash
+docker info
+```
+
+Docker groupを利用する場合、そのメンバーは実質的にroot相当の操作が可能です。サーバーの権限方針に応じて、管理ユーザーをDocker groupへ追加するかrootless Dockerを利用してください。日常運用で`sudo docker compose`を使うと、作業treeへroot所有のファイルを作る原因になるため推奨しません。
 
 ## コンテナUID/GID
 

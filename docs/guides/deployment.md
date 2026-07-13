@@ -79,6 +79,8 @@ sudo systemctl start hugo-cms
 
 app起動時にはtoolchainを変更しません。管理者が明示したリポジトリだけを、秘密情報を持たない`tool-bootstrap` one-shot serviceで準備してからCMSを起動します。
 
+単一管理者によるCompose運用では`$HOME/hugo-cms`への配置を推奨します。`/srv`や`/opt`を使う場合も、親directory全体ではなくCMS専用directoryだけを管理ユーザーの所有にし、通常の`git`と`docker compose`は`sudo`なしで実行します。
+
 詳細は [Docker + mise デプロイガイド](docker-mise-deployment.md) を参照してください。
 
 #### compose.yml
