@@ -62,6 +62,8 @@ jobs:
           sed -i 's|^ALLOWED_GITHUB_USERS=.*|ALLOWED_GITHUB_USERS=ci-user|' .env
           sed -i 's|^REPO_PATH=.*|REPO_PATH=/data/repos/ci|' .env
           sed -i 's|^HUGO_CMS_REPOS=.*|HUGO_CMS_REPOS=/data/repos/ci|' .env
+          sed -i 's|^HUGO_CMS_UID=.*|HUGO_CMS_UID=1000|' .env
+          sed -i 's|^HUGO_CMS_GID=.*|HUGO_CMS_GID=27|' .env
 
       - name: Validate Compose configuration
         run: docker compose config --quiet
@@ -73,13 +75,32 @@ jobs:
           docker compose config --format json \
             | jq -e '.services["hugo-cms"].ports[0].host_ip == "127.0.0.1"'
 
+      - name: Reject root-equivalent runtime IDs
+        run: |
+          if docker build \
+            --build-arg HUGO_CMS_UID=00 \
+            --build-arg HUGO_CMS_GID=27 \
+            --tag hugo-cms:invalid-uid .; then
+            echo "zero-padded root UID was accepted" >&2
+            exit 1
+          fi
+          if docker build \
+            --build-arg HUGO_CMS_UID=1000 \
+            --build-arg HUGO_CMS_GID=000 \
+            --tag hugo-cms:invalid-gid .; then
+            echo "zero-padded root GID was accepted" >&2
+            exit 1
+          fi
+
       - name: Build image
         run: docker compose build hugo-cms
 
       - name: Verify non-root runtime
         run: |
           runtime_uid="$(docker compose run --rm --no-deps --entrypoint id hugo-cms -u)"
-          test "${runtime_uid}" != "0"
+          runtime_gid="$(docker compose run --rm --no-deps --entrypoint id hugo-cms -g)"
+          test "${runtime_uid}" = "1000"
+          test "${runtime_gid}" = "27"
 
       - name: Verify tools profile without implicit repository discovery
         run: docker compose --profile tools run --rm tool-bootstrap

@@ -38,16 +38,47 @@ docker compose version
 
 ## サーバーへ配置
 
+単一の管理者が`git`と`docker compose`を実行する構成では、管理者のhome directory配下を推奨します。`/opt`全体の所有者を変更したり、通常運用で`sudo`を付けたりする必要がありません。
+
 ```bash
-sudo mkdir -p /opt
-sudo chown "$USER:$USER" /opt
-git clone https://github.com/kitashimauni/hugo-cms.git /opt/hugo-cms
-cd /opt/hugo-cms
+git clone https://github.com/kitashimauni/hugo-cms.git "$HOME/hugo-cms"
+cd "$HOME/hugo-cms"
 mkdir -p repos
 cp deploy/.env.example .env
 ```
 
 `.env`は必須です。Composeは設定ファイルがない状態では起動しません。
+
+system-managedな配置として`/srv`または`/opt`を使う場合は、親directoryではなくCMS専用directoryだけを管理ユーザーへ委譲します。以後の`git`と`docker compose`は`sudo`なしで実行します。
+
+```bash
+sudo install -d -o "$(id -un)" -g "$(id -gn)" /srv/hugo-cms
+git clone https://github.com/kitashimauni/hugo-cms.git /srv/hugo-cms
+cd /srv/hugo-cms
+```
+
+`/opt/hugo-cms`を選ぶ場合も同様に、`sudo install -d ... /opt/hugo-cms`で対象directoryだけを作成してください。`sudo chown ... /opt`のように`/opt`全体の所有者を変更してはなりません。
+
+すでに`/opt/hugo-cms`へ配置済みでhome directoryへ移す場合は、containerを停止してから移動します。named volumeを保持するため`--volumes`は付けません。
+
+```bash
+cd /opt/hugo-cms
+docker compose down
+cd "$HOME"
+test ! -e "$HOME/hugo-cms"
+sudo mv /opt/hugo-cms "$HOME/hugo-cms"
+sudo chown -R "$(id -un):$(id -gn)" "$HOME/hugo-cms"
+cd "$HOME/hugo-cms"
+docker compose up -d hugo-cms
+```
+
+配置場所にかかわらず`docker compose`だけがpermission errorになる場合は、filesystemではなくDocker daemonへのアクセス権を確認します。
+
+```bash
+docker info
+```
+
+Docker groupを利用する場合、そのメンバーは実質的にroot相当の操作が可能です。サーバーの権限方針に応じて、管理ユーザーをDocker groupへ追加するかrootless Dockerを利用してください。日常運用で`sudo docker compose`を使うと、作業treeへroot所有のファイルを作る原因になるため推奨しません。
 
 ## コンテナUID/GID
 
@@ -58,7 +89,11 @@ sed -i "s/^HUGO_CMS_UID=.*/HUGO_CMS_UID=$(id -u)/" .env
 sed -i "s/^HUGO_CMS_GID=.*/HUGO_CMS_GID=$(id -g)/" .env
 ```
 
-UID/GIDを変更した場合はimageを再buildしてください。`root`相当の`0`は指定しないでください。Docker Desktopでは通常、配布時の既定値を利用できます。
+UID/GIDを変更した場合はimageを再buildしてください。`root`相当の`0`は、`00`などのゼロ埋め表現を含めて指定できません。Docker Desktopでは通常、配布時の既定値を利用できます。
+
+指定したUID/GIDがbase image内ですでに使われている場合、imageはその数値IDを再利用します。container内のuser/group名ではなく、`HUGO_CMS_UID`と`HUGO_CMS_GID`の数値が実行権限の基準です。
+
+すでに`mise-data` volumeを作成したあとでUID/GIDを変更すると、volume内に以前の所有権が残ることがあります。toolchainを再取得できる環境では、意図した初期化として`docker compose down --volumes`を実行してからimageを再buildし、bootstrapをやり直してください。既存volumeを保持する必要がある場合は、削除せず管理者がvolume内の所有権を新しいUID/GIDへ移行してください。
 
 サイトリポジトリはappユーザーが記事やGit metadataを書き込める権限で配置します。コンテナは権限を自動修復しないため、permission errorはホスト側のUID/GIDとディレクトリ権限を確認してください。
 
@@ -256,6 +291,8 @@ docker compose run --rm --no-deps --entrypoint id hugo-cms
 ```
 
 値を修正した場合は`docker compose build --no-cache`でappユーザーを作り直します。
+
+UID/GIDを変更済みで`mise-data`に以前の所有権が残っている場合は、上記「コンテナUID/GID」のvolume移行手順も確認してください。
 
 ### `hugo`またはpackage managerが見つからない
 

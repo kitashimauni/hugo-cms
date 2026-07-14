@@ -72,7 +72,10 @@ Eleventyサイトでは次を確認します。
 - `bash -n deploy/*.sh`と`docker compose config --quiet`が成功する
 - imageを実際にbuildできる
 - appが非rootで動作し、repoを再帰`chown`しない
+- base image内に存在するGIDを指定してもbuildでき、runtimeの数値UID/GIDが指定値と一致する
+- UID/GIDの`0`と`00`などのゼロ埋め表現がbuild時に拒否される
 - `.env`が必須で、container内`PORT=8080`、host公開がloopbackのみ
+- 推奨配置が`$HOME/hugo-cms`で、`/opt`や`/srv`の親directory全体を`chown`する手順がない
 - `mise-data`がnamed volumeとして永続化する
 - `tool-bootstrap`が`tools` profileのone-shotで、app secretを受け取らない
 - `HUGO_CMS_REPOS`へUnixの`:`区切りで列挙したrepoだけをtrust・準備する

@@ -79,6 +79,8 @@ sudo systemctl start hugo-cms
 
 app起動時にはtoolchainを変更しません。管理者が明示したリポジトリだけを、秘密情報を持たない`tool-bootstrap` one-shot serviceで準備してからCMSを起動します。
 
+単一管理者によるCompose運用では`$HOME/hugo-cms`への配置を推奨します。`/srv`や`/opt`を使う場合も、親directory全体ではなくCMS専用directoryだけを管理ユーザーの所有にし、通常の`git`と`docker compose`は`sudo`なしで実行します。
+
 詳細は [Docker + mise デプロイガイド](docker-mise-deployment.md) を参照してください。
 
 #### compose.yml
@@ -111,7 +113,7 @@ volumes:
   mise-data:
 ```
 
-appはbuild ARGで作成した非root UID/GIDで動作し、bind mountを`chown`しません。ホスト公開はloopbackだけです。`PORT`はコンテナ内で`8080`に固定し、ホスト側は`HUGO_CMS_HOST_PORT`で変更します。rootの`compose.yml`には、同じimageとvolumeを使いappの`env_file`を持たない`tool-bootstrap` serviceも定義されています。
+appはbuild ARGで指定した数値の非root UID/GIDで動作し、base imageに同じIDが存在する場合は再利用します。bind mountは`chown`しません。ホスト公開はloopbackだけです。`PORT`はコンテナ内で`8080`に固定し、ホスト側は`HUGO_CMS_HOST_PORT`で変更します。rootの`compose.yml`には、同じimageとvolumeを使いappの`env_file`を持たない`tool-bootstrap` serviceも定義されています。
 
 #### ツール準備と起動
 
