@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -171,6 +172,36 @@ func TestPreviewRedirectTargetPreservesPathAndQuery(t *testing.T) {
 	target := previewRedirectTarget(req, config.SiteConfig{ID: "docs site"})
 	if target != "/admin/preview/docs%20site/images/logo.png?v=1" {
 		t.Fatalf("previewRedirectTarget() = %q", target)
+	}
+}
+
+func TestPreviewProxyDirectorPreservesPathEscapingAndQuery(t *testing.T) {
+	req, err := http.NewRequest(
+		http.MethodGet,
+		"http://cms.example/admin/preview/docs%20site/assets/a%2Fb.css?q=a%2Fb&x=1+2",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	target, err := url.Parse("http://127.0.0.1:1314")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+
+	newPreviewProxy(target).Director(req)
+
+	if req.URL.Scheme != "http" || req.URL.Host != "127.0.0.1:1314" {
+		t.Fatalf("proxy target = %s://%s", req.URL.Scheme, req.URL.Host)
+	}
+	if got := req.URL.EscapedPath(); got != "/admin/preview/docs%20site/assets/a%2Fb.css" {
+		t.Fatalf("EscapedPath() = %q", got)
+	}
+	if req.URL.RawQuery != "q=a%2Fb&x=1+2" {
+		t.Fatalf("RawQuery = %q", req.URL.RawQuery)
+	}
+	if req.Host != "127.0.0.1:1314" {
+		t.Fatalf("Host = %q, want upstream host", req.Host)
 	}
 }
 

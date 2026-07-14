@@ -85,6 +85,8 @@ sites:
 - `static_media_dir`未指定かつ`.homecms.yml`の`media.folder`があるサイトでは、そのフォルダへstatic media uploadされ、`media.public_path`がMarkdown挿入パスに使われる
 - スニペットが選択サイトの`snippet_paths`または`<repo_path>/.vscode/md.code-snippets`から読み込まれる
 - Preview iframe が `/admin/preview/<site_id>/...` を参照する
+- Hugo/Eleventyのpreview serverが同じ`/admin/preview/<site_id>/...`配下で応答し、Hugoだけ404にならない
+- percent-encodingを含むpathとqueryがpreview proxyで書き換わらない
 - 初回previewでも、preview process起動直後のport未listenによる一時的な`502`にならない
 - preview内のroot-relative URL (`/images/foo.png`, `/about/`など) が同じsiteの`/admin/preview/<site_id>/...`へリダイレクトされる
 - サイトごとに別のpreview processが起動する
@@ -106,6 +108,7 @@ sites:
 - 記事一覧が`content_dir`配下から取得される
 - 記事を保存できる
 - Previewが`eleventy --serve`で起動する
+- Preview起動時に`--pathprefix /admin/preview/<site_id>/`が渡される
 - Buildがlockfileに対応するpackage manager経由で実行される
 - Dockerでは`tool-bootstrap`がlockfileに対応するfrozen installを完了してからPreview/Buildを実行できる
 

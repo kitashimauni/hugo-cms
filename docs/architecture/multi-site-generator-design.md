@@ -200,6 +200,8 @@ flowchart LR
 
 preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:<preview-port>`をブラウザへ露出しないことで、previewプロセスのbind先をローカルに閉じ込めやすくする。
 
+すべてのGenerator Adapterはpreview processを`SiteRuntime.PreviewURL`配下へmountする。Hugoは`--baseURL`、Eleventyは`--pathprefix`を使用する。proxyは外向きrequestのpath、`RawPath`、queryを再構築せず上流へ渡す。これにより、サイト固有のsection、permalink、percent-encodingをproxyが推測せず、新しいadapterも同じroute契約で追加できる。
+
 ### Site Runtime Bridge
 
 新しいsite-aware APIの主要経路では、HTTP handler層で選択サイトを`SiteRuntime`へ解決し、その値をサービスへ明示的に渡す。以前のようにリクエスト処理中だけ`config.RepoPath`などのprocess-wide runtime値を書き換えるbridgeは撤去済みである。
@@ -271,7 +273,7 @@ Eleventyはサイトの`package.json`にローカル依存関係として追加�
 mise exec -C <repository> -- npm run cms:preview -- --port=<allocated-port>
 ```
 
-Eleventyは入力・出力ディレクトリをサイト設定で変更でき、`--serve`と`--port`を提供している。
+Eleventyは入力・出力ディレクトリをサイト設定で変更でき、`--serve`と`--port`を提供している。previewでは`--pathprefix SiteRuntime.PreviewURL`も渡し、Hugoと同じ認証付きpreview route配下へmountする。
 
 - <https://www.11ty.dev/docs/usage/>
 - <https://www.11ty.dev/docs/config/>

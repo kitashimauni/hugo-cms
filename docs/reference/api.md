@@ -299,6 +299,8 @@ CSRFトークンを取得します。
 
 このrouteは必要に応じて対象サイトのpreview processを起動し、Site Registryの`hugo_server_bind`と`hugo_server_port`へproxyします。初回起動時はpreview portが接続可能になるまで短時間待機してからproxyします。サイトIDが存在しない場合は`400`、preview processを起動できない場合やport readiness timeout時は`502`を返します。
 
+Generator Adapterはpreview serverを`/admin/preview/:site/`配下へmountする共通契約です。Hugoは`--baseURL`、Eleventyは`--pathprefix`を使用します。proxyは外向きrequestのpath、percent-encoding、queryを再構築せず上流へ転送するため、ジェネレーター固有のsectionやpermalinkをproxy側へハードコードしません。
+
 iframe内でroot-relative URLへの遷移やasset requestが発生した場合、CMSは`Referer`の`/admin/preview/:site/...`から選択サイトを復元し、同じpreview route配下へ一時リダイレクトします。
 
 ---
