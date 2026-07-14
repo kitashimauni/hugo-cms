@@ -50,7 +50,7 @@ Hugo CMSのシステム構成と実装詳細について説明します。
 アプリケーションの起動と設定を担当:
 
 1. 設定の初期化 (`config.Init()`)
-2. Hugoサーバーの起動
+2. default siteのpreview server起動
 3. Ginルーターの設定
 4. ミドルウェアの適用
 5. グレースフルシャットダウン
@@ -60,7 +60,7 @@ Hugo CMSのシステム構成と実装詳細について説明します。
 /admin              # CMS UI
 /admin/auth/*       # 認証 (OAuth)
 /admin/api/*        # REST API (認証必須)
-/preview/*          # Hugoプレビュー (プロキシ)
+/admin/preview/:site/* # サイト別プレビュー (認証付きプロキシ)
 /health             # ヘルスチェック
 /ready              # 詳細ヘルスチェック
 ```
@@ -135,6 +135,8 @@ GIT_TOKEN=xxx
 #### generator.go / hugo_adapter.go / eleventy_adapter.go - ジェネレーター管理
 
 `GeneratorAdapter`がプレビュー起動・停止・再起動、ビルド、コンテンツ作成を抽象化する。`SITE_GENERATOR`またはSite Registryのdefault site設定から`HugoAdapter`または`EleventyAdapter`を選択する。従来の関数名は互換ラッパーとして維持している。
+
+各Adapterはpreview serverを`SiteRuntime.PreviewURL`配下へmountする。Hugoは`--baseURL`、Eleventyは`--pathprefix`を使い、HTTP proxyは認証付きpreview pathとそのencoding/queryを維持したまま上流へ転送する。
 
 `ProcessManager`はプロセス終了を明示的に待ち、世代の異なる監視処理が新しいプロセス状態を消去しないよう管理する。
 

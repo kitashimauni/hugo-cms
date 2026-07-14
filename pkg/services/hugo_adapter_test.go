@@ -54,6 +54,7 @@ func TestHugoAdapterCreateContentReturnsMatchedCollectionFormatError(t *testing.
 }
 
 func TestHugoArgsIncludeConfiguredContentDir(t *testing.T) {
+	t.Setenv("APP_URL", "http://cms.example")
 	runtime := config.NewSiteRuntime(config.SiteConfig{
 		ID:             "test",
 		RepoPath:       "repo",
@@ -77,6 +78,9 @@ func TestHugoArgsIncludeConfiguredContentDir(t *testing.T) {
 	}
 	if got := argValue(hugoServerArgs(runtime), "--source"); got != "." {
 		t.Fatalf("hugoServerArgs source = %q, want current working directory", got)
+	}
+	if got := argValue(hugoServerArgs(runtime), "--baseURL"); got != "http://cms.example/preview/" {
+		t.Fatalf("hugoServerArgs baseURL = %q, want authenticated preview base", got)
 	}
 	if got := argValue(hugoBuildArgs(runtime), "--source"); got != "." {
 		t.Fatalf("hugoBuildArgs source = %q, want current working directory", got)

@@ -71,23 +71,22 @@ func sitePreviewProxyHandler(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Preview unavailable"})
 		return
 	}
-	proxy := httputil.NewSingleHostReverseProxy(previewProxyURL)
-	previewPath := c.Param("path")
-	if previewPath == "" {
-		previewPath = "/"
-	}
-	proxy.Director = func(req *http.Request) {
-		req.URL.Scheme = previewProxyURL.Scheme
-		req.URL.Host = previewProxyURL.Host
-		req.URL.Path = previewPath
-		req.URL.RawPath = ""
-		req.Host = previewProxyURL.Host
-	}
+	proxy := newPreviewProxy(previewProxyURL)
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
 		slog.Warn("Site preview proxy failed", "site", siteID, "error", err)
 		http.Error(w, "Preview unavailable", http.StatusBadGateway)
 	}
 	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func newPreviewProxy(target *url.URL) *httputil.ReverseProxy {
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	baseDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		baseDirector(req)
+		req.Host = target.Host
+	}
+	return proxy
 }
 
 func sitePreviewAddress(site config.SiteConfig) string {

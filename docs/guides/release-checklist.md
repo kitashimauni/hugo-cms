@@ -52,6 +52,7 @@ Site Registryありで、少なくとも2サイトを用意して確認します
 - default siteの `/ready` と選択site APIが混ざらない
 - siteごとの preview port が重複していない
 - 非default site previewのroot-relative URLがdefault siteへ落ちない
+- preview proxyが`/admin/preview/<site_id>/`、percent-encoding、queryを保持して上流へ転送する
 - siteごとの snippets / media / Git設定が使われる
 
 ## 5. Hugo / Eleventy
@@ -65,6 +66,7 @@ Eleventyサイトでは次を確認します。
 
 - `package.json` とlockfileがある
 - lockfileに対応するpackage managerでpreview/buildされる
+- `--pathprefix`で認証付きpreview route配下へmountされる
 - preview停止時にwrapperの子プロセスが残らない
 
 ## 6. Docker

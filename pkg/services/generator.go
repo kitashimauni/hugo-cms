@@ -8,6 +8,9 @@ import (
 	"sync"
 )
 
+// GeneratorAdapter implementations must mount their preview server at
+// runtime.PreviewURL. The HTTP proxy preserves that public path verbatim so
+// preview routing remains generator-independent.
 type GeneratorAdapter interface {
 	Name() string
 	StartPreview(runtime config.SiteRuntime) error

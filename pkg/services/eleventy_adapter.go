@@ -38,12 +38,7 @@ func (adapter *EleventyAdapter) StartPreview(runtime config.SiteRuntime) error {
 
 	err = adapter.preview.Start(func() managedProcess {
 		args := append([]string{}, pm.Args...)
-		args = append(args,
-			"--serve",
-			"--port", runtime.HugoServerPort,
-			"--input", runtime.ContentDir,
-			"--output", runtime.PublicDir,
-		)
+		args = append(args, eleventyServerArgs(runtime)...)
 		cmd := generatorCommandWithEnv(runtime, []string{"NODE_ENV=development"}, pm.Bin, args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -69,6 +64,16 @@ func (adapter *EleventyAdapter) StopPreview() error {
 
 func (adapter *EleventyAdapter) IsPreviewRunning() bool {
 	return adapter.preview.Running()
+}
+
+func eleventyServerArgs(runtime config.SiteRuntime) []string {
+	return []string{
+		"--serve",
+		"--port", runtime.HugoServerPort,
+		"--input", runtime.ContentDir,
+		"--output", runtime.PublicDir,
+		"--pathprefix", runtime.PreviewURL,
+	}
 }
 
 func (*EleventyAdapter) Build(runtime config.SiteRuntime) (string, error) {

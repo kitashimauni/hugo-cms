@@ -250,7 +250,9 @@ CMSは設定読み込み時に、collection名・folder・path変数・`preview.
 /admin/preview/<site_id>/<page-path>
 ```
 
-サイトごとに`hugo_server_bind`と`hugo_server_port`の組み合わせを重複しない値にしてください。重複がある場合、CMSは起動時にSite Registryを不正として拒否します。`0.0.0.0`や`::`のようなwildcard bindは同じportの任意bindと衝突扱いになります。Hugoでは`hugo server`、Eleventyではlockfileに対応するpackage manager経由の`eleventy --serve`を使用します。
+サイトごとに`hugo_server_bind`と`hugo_server_port`の組み合わせを重複しない値にしてください。重複がある場合、CMSは起動時にSite Registryを不正として拒否します。`0.0.0.0`や`::`のようなwildcard bindは同じportの任意bindと衝突扱いになります。Hugoでは`hugo server --baseURL <preview_url>`、Eleventyではlockfileに対応するpackage manager経由の`eleventy --serve --pathprefix <preview_url>`を使用します。
+
+すべてのGenerator Adapterはpreview serverを`/admin/preview/<site_id>/`配下へmountします。CMSのproxyは受け取ったpath、percent-encoding、queryをそのまま上流へ転送します。新しいGenerator Adapterもこの契約を満たす必要があり、proxy側へサイト固有のsection名やpermalink規則を追加しません。
 
 初回preview requestで対象サイトのpreview processを起動した場合、CMSはproxyする前にpreview portが実際に接続可能になるまで短時間待機します。これにより、process起動直後にiframeが`502 Preview unavailable`になる揺らぎを抑えます。
 
