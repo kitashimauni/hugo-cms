@@ -137,7 +137,10 @@ sites:
 - autosaveと本文プレビューではcommit/pushされない
 - 「デプロイプレビューを更新」でだけ`cms-preview/<draft-id>`へcommit/pushされる
 - production worktreeのcurrent branch/indexが切り替わらない
+- production branch更新後の再previewが最新production commitをparentにする
 - draftごと、siteごとにbranch/stateが分離される
+- 同じdraft IDを別記事pathへ流用するとHTTP 409になり、stateの対象pathsが検証に使われる
+- publish中の同一draft更新が直列化され、remote branchとPR headがpreview済みcommitに一致しない場合はHTTP 409になる
 - Cloudflareで`queued / building / ready / failed`がCMS状態へ正規化される
 - ready URLとstateのcommit SHAが一致し、build中/失敗時は古いURLを表示しない
 - retryとdiscard cleanupを再実行できる

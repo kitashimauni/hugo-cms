@@ -77,6 +77,200 @@ func TestCommitAndPushDraftPreviewUsesTemporaryIndexWithoutCheckout(t *testing.T
 	}
 }
 
+func TestCommitAndPushDraftPreviewRebasesOntoLatestProductionBranch(t *testing.T) {
+	runtime, remotePath := setupDraftPreviewRepository(t)
+	selectedPath := filepath.Join(runtime.RepoPath, "content", "selected.md")
+	writeDraftTestFile(t, selectedPath, "draft version one\n")
+	_, firstCommit, err := commitAndPushDraftPreview(context.Background(), runtime, "token", "draft-rebase", []string{"content/selected.md"}, localDraftPush(t, runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeDraftTestFile(t, filepath.Join(runtime.RepoPath, "theme.txt"), "new production theme\n")
+	runGitForDraftTest(t, runtime.RepoPath, "add", "theme.txt")
+	runGitForDraftTest(t, runtime.RepoPath, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "update production theme")
+	productionCommit := strings.TrimSpace(runGitOutputForDraftTest(t, runtime.RepoPath, "rev-parse", "refs/heads/main"))
+	writeDraftTestFile(t, selectedPath, "draft version two\n")
+
+	_, secondCommit, err := commitAndPushDraftPreview(context.Background(), runtime, "token", "draft-rebase", []string{"content/selected.md"}, localDraftPush(t, runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondCommit == firstCommit {
+		t.Fatal("preview commit did not change")
+	}
+	if parent := strings.TrimSpace(runGitOutputForDraftTest(t, runtime.RepoPath, "rev-parse", secondCommit+"^")); parent != productionCommit {
+		t.Fatalf("preview parent = %s, want latest production %s", parent, productionCommit)
+	}
+	if got := runGitOutputForDraftTest(t, runtime.RepoPath, "show", secondCommit+":theme.txt"); got != "new production theme\n" {
+		t.Fatalf("production theme = %q", got)
+	}
+	if remoteCommit := strings.TrimSpace(runGitOutputForDraftTest(t, remotePath, "rev-parse", "refs/heads/cms-preview/draft-rebase")); remoteCommit != secondCommit {
+		t.Fatalf("remote commit = %s, want %s", remoteCommit, secondCommit)
+	}
+}
+
+func TestCommitAndPushDraftPreviewLeaseFailurePreservesRemoteAndRollsBackLocalRef(t *testing.T) {
+	runtime, remotePath := setupDraftPreviewRepository(t)
+	selectedPath := filepath.Join(runtime.RepoPath, "content", "selected.md")
+	writeDraftTestFile(t, selectedPath, "draft version one\n")
+	_, firstCommit, err := commitAndPushDraftPreview(context.Background(), runtime, "token", "draft-lease", []string{"content/selected.md"}, localDraftPush(t, runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	productionCommit := strings.TrimSpace(runGitOutputForDraftTest(t, runtime.RepoPath, "rev-parse", "refs/heads/main"))
+	runGitForDraftTest(t, remotePath, "update-ref", "refs/heads/cms-preview/draft-lease", productionCommit, firstCommit)
+	writeDraftTestFile(t, selectedPath, "draft version two\n")
+
+	if _, _, err := commitAndPushDraftPreview(context.Background(), runtime, "token", "draft-lease", []string{"content/selected.md"}, localDraftPush(t, runtime)); err == nil {
+		t.Fatal("force-with-lease unexpectedly overwrote a moved remote branch")
+	}
+	if remoteCommit := strings.TrimSpace(runGitOutputForDraftTest(t, remotePath, "rev-parse", "refs/heads/cms-preview/draft-lease")); remoteCommit != productionCommit {
+		t.Fatalf("remote commit = %s, want externally moved %s", remoteCommit, productionCommit)
+	}
+	if localCommit := strings.TrimSpace(runGitOutputForDraftTest(t, runtime.RepoPath, "rev-parse", "refs/heads/cms-preview/draft-lease")); localCommit != firstCommit {
+		t.Fatalf("local ref = %s, want rollback to %s", localCommit, firstCommit)
+	}
+}
+
+func TestUpdateDraftPreviewPersistsArticleAndPathsAndRejectsRebinding(t *testing.T) {
+	runtime, _ := setupDraftPreviewRepository(t)
+	writeDraftTestFile(t, filepath.Join(runtime.RepoPath, "content", "selected.md"), "changed\n")
+	store, err := NewDraftPreviewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakePreviewProvider{triggerErr: &PreviewProviderError{Kind: PreviewProviderNotFound, Operation: "trigger"}}
+	paths := []string{"content/selected.md"}
+	state, err := updateDraftPreview(context.Background(), runtime, "token", "draft-state", "selected.md", paths, store, provider, localDraftPush(t, runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths[0] = "content/unrelated.md"
+	stored, err := store.Get(runtime.ID, state.DraftID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ArticlePath != "selected.md" || len(stored.Paths) != 1 || stored.Paths[0] != "content/selected.md" {
+		t.Fatalf("stored draft identity = %#v", stored)
+	}
+	if _, err := updateDraftPreview(context.Background(), runtime, "token", "draft-state", "unrelated.md", []string{"content/unrelated.md"}, store, provider, localDraftPush(t, runtime)); !errors.Is(err, ErrDraftPreviewArticleMismatch) {
+		t.Fatalf("rebind error = %v, want article mismatch", err)
+	}
+}
+
+func TestPublishDraftPreviewRejectsDifferentArticleAndMovedRemoteBranch(t *testing.T) {
+	runtime, _ := setupDraftPreviewRepository(t)
+	writeDraftTestFile(t, filepath.Join(runtime.RepoPath, "content", "selected.md"), "reviewed\n")
+	branch, commitSHA, err := commitAndPushDraftPreview(context.Background(), runtime, "token", "draft-publish", []string{"content/selected.md"}, localDraftPush(t, runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewDraftPreviewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	state := DraftPreviewState{SiteID: runtime.ID, DraftID: "draft-publish", ArticlePath: "selected.md", Paths: []string{"content/selected.md"}, Branch: branch, CommitSHA: commitSHA, DeploymentID: "deployment-1", Status: PreviewDeploymentReady, URL: "https://immutable.example", CreatedAt: now, UpdatedAt: now}
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakePreviewProvider{deployment: PreviewDeployment{ID: state.DeploymentID, Branch: branch, CommitSHA: commitSHA, Status: PreviewDeploymentReady, URL: state.URL}}
+	remoteCalled := false
+	createCalled := false
+	remoteHead := func(context.Context, config.SiteRuntime, string, string) (string, error) {
+		remoteCalled = true
+		return strings.Repeat("f", 40), nil
+	}
+	createPR := func(context.Context, config.SiteRuntime, string, DraftPreviewState) (string, error) {
+		createCalled = true
+		return "https://github.com/example/site/pull/1", nil
+	}
+
+	if _, err := publishDraftPreview(context.Background(), runtime, "token", state.DraftID, "unrelated.md", store, provider, remoteHead, createPR); !errors.Is(err, ErrDraftPreviewArticleMismatch) {
+		t.Fatalf("article mismatch error = %v", err)
+	}
+	if remoteCalled || createCalled {
+		t.Fatal("article mismatch reached remote or pull request operations")
+	}
+	if _, err := publishDraftPreview(context.Background(), runtime, "token", state.DraftID, state.ArticlePath, store, provider, remoteHead, createPR); !errors.Is(err, ErrDraftPreviewBranchMoved) {
+		t.Fatalf("remote mismatch error = %v", err)
+	}
+	if !remoteCalled || createCalled {
+		t.Fatalf("remote/create calls = %v/%v", remoteCalled, createCalled)
+	}
+
+	remoteChecks := 0
+	createCalled = false
+	remoteHead = func(context.Context, config.SiteRuntime, string, string) (string, error) {
+		remoteChecks++
+		if remoteChecks == 1 {
+			return commitSHA, nil
+		}
+		return strings.Repeat("e", 40), nil
+	}
+	if _, err := publishDraftPreview(context.Background(), runtime, "token", state.DraftID, state.ArticlePath, store, provider, remoteHead, createPR); !errors.Is(err, ErrDraftPreviewBranchMoved) {
+		t.Fatalf("post-PR remote mismatch error = %v", err)
+	}
+	if remoteChecks != 2 || !createCalled {
+		t.Fatalf("remote checks/create calls = %d/%v", remoteChecks, createCalled)
+	}
+}
+
+func TestPublishDraftPreviewHoldsDraftLockThroughPullRequestCreation(t *testing.T) {
+	runtime, _ := setupDraftPreviewRepository(t)
+	writeDraftTestFile(t, filepath.Join(runtime.RepoPath, "content", "selected.md"), "reviewed\n")
+	branch, commitSHA, err := commitAndPushDraftPreview(context.Background(), runtime, "token", "draft-atomic", []string{"content/selected.md"}, localDraftPush(t, runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewDraftPreviewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	state := DraftPreviewState{SiteID: runtime.ID, DraftID: "draft-atomic", ArticlePath: "selected.md", Paths: []string{"content/selected.md"}, Branch: branch, CommitSHA: commitSHA, DeploymentID: "deployment-1", Status: PreviewDeploymentReady, URL: "https://immutable.example", CreatedAt: now, UpdatedAt: now}
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakePreviewProvider{deployment: PreviewDeployment{ID: state.DeploymentID, Branch: branch, CommitSHA: commitSHA, Status: PreviewDeploymentReady, URL: state.URL}}
+	pullRequestStarted := make(chan struct{})
+	releasePullRequest := make(chan struct{})
+	publishDone := make(chan error, 1)
+	go func() {
+		_, err := publishDraftPreview(context.Background(), runtime, "token", state.DraftID, state.ArticlePath, store, provider,
+			func(context.Context, config.SiteRuntime, string, string) (string, error) { return commitSHA, nil },
+			func(context.Context, config.SiteRuntime, string, DraftPreviewState) (string, error) {
+				close(pullRequestStarted)
+				<-releasePullRequest
+				return "https://github.com/example/site/pull/1", nil
+			})
+		publishDone <- err
+	}()
+	<-pullRequestStarted
+
+	lockAcquired := make(chan struct{})
+	go func() {
+		unlock := lockDraftPreviewOperation(runtime.ID, state.DraftID)
+		close(lockAcquired)
+		unlock()
+	}()
+	select {
+	case <-lockAcquired:
+		t.Fatal("same draft lock was released before pull request creation completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releasePullRequest)
+	if err := <-publishDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-lockAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("same draft lock was not released after publish completed")
+	}
+}
+
 func TestDraftPreviewMatchesWorkingTreeDetectsStaleContent(t *testing.T) {
 	runtime, _ := setupDraftPreviewRepository(t)
 	selectedPath := filepath.Join(runtime.RepoPath, "content", "selected.md")
@@ -86,18 +280,18 @@ func TestDraftPreviewMatchesWorkingTreeDetectsStaleContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	state := DraftPreviewState{SiteID: runtime.ID, DraftID: "draft-verify", Branch: branch, CommitSHA: commitSHA, Status: PreviewDeploymentReady, URL: "https://abc.pages.dev", CreatedAt: now, UpdatedAt: now}
-	match, err := DraftPreviewMatchesWorkingTree(context.Background(), runtime, state, []string{"content/selected.md"})
+	state := DraftPreviewState{SiteID: runtime.ID, DraftID: "draft-verify", ArticlePath: "selected.md", Paths: []string{"content/selected.md"}, Branch: branch, CommitSHA: commitSHA, Status: PreviewDeploymentReady, URL: "https://abc.pages.dev", CreatedAt: now, UpdatedAt: now}
+	match, err := draftPreviewMatchesWorkingTree(context.Background(), runtime, state)
 	if err != nil || !match {
 		t.Fatalf("initial match = %v, error = %v", match, err)
 	}
 	writeDraftTestFile(t, selectedPath, "edited after deployment\n")
-	match, err = DraftPreviewMatchesWorkingTree(context.Background(), runtime, state, []string{"content/selected.md"})
+	match, err = draftPreviewMatchesWorkingTree(context.Background(), runtime, state)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if match {
-		t.Fatal("DraftPreviewMatchesWorkingTree() accepted stale deployed content")
+		t.Fatal("draftPreviewMatchesWorkingTree() accepted stale deployed content")
 	}
 }
 
@@ -137,6 +331,8 @@ func TestDraftPreviewStoreRoundTripAndIdentityProtection(t *testing.T) {
 	state := DraftPreviewState{
 		SiteID:          "docs site",
 		DraftID:         "draft-1",
+		ArticlePath:     "selected.md",
+		Paths:           []string{"content/selected.md"},
 		Branch:          "cms-preview/draft-1",
 		CommitSHA:       testCommitSHA,
 		DeploymentID:    "deployment-1",
@@ -183,8 +379,8 @@ func TestDraftPreviewStoreListsCleanupTombstones(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	for _, state := range []DraftPreviewState{
-		{SiteID: "docs", DraftID: "pending", Branch: "cms-preview/pending", CommitSHA: testCommitSHA, Status: PreviewDeploymentFailed, CleanupPending: true, CreatedAt: now, UpdatedAt: now},
-		{SiteID: "docs", DraftID: "active", Branch: "cms-preview/active", CommitSHA: testCommitSHA, Status: PreviewDeploymentBuilding, CreatedAt: now, UpdatedAt: now},
+		{SiteID: "docs", DraftID: "pending", ArticlePath: "selected.md", Paths: []string{"content/selected.md"}, Branch: "cms-preview/pending", CommitSHA: testCommitSHA, Status: PreviewDeploymentFailed, CleanupPending: true, CreatedAt: now, UpdatedAt: now},
+		{SiteID: "docs", DraftID: "active", ArticlePath: "selected.md", Paths: []string{"content/selected.md"}, Branch: "cms-preview/active", CommitSHA: testCommitSHA, Status: PreviewDeploymentBuilding, CreatedAt: now, UpdatedAt: now},
 	} {
 		if err := store.Save(state); err != nil {
 			t.Fatal(err)
@@ -205,7 +401,7 @@ func TestApplyProviderDeploymentNeverExposesWrongOrUnreadyURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	state := DraftPreviewState{SiteID: "docs", DraftID: "draft-1", Branch: "cms-preview/draft-1", CommitSHA: testCommitSHA, Status: PreviewDeploymentQueued, CreatedAt: now, UpdatedAt: now}
+	state := DraftPreviewState{SiteID: "docs", DraftID: "draft-1", ArticlePath: "selected.md", Paths: []string{"content/selected.md"}, Branch: "cms-preview/draft-1", CommitSHA: testCommitSHA, Status: PreviewDeploymentQueued, CreatedAt: now, UpdatedAt: now}
 	if err := store.Save(state); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +432,7 @@ func TestCleanupDraftPreviewDeletesRemoteProviderLocalRefAndState(t *testing.T) 
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	state := DraftPreviewState{SiteID: runtime.ID, DraftID: "draft-1", Branch: branch, CommitSHA: commitSHA, DeploymentID: "deployment-1", Status: PreviewDeploymentReady, URL: "https://immutable.example", CreatedAt: now, UpdatedAt: now}
+	state := DraftPreviewState{SiteID: runtime.ID, DraftID: "draft-1", ArticlePath: "selected.md", Paths: []string{"content/selected.md"}, Branch: branch, CommitSHA: commitSHA, DeploymentID: "deployment-1", Status: PreviewDeploymentReady, URL: "https://immutable.example", CreatedAt: now, UpdatedAt: now}
 	if err := store.Save(state); err != nil {
 		t.Fatal(err)
 	}

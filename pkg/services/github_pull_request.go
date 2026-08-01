@@ -23,16 +23,19 @@ type githubPullRequestClient struct {
 
 type githubPullRequest struct {
 	HTMLURL string `json:"html_url"`
+	Head    struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
 }
 
-func CreateDraftPreviewPullRequest(ctx context.Context, runtime config.SiteRuntime, token string, state DraftPreviewState, articlePath string) (string, error) {
-	return createDraftPreviewPullRequest(ctx, runtime, token, state, articlePath, githubPullRequestClient{
+func CreateDraftPreviewPullRequest(ctx context.Context, runtime config.SiteRuntime, token string, state DraftPreviewState) (string, error) {
+	return createDraftPreviewPullRequest(ctx, runtime, token, state, githubPullRequestClient{
 		baseURL:    githubAPIBaseURL,
 		httpClient: &http.Client{Timeout: 15 * time.Second},
 	})
 }
 
-func createDraftPreviewPullRequest(ctx context.Context, runtime config.SiteRuntime, token string, state DraftPreviewState, articlePath string, client githubPullRequestClient) (string, error) {
+func createDraftPreviewPullRequest(ctx context.Context, runtime config.SiteRuntime, token string, state DraftPreviewState, client githubPullRequestClient) (string, error) {
 	if strings.TrimSpace(token) == "" {
 		return "", fmt.Errorf("GitHub token is required")
 	}
@@ -66,10 +69,10 @@ func createDraftPreviewPullRequest(ctx context.Context, runtime config.SiteRunti
 		return "", err
 	}
 	if len(existing) > 0 {
-		return validateGitHubPullRequestURL(existing[0].HTMLURL)
+		return validateGitHubPullRequest(existing[0], state.CommitSHA)
 	}
 
-	titlePath := strings.TrimSpace(articlePath)
+	titlePath := strings.TrimSpace(state.ArticlePath)
 	if titlePath == "" {
 		titlePath = state.DraftID
 	}
@@ -85,7 +88,7 @@ func createDraftPreviewPullRequest(ctx context.Context, runtime config.SiteRunti
 	if err := githubJSONRequest(ctx, client.httpClient, token, http.MethodPost, requestURL, payload, &created); err != nil {
 		return "", err
 	}
-	return validateGitHubPullRequestURL(created.HTMLURL)
+	return validateGitHubPullRequest(created, state.CommitSHA)
 }
 
 func githubRepository(remoteURL string) (string, string, error) {
@@ -148,4 +151,11 @@ func validateGitHubPullRequestURL(rawURL string) (string, error) {
 		return "", fmt.Errorf("GitHub returned an invalid pull request URL")
 	}
 	return parsed.String(), nil
+}
+
+func validateGitHubPullRequest(pullRequest githubPullRequest, expectedCommit string) (string, error) {
+	if !strings.EqualFold(pullRequest.Head.SHA, expectedCommit) {
+		return "", ErrDraftPreviewBranchMoved
+	}
+	return validateGitHubPullRequestURL(pullRequest.HTMLURL)
 }

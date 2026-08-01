@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -31,17 +32,18 @@ func TestCreateDraftPreviewPullRequestCreatesDraftPR(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
 			t.Fatal(err)
 		}
-		_, _ = w.Write([]byte(`{"html_url":"https://github.com/example/site/pull/42"}`))
+		_, _ = w.Write([]byte(`{"html_url":"https://github.com/example/site/pull/42","head":{"sha":"` + testCommitSHA + `"}}`))
 	}))
 	defer server.Close()
 
 	runtime := config.SiteRuntime{ID: "site", RepoPath: repo, GitRemote: "origin", GitBranch: "main"}
 	state := DraftPreviewState{
 		SiteID: "site", DraftID: "draft-1", Branch: "cms-preview/draft-1",
-		CommitSHA: "0123456789abcdef0123456789abcdef01234567", Status: PreviewDeploymentReady,
+		ArticlePath: "posts/hello.md", Paths: []string{"content/posts/hello.md"},
+		CommitSHA: testCommitSHA, Status: PreviewDeploymentReady,
 		URL: "https://abc.pages.dev", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
-	got, err := createDraftPreviewPullRequest(context.Background(), runtime, "test-token", state, "posts/hello.md", githubPullRequestClient{baseURL: server.URL, httpClient: server.Client()})
+	got, err := createDraftPreviewPullRequest(context.Background(), runtime, "test-token", state, githubPullRequestClient{baseURL: server.URL, httpClient: server.Client()})
 	if err != nil {
 		t.Fatalf("createDraftPreviewPullRequest() error = %v", err)
 	}
@@ -50,6 +52,42 @@ func TestCreateDraftPreviewPullRequestCreatesDraftPR(t *testing.T) {
 	}
 	if posted["head"] != state.Branch || posted["base"] != "main" || posted["draft"] != true {
 		t.Fatalf("payload = %#v", posted)
+	}
+}
+
+func TestCreateDraftPreviewPullRequestRejectsMismatchedExistingOrCreatedHead(t *testing.T) {
+	for _, existing := range []bool{true, false} {
+		t.Run(map[bool]string{true: "existing", false: "created"}[existing], func(t *testing.T) {
+			repo := t.TempDir()
+			runGitForPullRequestTest(t, repo, "init")
+			runGitForPullRequestTest(t, repo, "remote", "add", "origin", "https://github.com/example/site.git")
+			postCalled := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					if existing {
+						_, _ = w.Write([]byte(`[{"html_url":"https://github.com/example/site/pull/42","head":{"sha":"ffffffffffffffffffffffffffffffffffffffff"}}]`))
+					} else {
+						_, _ = w.Write([]byte(`[]`))
+					}
+					return
+				}
+				postCalled = true
+				_, _ = w.Write([]byte(`{"html_url":"https://github.com/example/site/pull/42","head":{"sha":"ffffffffffffffffffffffffffffffffffffffff"}}`))
+			}))
+			defer server.Close()
+
+			runtime := config.SiteRuntime{ID: "site", RepoPath: repo, GitRemote: "origin", GitBranch: "main"}
+			now := time.Now()
+			state := DraftPreviewState{SiteID: "site", DraftID: "draft-1", ArticlePath: "posts/hello.md", Paths: []string{"content/posts/hello.md"}, Branch: "cms-preview/draft-1", CommitSHA: testCommitSHA, Status: PreviewDeploymentReady, URL: "https://abc.pages.dev", CreatedAt: now, UpdatedAt: now}
+			_, err := createDraftPreviewPullRequest(context.Background(), runtime, "test-token", state, githubPullRequestClient{baseURL: server.URL, httpClient: server.Client()})
+			if !errors.Is(err, ErrDraftPreviewBranchMoved) {
+				t.Fatalf("error = %v, want branch moved", err)
+			}
+			if postCalled == existing {
+				t.Fatalf("postCalled = %v, existing = %v", postCalled, existing)
+			}
+		})
 	}
 }
 

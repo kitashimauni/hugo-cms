@@ -39,7 +39,7 @@ func UpdateDeploymentPreview(c *gin.Context) {
 	if !ok {
 		return
 	}
-	state, err := services.UpdateDraftPreview(c.Request.Context(), runtime, token, req.DraftID, paths, store, provider)
+	state, err := services.UpdateDraftPreview(c.Request.Context(), runtime, token, req.DraftID, req.Path, paths, store, provider)
 	if err != nil {
 		handleDeploymentError(c, "update", err)
 		return
@@ -121,41 +121,21 @@ func PublishDeploymentPreview(c *gin.Context) {
 		ErrorBadRequest(c, "Invalid JSON")
 		return
 	}
-	paths, err := deploymentDraftPaths(runtime, req.Path)
-	if err != nil {
-		ErrorBadRequest(c, err.Error())
+	if strings.ToLower(filepath.Ext(strings.TrimSpace(req.Path))) != ".md" || services.SafeJoin(runtime.RepoPath, runtime.ContentDir, req.Path) == "" {
+		ErrorBadRequest(c, "Invalid article path")
 		return
 	}
 	store, provider, ok := deploymentDependencies(c, runtime)
 	if !ok {
 		return
 	}
-	state, err := services.RefreshDraftPreview(c.Request.Context(), runtime.ID, req.DraftID, store, provider)
+	prURL, err := services.PublishDraftPreview(c.Request.Context(), runtime, token, req.DraftID, req.Path, store, provider)
 	if errors.Is(err, os.ErrNotExist) {
 		ErrorNotFound(c, "Deployment preview does not exist")
 		return
 	}
 	if err != nil {
-		handleDeploymentError(c, "publish status", err)
-		return
-	}
-	if state.Status != services.PreviewDeploymentReady || state.URL == "" {
-		ErrorConflict(c, "Deployment preview is not ready")
-		return
-	}
-	matches, err := services.DraftPreviewMatchesWorkingTree(c.Request.Context(), runtime, state, paths)
-	if err != nil {
-		handleDeploymentError(c, "verify publish", err)
-		return
-	}
-	if !matches {
-		ErrorConflict(c, "Article changed after the deployment preview; update the preview before publishing")
-		return
-	}
-	prURL, err := services.CreateDraftPreviewPullRequest(c.Request.Context(), runtime, token, state, req.Path)
-	if err != nil {
-		slog.Error("Failed to create deployment preview pull request", "site", runtime.ID, "draft", req.DraftID, "error", err)
-		ErrorInternal(c, "Failed to create pull request")
+		handleDeploymentError(c, "publish", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "url": prURL})
@@ -224,6 +204,13 @@ func deploymentDraftPaths(runtime config.SiteRuntime, articlePath string) ([]str
 }
 
 func handleDeploymentError(c *gin.Context, operation string, err error) {
+	if errors.Is(err, services.ErrDraftPreviewArticleMismatch) ||
+		errors.Is(err, services.ErrDraftPreviewNotReady) ||
+		errors.Is(err, services.ErrDraftPreviewStale) ||
+		errors.Is(err, services.ErrDraftPreviewBranchMoved) {
+		ErrorConflict(c, err.Error())
+		return
+	}
 	if services.IsPreviewProviderError(err, services.PreviewProviderInvalidInput) || strings.Contains(strings.ToLower(err.Error()), "invalid draft") {
 		ErrorBadRequest(c, "Invalid deployment preview request")
 		return
@@ -240,6 +227,7 @@ func deploymentStateResponse(runtime config.SiteRuntime, state services.DraftPre
 	response := gin.H{
 		"site_id":          state.SiteID,
 		"draft_id":         state.DraftID,
+		"article_path":     state.ArticlePath,
 		"branch":           state.Branch,
 		"commit_sha":       state.CommitSHA,
 		"deployment_id":    state.DeploymentID,

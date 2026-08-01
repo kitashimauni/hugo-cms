@@ -34,11 +34,23 @@ type draftPreviewOperationLock struct {
 
 type gitPushFunc func(dir, token string, args ...string) (string, error)
 
+type draftPreviewRemoteHeadFunc func(context.Context, config.SiteRuntime, string, string) (string, error)
+type draftPreviewPullRequestFunc func(context.Context, config.SiteRuntime, string, DraftPreviewState) (string, error)
+
 const previewBranchPrefix = "cms-preview/"
+
+var (
+	ErrDraftPreviewArticleMismatch = errors.New("draft preview article does not match request")
+	ErrDraftPreviewNotReady        = errors.New("draft preview is not ready")
+	ErrDraftPreviewStale           = errors.New("draft preview content is stale")
+	ErrDraftPreviewBranchMoved     = errors.New("draft preview branch no longer matches the reviewed commit")
+)
 
 type DraftPreviewState struct {
 	SiteID          string                  `json:"site_id"`
 	DraftID         string                  `json:"draft_id"`
+	ArticlePath     string                  `json:"article_path"`
+	Paths           []string                `json:"paths"`
 	Branch          string                  `json:"branch"`
 	CommitSHA       string                  `json:"commit_sha"`
 	DeploymentID    string                  `json:"deployment_id,omitempty"`
@@ -218,26 +230,31 @@ func CommitAndPushDraftPreview(ctx context.Context, runtime config.SiteRuntime, 
 	})
 }
 
-// DraftPreviewMatchesWorkingTree verifies that the files covered by a draft
+// draftPreviewMatchesWorkingTree verifies that the files covered by a draft
 // still produce the exact committed tree. This is the server-side counterpart
 // of the UI's stale marker and prevents a client from creating a PR after
 // editing content that has not been deployed.
-func DraftPreviewMatchesWorkingTree(ctx context.Context, runtime config.SiteRuntime, state DraftPreviewState, paths []string) (bool, error) {
+func draftPreviewMatchesWorkingTree(ctx context.Context, runtime config.SiteRuntime, state DraftPreviewState) (bool, error) {
+	unlock := LockRepositoryOperation()
+	defer unlock()
+	return draftPreviewMatchesWorkingTreeLocked(ctx, runtime, state)
+}
+
+// draftPreviewMatchesWorkingTreeLocked requires the repository operation lock.
+func draftPreviewMatchesWorkingTreeLocked(ctx context.Context, runtime config.SiteRuntime, state DraftPreviewState) (bool, error) {
 	if err := validateDraftPreviewState(state); err != nil {
 		return false, err
 	}
 	if state.SiteID != runtime.ID {
 		return false, fmt.Errorf("draft preview does not belong to the selected site")
 	}
-	validatedPaths, err := validateDraftPaths(runtime.RepoPath, paths)
+	validatedPaths, err := validateDraftPaths(runtime.RepoPath, state.Paths)
 	if err != nil {
 		return false, err
 	}
 	commandContext, cancel := context.WithTimeout(ctx, config.GitCommandTimeout)
 	defer cancel()
 
-	unlock := LockRepositoryOperation()
-	defer unlock()
 	index, err := os.CreateTemp("", "homecms-verify-index-*")
 	if err != nil {
 		return false, fmt.Errorf("create verification Git index: %w", err)
@@ -307,7 +324,11 @@ func commitAndPushDraftPreview(ctx context.Context, runtime config.SiteRuntime, 
 	}
 	defer os.Remove(indexPath)
 
-	baseCommit, localBranchExists, err := draftBaseCommit(ctx, runtime, branch)
+	previousCommit, localBranchExists, err := localDraftCommit(ctx, runtime, branch)
+	if err != nil {
+		return "", "", err
+	}
+	baseCommit, err := productionBaseCommit(ctx, runtime)
 	if err != nil {
 		return "", "", err
 	}
@@ -352,19 +373,35 @@ func commitAndPushDraftPreview(ctx context.Context, runtime config.SiteRuntime, 
 	ref := "refs/heads/" + branch
 	updateArgs := []string{"update-ref", ref, commitSHA}
 	if localBranchExists {
-		updateArgs = append(updateArgs, baseCommit)
+		updateArgs = append(updateArgs, previousCommit)
 	}
 	if _, err := runGitCommand(ctx, runtime.RepoPath, nil, updateArgs...); err != nil {
 		return "", "", fmt.Errorf("update local draft branch: %w", err)
 	}
-	pushLog, err := push(runtime.RepoPath, token, "push", runtime.GitRemote, ref+":"+ref)
+	lease := "--force-with-lease=" + ref + ":" + previousCommit
+	pushLog, err := push(runtime.RepoPath, token, "push", lease, runtime.GitRemote, ref+":"+ref)
 	if err != nil {
+		rollbackArgs := []string{"update-ref"}
+		if localBranchExists {
+			rollbackArgs = append(rollbackArgs, ref, previousCommit, commitSHA)
+		} else {
+			rollbackArgs = append(rollbackArgs, "-d", ref, commitSHA)
+		}
+		if _, rollbackErr := runGitCommand(ctx, runtime.RepoPath, nil, rollbackArgs...); rollbackErr != nil {
+			return "", "", fmt.Errorf("push draft branch: %w: %s; rollback local draft ref: %v", err, strings.TrimSpace(pushLog), rollbackErr)
+		}
 		return "", "", fmt.Errorf("push draft branch: %w: %s", err, strings.TrimSpace(pushLog))
 	}
 	return branch, commitSHA, nil
 }
 
-func UpdateDraftPreview(ctx context.Context, runtime config.SiteRuntime, token, draftID string, paths []string, store *DraftPreviewStore, provider PreviewDeploymentProvider) (DraftPreviewState, error) {
+func UpdateDraftPreview(ctx context.Context, runtime config.SiteRuntime, token, draftID, articlePath string, paths []string, store *DraftPreviewStore, provider PreviewDeploymentProvider) (DraftPreviewState, error) {
+	return updateDraftPreview(ctx, runtime, token, draftID, articlePath, paths, store, provider, func(_ string, token string, args ...string) (string, error) {
+		return ExecuteGitWithTokenForRuntime(runtime, token, args...)
+	})
+}
+
+func updateDraftPreview(ctx context.Context, runtime config.SiteRuntime, token, draftID, articlePath string, paths []string, store *DraftPreviewStore, provider PreviewDeploymentProvider, push gitPushFunc) (DraftPreviewState, error) {
 	if store == nil || provider == nil {
 		return DraftPreviewState{}, fmt.Errorf("draft preview store and provider are required")
 	}
@@ -374,27 +411,44 @@ func UpdateDraftPreview(ctx context.Context, runtime config.SiteRuntime, token, 
 	if err := validateDraftID(draftID); err != nil {
 		return DraftPreviewState{}, err
 	}
-	unlockOperation := lockDraftPreviewOperation(runtime.ID, draftID)
-	defer unlockOperation()
-	branch, commitSHA, err := CommitAndPushDraftPreview(ctx, runtime, token, draftID, paths)
+	articlePath, err := normalizeDraftArticlePath(runtime, articlePath)
 	if err != nil {
 		return DraftPreviewState{}, err
 	}
+	validatedPaths, err := validateDraftPaths(runtime.RepoPath, paths)
+	if err != nil {
+		return DraftPreviewState{}, err
+	}
+	if validatedPaths[0] != draftArticleRepoPath(runtime, articlePath) {
+		return DraftPreviewState{}, fmt.Errorf("draft paths do not match article path")
+	}
+	unlockOperation := lockDraftPreviewOperation(runtime.ID, draftID)
+	defer unlockOperation()
 	now := time.Now().UTC()
+	createdAt := now
+	if previous, getErr := store.Get(runtime.ID, draftID); getErr == nil {
+		if previous.ArticlePath != articlePath {
+			return DraftPreviewState{}, ErrDraftPreviewArticleMismatch
+		}
+		createdAt = previous.CreatedAt
+	} else if !errors.Is(getErr, os.ErrNotExist) {
+		return DraftPreviewState{}, getErr
+	}
+	branch, commitSHA, err := commitAndPushDraftPreview(ctx, runtime, token, draftID, validatedPaths, push)
+	if err != nil {
+		return DraftPreviewState{}, err
+	}
 	state := DraftPreviewState{
 		SiteID:          runtime.ID,
 		DraftID:         draftID,
+		ArticlePath:     articlePath,
+		Paths:           append([]string(nil), validatedPaths...),
 		Branch:          branch,
 		CommitSHA:       commitSHA,
 		Status:          PreviewDeploymentQueued,
 		AccessProtected: runtime.PreviewDeployment.AccessProtected,
-		CreatedAt:       now,
+		CreatedAt:       createdAt,
 		UpdatedAt:       now,
-	}
-	if previous, getErr := store.Get(runtime.ID, draftID); getErr == nil {
-		state.CreatedAt = previous.CreatedAt
-	} else if !errors.Is(getErr, os.ErrNotExist) {
-		return DraftPreviewState{}, getErr
 	}
 	if err := store.Save(state); err != nil {
 		return DraftPreviewState{}, err
@@ -470,6 +524,93 @@ func RetryDraftPreview(ctx context.Context, siteID, draftID string, store *Draft
 	return applyProviderDeployment(store, state, deployment)
 }
 
+// PublishDraftPreview verifies and publishes one reviewed draft as an atomic
+// draft operation. Update, retry, and cleanup for the same draft cannot move
+// its branch until the pull request lookup or creation has completed.
+func PublishDraftPreview(ctx context.Context, runtime config.SiteRuntime, token, draftID, requestedArticlePath string, store *DraftPreviewStore, provider PreviewDeploymentProvider) (string, error) {
+	return publishDraftPreview(ctx, runtime, token, draftID, requestedArticlePath, store, provider, remoteDraftBranchCommit, CreateDraftPreviewPullRequest)
+}
+
+func publishDraftPreview(ctx context.Context, runtime config.SiteRuntime, token, draftID, requestedArticlePath string, store *DraftPreviewStore, provider PreviewDeploymentProvider, remoteHead draftPreviewRemoteHeadFunc, createPullRequest draftPreviewPullRequestFunc) (string, error) {
+	if store == nil || provider == nil || remoteHead == nil || createPullRequest == nil {
+		return "", fmt.Errorf("draft preview publish dependencies are required")
+	}
+	if strings.TrimSpace(runtime.ID) == "" {
+		return "", fmt.Errorf("site ID is required")
+	}
+	if err := validateDraftID(draftID); err != nil {
+		return "", err
+	}
+	articlePath, err := normalizeDraftArticlePath(runtime, requestedArticlePath)
+	if err != nil {
+		return "", err
+	}
+
+	unlockOperation := lockDraftPreviewOperation(runtime.ID, draftID)
+	defer unlockOperation()
+
+	state, err := refreshDraftPreview(ctx, runtime.ID, draftID, store, provider)
+	if err != nil {
+		return "", err
+	}
+	if state.ArticlePath != articlePath {
+		return "", ErrDraftPreviewArticleMismatch
+	}
+	if state.Status != PreviewDeploymentReady || state.URL == "" {
+		return "", ErrDraftPreviewNotReady
+	}
+
+	unlocksRepository := LockRepositoryOperation()
+	matches, matchErr := draftPreviewMatchesWorkingTreeLocked(ctx, runtime, state)
+	unlocksRepository()
+	if matchErr != nil {
+		return "", matchErr
+	}
+	if !matches {
+		return "", ErrDraftPreviewStale
+	}
+
+	remoteCommit, err := remoteHead(ctx, runtime, token, state.Branch)
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(remoteCommit, state.CommitSHA) {
+		return "", ErrDraftPreviewBranchMoved
+	}
+
+	pullRequestURL, err := createPullRequest(ctx, runtime, token, state)
+	if err != nil {
+		return "", err
+	}
+	remoteCommit, err = remoteHead(ctx, runtime, token, state.Branch)
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(remoteCommit, state.CommitSHA) {
+		return "", ErrDraftPreviewBranchMoved
+	}
+	return pullRequestURL, nil
+}
+
+func remoteDraftBranchCommit(_ context.Context, runtime config.SiteRuntime, token, branch string) (string, error) {
+	if err := validatePreviewBranch(branch); err != nil {
+		return "", err
+	}
+	ref := "refs/heads/" + branch
+	output, err := ExecuteGitWithTokenForRuntime(runtime, token, "ls-remote", "--refs", runtime.GitRemote, ref)
+	if err != nil {
+		return "", fmt.Errorf("read remote draft branch: %w", err)
+	}
+	fields := strings.Fields(output)
+	if len(fields) != 2 || fields[1] != ref {
+		return "", ErrDraftPreviewBranchMoved
+	}
+	if err := validateCommitSHA(fields[0]); err != nil {
+		return "", fmt.Errorf("remote draft branch returned invalid commit: %w", err)
+	}
+	return fields[0], nil
+}
+
 func CleanupDraftPreview(ctx context.Context, runtime config.SiteRuntime, token, draftID string, store *DraftPreviewStore, provider PreviewDeploymentProvider) error {
 	return cleanupDraftPreview(ctx, runtime, token, draftID, store, provider, func(_ string, token string, args ...string) (string, error) {
 		return ExecuteGitWithTokenForRuntime(runtime, token, args...)
@@ -542,25 +683,34 @@ func applyProviderDeployment(store *DraftPreviewStore, state DraftPreviewState, 
 	return state, nil
 }
 
-func draftBaseCommit(ctx context.Context, runtime config.SiteRuntime, branch string) (string, bool, error) {
+func localDraftCommit(ctx context.Context, runtime config.SiteRuntime, branch string) (string, bool, error) {
 	localRef := "refs/heads/" + branch
-	if output, err := runGitCommand(ctx, runtime.RepoPath, nil, "rev-parse", "--verify", localRef+"^{commit}"); err == nil {
-		commit := strings.TrimSpace(output)
-		if err := validateCommitSHA(commit); err != nil {
-			return "", false, err
-		}
-		return commit, true, nil
-	}
-	baseRef := "refs/heads/" + runtime.GitBranch
-	output, err := runGitCommand(ctx, runtime.RepoPath, nil, "rev-parse", "--verify", baseRef+"^{commit}")
+	output, err := runGitCommand(ctx, runtime.RepoPath, nil, "rev-parse", "--verify", "--quiet", localRef+"^{commit}")
 	if err != nil {
-		return "", false, fmt.Errorf("resolve production branch %q: %w", runtime.GitBranch, err)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("resolve local draft branch %q: %w", branch, err)
 	}
 	commit := strings.TrimSpace(output)
 	if err := validateCommitSHA(commit); err != nil {
 		return "", false, err
 	}
-	return commit, false, nil
+	return commit, true, nil
+}
+
+func productionBaseCommit(ctx context.Context, runtime config.SiteRuntime) (string, error) {
+	baseRef := "refs/heads/" + runtime.GitBranch
+	output, err := runGitCommand(ctx, runtime.RepoPath, nil, "rev-parse", "--verify", baseRef+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("resolve production branch %q: %w", runtime.GitBranch, err)
+	}
+	commit := strings.TrimSpace(output)
+	if err := validateCommitSHA(commit); err != nil {
+		return "", err
+	}
+	return commit, nil
 }
 
 func runGitCommand(ctx context.Context, directory string, extraEnv []string, args ...string) (string, error) {
@@ -632,11 +782,71 @@ func validateDraftPaths(repoPath string, paths []string) ([]string, error) {
 	return result, nil
 }
 
+func normalizeDraftArticlePath(runtime config.SiteRuntime, articlePath string) (string, error) {
+	clean, err := normalizeStoredDraftArticlePath(articlePath)
+	if err != nil {
+		return "", err
+	}
+	if SafeJoin(runtime.RepoPath, runtime.ContentDir, clean) == "" {
+		return "", fmt.Errorf("draft article path escapes content directory")
+	}
+	return clean, nil
+}
+
+func draftArticleRepoPath(runtime config.SiteRuntime, articlePath string) string {
+	repoArticle := filepath.ToSlash(filepath.Join(runtime.ContentDir, filepath.FromSlash(articlePath)))
+	base := strings.ToLower(filepath.Base(articlePath))
+	if base == "index.md" || base == "_index.md" {
+		return filepath.ToSlash(filepath.Dir(filepath.FromSlash(repoArticle)))
+	}
+	return repoArticle
+}
+
+func normalizeStoredDraftArticlePath(articlePath string) (string, error) {
+	articlePath = strings.TrimSpace(articlePath)
+	if articlePath == "" || strings.ContainsRune(articlePath, '\x00') || filepath.IsAbs(articlePath) {
+		return "", fmt.Errorf("invalid draft article path")
+	}
+	clean := filepath.ToSlash(filepath.Clean(articlePath))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || !strings.EqualFold(filepath.Ext(clean), ".md") {
+		return "", fmt.Errorf("invalid draft article path")
+	}
+	return clean, nil
+}
+
+func validateStoredDraftPaths(paths []string) error {
+	if len(paths) == 0 {
+		return fmt.Errorf("draft preview paths are required")
+	}
+	seen := make(map[string]struct{}, len(paths))
+	for _, value := range paths {
+		if strings.ContainsRune(value, '\x00') || filepath.IsAbs(value) {
+			return fmt.Errorf("invalid stored draft path %q", value)
+		}
+		clean := filepath.ToSlash(filepath.Clean(strings.TrimSpace(value)))
+		if clean == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || clean == ".git" || strings.HasPrefix(clean, ".git/") || clean != value {
+			return fmt.Errorf("invalid stored draft path %q", value)
+		}
+		if _, exists := seen[clean]; exists {
+			return fmt.Errorf("duplicate stored draft path %q", value)
+		}
+		seen[clean] = struct{}{}
+	}
+	return nil
+}
+
 func validateDraftPreviewState(state DraftPreviewState) error {
 	if strings.TrimSpace(state.SiteID) == "" {
 		return fmt.Errorf("site ID is required")
 	}
 	if err := validateDraftID(state.DraftID); err != nil {
+		return err
+	}
+	articlePath, err := normalizeStoredDraftArticlePath(state.ArticlePath)
+	if err != nil || articlePath != state.ArticlePath {
+		return fmt.Errorf("invalid draft preview article path")
+	}
+	if err := validateStoredDraftPaths(state.Paths); err != nil {
 		return err
 	}
 	if state.Branch != previewBranchPrefix+state.DraftID {

@@ -3,11 +3,15 @@ package handlers
 import (
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/services"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestDeploymentDraftPathsIncludesOnlyReferencedMedia(t *testing.T) {
@@ -43,6 +47,23 @@ func TestDeploymentStateResponseOnlyLinksFailedCloudflareDeploymentLogs(t *testi
 	response = deploymentStateResponse(runtime, state)
 	if _, ok := response["log_url"]; ok {
 		t.Fatal("building deployment unexpectedly exposed a log link")
+	}
+}
+
+func TestHandleDeploymentErrorReturnsConflictForPublishInvariantFailures(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, err := range []error{
+		services.ErrDraftPreviewArticleMismatch,
+		services.ErrDraftPreviewNotReady,
+		services.ErrDraftPreviewStale,
+		services.ErrDraftPreviewBranchMoved,
+	} {
+		recorder := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(recorder)
+		handleDeploymentError(context, "publish", err)
+		if recorder.Code != http.StatusConflict {
+			t.Fatalf("error %v status = %d, want 409", err, recorder.Code)
+		}
 	}
 }
 

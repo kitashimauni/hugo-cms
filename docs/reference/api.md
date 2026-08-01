@@ -58,8 +58,6 @@ X-CMS-Site: techblog
 - `/admin/api/media`
 - `/admin/api/media/delete`
 - `/admin/api/media/raw`
-- `/admin/api/build`
-- `/admin/api/build/restart`
 
 ---
 
@@ -329,6 +327,7 @@ relative imageは記事bundle、root-relative imageはサイトの`static_dir`�
 ```json
 {
   "draft_id": "550e8400-e29b-41d4-a716-446655440000",
+  "article_path": "posts/hello/index.md",
   "branch": "cms-preview/550e8400-e29b-41d4-a716-446655440000",
   "commit_sha": "0123456789abcdef...",
   "deployment_id": "...",
@@ -371,7 +370,7 @@ provider deploymentとremote draft branchをcleanupします。失敗時は再�
 
 ### POST /admin/api/publish
 
-readyになったdraft branchからproduction branchへのPull Requestを作成します。production branchへ直接pushしません。
+readyになったdraft branchからproduction branchへのPull Requestを作成します。production branchへ直接pushしません。requestの`path`はpreview stateへ保存されたarticle pathと一致する必要があり、異なる場合はHTTP 409を返します。working tree、remote branch、PR headがpreview済みcommitと一致しない場合もHTTP 409となり、デプロイプレビューの更新が必要です。
 
 **リクエストボディ**:
 ```json

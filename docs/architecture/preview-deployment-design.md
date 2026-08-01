@@ -32,11 +32,11 @@ providerはhandler/UIから分離し、次の責務を持つ。
 
 CMSが公開する状態は`queued`、`building`、`ready`、`failed`に正規化する。ready URLはproviderが返したdeployment固有URLのみを採用し、branch aliasは採用しない。build中・失敗時に過去のready URLを新しいcommitの結果として表示してはならない。
 
-stateにはsite ID、draft ID、branch、commit SHA、deployment ID、status、URL、作成・更新時刻を保存する。tokenはstate、ログ、APIレスポンスへ保存しない。
+stateにはsite ID、draft ID、正規化済みarticle path、commit対象paths、branch、commit SHA、deployment ID、status、URL、作成・更新時刻を保存する。publish時はrequestのpathから対象を再計算せず、stateをsource of truthとする。tokenはstate、ログ、APIレスポンスへ保存しない。
 
 ## Publishとcleanup
 
-production branchへ直接commit/pushする従来Publishは使用しない。readyになったdraft branchからproduction branchへのPull Requestを作成し、レビュー後のmergeを公開操作とする。draft破棄時はremote branchとprovider deploymentをcleanupする。cleanup失敗はstateに残し、同じ明示操作で再試行できる。
+production branchへ直接commit/pushする従来Publishは使用しない。readyになったdraft branchからproduction branchへのPull Requestを作成し、レビュー後のmergeを公開操作とする。publishでは同一draft lockの下でprovider status、stateに保存したpathsとworking treeの一致、remote branch SHA、既存または作成したPRの`head.sha`を順に確認し、すべてがpreview済みcommitと一致する場合だけPR URLを返す。draft破棄時はremote branchとprovider deploymentをcleanupする。cleanup失敗はstateに残し、同じ明示操作で再試行できる。
 
 ## セキュリティ
 
@@ -50,7 +50,9 @@ production branchへ直接commit/pushする従来Publishは使用しない。rea
 
 ## ライフサイクルと競合
 
-draft IDはbrowser sessionとsite/article pathの組み合わせごとに生成する。同じdraftの同時更新は拒否し、複数site・複数draftのstateを混在させない。commit SHAでdeploymentを照合するため、providerがbranch aliasを新しいbuildへ切り替えている途中でも誤ったpreviewを表示しない。
+draft IDはbrowser sessionとsite/article pathの組み合わせごとに生成する。`crypto.randomUUID()`が利用できない非HTTPS環境では`crypto.getRandomValues()`からUUID v4を生成し、暗号学的乱数源がない場合はfail closedとする。同じdraftの同時更新は拒否し、複数site・複数draftのstateを混在させない。同じdraft IDを別記事へ再利用することも拒否する。
+
+preview更新は既存preview commitではなく、その時点のlocal production branchをbaseにして対象pathsだけを一時indexへ適用する。production branchが進んでnon-fast-forward更新になる場合は、前回commitを期待値とする`--force-with-lease`でdraft branchだけを更新し、失敗時はlocal draft refをrollbackする。commit SHAでdeploymentを照合するため、providerがbranch aliasを新しいbuildへ切り替えている途中でも誤ったpreviewを表示しない。
 
 ## 移行
 
