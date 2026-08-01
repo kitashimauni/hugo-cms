@@ -21,6 +21,8 @@ Hugo CMSの利用方法、仕様、設計、および監査結果を目的別に
 
 - [現行アーキテクチャ](architecture/current-architecture.md) - 現在のHugo向け実装
 - [マルチサイト・マルチジェネレーター設計](architecture/multi-site-generator-design.md) - 複数HugoサイトとEleventy等へ対応するための提案
+- [本文プレビューとデプロイプレビュー](architecture/preview-deployment-design.md) - preview責務、draft branch、provider、security、cleanup
+- [ADR-0001: Cloudflare Pages preview](architecture/adr-0001-cloudflare-pages-preview.md) - 初期providerの選定理由
 
 ## 監査
 

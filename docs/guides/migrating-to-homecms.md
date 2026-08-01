@@ -14,7 +14,7 @@
 | `collections[].format` | `content.collections[].frontmatter` | `yaml-frontmatter` は `yaml` に寄せます |
 | `media_folder` | `media.folder` | リポジトリルート基準。例: `static/images` |
 | `public_folder` / `public_path` | `media.public_path` | Markdownへ挿入する公開URL。例: `/images` |
-| なし | `preview.url_field` | permalink等からpreview URLを決めたい場合に指定 |
+| なし | `preview.url_field` | 旧ローカルpreview互換。本文/デプロイプpreviewでは使用しません |
 
 ## 手順
 
@@ -66,8 +66,6 @@ media:
   folder: static/images
   public_path: /images
 
-preview:
-  url_field: permalink
 ```
 
 ## 複数サイトでの注意点
@@ -99,5 +97,6 @@ sites:
 - 新規作成時に期待したパスへ `.md` が作られる
 - front matterのlabelやwidgetが維持されている
 - static media uploadの保存先と挿入URLが期待通り
-- `preview.url_field` を使うサイトでは、保存・preview・restart後も同じURLが表示される
+- 本文プレビューでMarkdown、front matter、relative imageが安全に表示される
+- provider設定サイトでは明示操作だけで`cms-preview/<draft-id>`が更新される
 - `_cms.warnings` が空配列 `[]` になる、または残ったwarningの理由を説明できる

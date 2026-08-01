@@ -9,9 +9,37 @@ let lastSavedPayload = "";
 let lastQueuedPayload = "";
 let saveQueue = Promise.resolve();
 let deletingPath = "";
+let previewTimer = null;
+let previewController = null;
+let previewRevision = 0;
+
+const PREVIEW_DEBOUNCE_MS = 180;
 
 export function getCurrentPath() {
     return currentPath;
+}
+
+function draftStorageKey(siteID, path) {
+    return `hugo-cms:draft:${siteID}:${path}`;
+}
+
+export function getOrCreateDraftID(siteID, path, storage = window.sessionStorage, createUUID = () => window.crypto.randomUUID()) {
+    if (!siteID || !path) return "";
+    const key = draftStorageKey(siteID, path);
+    let draftID = storage.getItem(key);
+    if (!draftID) {
+        draftID = createUUID();
+        storage.setItem(key, draftID);
+    }
+    return draftID;
+}
+
+export function getDraftID() {
+    return getOrCreateDraftID(API.getCurrentSite(), currentPath);
+}
+
+export function resetDraftID() {
+    if (currentPath) window.sessionStorage.removeItem(draftStorageKey(API.getCurrentSite(), currentPath));
 }
 
 export function setConfig(cfg) {
@@ -20,6 +48,7 @@ export function setConfig(cfg) {
 
 export function clearEditor() {
     clearAutoSaveTimer();
+    cancelMarkdownPreview();
     currentPath = "";
     currentData = null;
     lastSavedPayload = "";
@@ -42,19 +71,24 @@ export function clearEditor() {
         fmContainer.style.display = 'none';
     }
 
-    const frame = document.getElementById('preview-frame');
-    if (frame) frame.src = "";
+    UI.clearMarkdownPreview();
 }
 
 export function initAutoSave() {
     const editor = document.getElementById('editor');
     const fmContainer = document.getElementById('fm-container');
 
-    if (editor) editor.addEventListener('input', triggerAutoSave);
+    if (editor) editor.addEventListener('input', handleEditorChange);
     if (fmContainer) {
-        fmContainer.addEventListener('input', triggerAutoSave);
-        fmContainer.addEventListener('change', triggerAutoSave);
+        fmContainer.addEventListener('input', handleEditorChange);
+        fmContainer.addEventListener('change', handleEditorChange);
     }
+}
+
+function handleEditorChange() {
+    triggerAutoSave();
+    scheduleMarkdownPreview();
+    if (window.markDeploymentPreviewStale) window.markDeploymentPreviewStale();
 }
 
 function triggerAutoSave() {
@@ -92,8 +126,60 @@ function updateSaveStatus(msg, type) {
     else el.style.color = '#888';
 }
 
-function reloadPreviewIfNeeded() {
-    if (currentPath) UI.setPreviewUrl(currentPath, cmsConfig, UI.collectFrontMatter());
+function cancelMarkdownPreview() {
+    if (previewTimer) {
+        clearTimeout(previewTimer);
+        previewTimer = null;
+    }
+    if (previewController) {
+        previewController.abort();
+        previewController = null;
+    }
+    previewRevision += 1;
+}
+
+function scheduleMarkdownPreview() {
+    if (!currentPath || currentPath === deletingPath) return;
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => {
+        previewTimer = null;
+        refreshMarkdownPreview().catch(() => undefined);
+    }, PREVIEW_DEBOUNCE_MS);
+}
+
+export async function refreshMarkdownPreview() {
+    if (!currentPath || currentPath === deletingPath) {
+        UI.clearMarkdownPreview();
+        return;
+    }
+
+    if (previewTimer) {
+        clearTimeout(previewTimer);
+        previewTimer = null;
+    }
+    if (previewController) previewController.abort();
+
+    const requestPath = currentPath;
+    const revision = ++previewRevision;
+    previewController = new AbortController();
+    const payload = {
+        path: requestPath,
+        body: document.getElementById('editor')?.value || "",
+        frontmatter: UI.collectFrontMatter()
+    };
+    UI.showMarkdownPreviewLoading();
+
+    try {
+        const data = await API.renderMarkdownPreview(payload, previewController.signal);
+        if (revision !== previewRevision || requestPath !== currentPath) return;
+        UI.renderMarkdownPreview(typeof data?.html === 'string' ? data.html : "");
+    } catch (e) {
+        if (e?.name === 'AbortError' || revision !== previewRevision) return;
+        UI.showMarkdownPreviewError(e);
+        throw e;
+    } finally {
+        if (revision === previewRevision) previewController = null;
+    }
 }
 
 export async function execAutoSave() {
@@ -125,7 +211,6 @@ async function queueCurrentSave(statusMessage) {
                 lastSavedPayload = payloadStr;
                 console.log("[AutoSave] Saved:", payloadObj.path);
                 updateSaveStatus("Saved", "saved");
-                reloadPreviewIfNeeded();
                 return true;
             } catch (e) {
                 console.error("[AutoSave] Failed:", e);
@@ -157,6 +242,7 @@ export async function flushPendingSave() {
 
 export async function loadFile(path) {
     clearAutoSaveTimer();
+    cancelMarkdownPreview();
     await saveQueue.catch(() => {
         // Loading another file remains possible after a failed save.
     });
@@ -174,7 +260,7 @@ export async function loadFile(path) {
 
         lastSavedPayload = JSON.stringify(getPayload());
         lastQueuedPayload = "";
-        UI.setPreviewUrl(path, cmsConfig, data.frontmatter);
+        await refreshMarkdownPreview();
 
     } catch (e) {
         UI.showEditorError(e);
@@ -233,6 +319,7 @@ export async function deleteFile(refreshListCb) {
         UI.showToast("Article deleted", "success");
 
         if (currentPath === pathToDelete) {
+            cancelMarkdownPreview();
             currentPath = "";
             currentData = null;
             lastSavedPayload = "";
@@ -240,6 +327,7 @@ export async function deleteFile(refreshListCb) {
             document.getElementById('filename-display').textContent = "Select a file...";
             document.getElementById('editor').value = "";
             document.getElementById('fm-container').style.display = 'none';
+            UI.clearMarkdownPreview();
         }
 
         if (refreshListCb) await refreshListCb();
@@ -250,7 +338,7 @@ export async function deleteFile(refreshListCb) {
             deletingPath = "";
         }
         if (!deleted && currentPath === pathToDelete) {
-            triggerAutoSave();
+            handleEditorChange();
         }
     }
 }

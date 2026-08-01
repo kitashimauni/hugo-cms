@@ -243,15 +243,6 @@ func TestGetOverallStatus(t *testing.T) {
 	}
 }
 
-func TestGetPreviewStatusMessage(t *testing.T) {
-	if got := getPreviewStatusMessage(true); got != "Preview server is running" {
-		t.Errorf("getPreviewStatusMessage(true) = %q, want %q", got, "Preview server is running")
-	}
-	if got := getPreviewStatusMessage(false); got != "Preview server is not running" {
-		t.Errorf("getPreviewStatusMessage(false) = %q, want %q", got, "Preview server is not running")
-	}
-}
-
 func TestIsDirAccessible(t *testing.T) {
 	// Test with existing directory
 	if !isDirAccessible(".") {

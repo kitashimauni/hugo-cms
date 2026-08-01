@@ -1,6 +1,6 @@
 # Smoke Test Checklist
 
-最終更新日: 2026-07-13
+最終更新日: 2026-08-01
 
 大きめの変更やSite Registry変更後に、最低限確認する項目です。
 
@@ -42,8 +42,10 @@ mise run check
 - Diffが表示される
 - 画像メディア一覧が表示される
 - スニペットが `<REPO_PATH>/.vscode/md.code-snippets` から読み込まれる
-- Preview iframe が `/admin/preview/default/...` で表示される
-- Restart Previewが成功する
+- 本文プレビューが保存前のMarkdown入力へ追従する
+- raw HTML、`javascript:` link、event handlerが本文プレビューへ残らない
+- 見出し、list、引用、code block、table、link、Markdown imageが表示される
+- 空本文と1 MiB超の本文が予期した状態/エラーになる
 
 ## 3. 複数サイト
 
@@ -59,7 +61,16 @@ sites:
     content_dir: content
     static_dir: static
     public_dir: public
-    hugo_server_port: "1314"
+    preview:
+      markdown:
+        enabled: true
+      deployment:
+        provider: cloudflare_pages
+        access_protected: true
+        cloudflare_pages:
+          account_id: account-id
+          project_name: techblog
+          token_env: TECHBLOG_CLOUDFLARE_API_TOKEN
 
   - id: notes
     name: Notes
@@ -68,7 +79,6 @@ sites:
     content_dir: src
     static_dir: public-assets
     public_dir: _site
-    hugo_server_port: "1315"
 ```
 
 確認項目:
@@ -84,15 +94,11 @@ sites:
 - メディア一覧、アップロード、削除、raw配信が選択サイトの`static_dir`/記事別メディア設定だけを対象にする
 - `static_media_dir`未指定かつ`.homecms.yml`の`media.folder`があるサイトでは、そのフォルダへstatic media uploadされ、`media.public_path`がMarkdown挿入パスに使われる
 - スニペットが選択サイトの`snippet_paths`または`<repo_path>/.vscode/md.code-snippets`から読み込まれる
-- Preview iframe が `/admin/preview/<site_id>/...` を参照する
-- Hugo/Eleventyのpreview serverが同じ`/admin/preview/<site_id>/...`配下で応答し、Hugoだけ404にならない
-- percent-encodingを含むpathとqueryがpreview proxyで書き換わらない
-- 初回previewでも、preview process起動直後のport未listenによる一時的な`502`にならない
-- preview内のroot-relative URL (`/images/foo.png`, `/about/`など) が同じsiteの`/admin/preview/<site_id>/...`へリダイレクトされる
-- サイトごとに別のpreview processが起動する
-- Restart Previewが選択サイトのpreviewだけを再起動する
-- `hugo_server_bind` + `hugo_server_port` が重複しているSite Registryは起動時に拒否される
-- `0.0.0.0`や`::`のwildcard bindは、同じportの具体bindとも衝突として拒否される
+- 本文プレビューのrelative imageが選択siteの記事bundleだけから解決される
+- root-relative imageが選択siteの`static_dir`だけから解決される
+- provider未設定siteでも編集・保存・本文プレビューが動く
+- provider設定siteだけにデプロイプレビュー操作が表示される
+- Access未保護設定ではpublic preview警告が表示される
 
 ## 4. Eleventy
 
@@ -107,10 +113,8 @@ sites:
 
 - 記事一覧が`content_dir`配下から取得される
 - 記事を保存できる
-- Previewが`eleventy --serve`で起動する
-- Preview起動時に`--pathprefix /admin/preview/<site_id>/`が渡される
 - Buildがlockfileに対応するpackage manager経由で実行される
-- Dockerでは`tool-bootstrap`がlockfileに対応するfrozen installを完了してからPreview/Buildを実行できる
+- Dockerでは`tool-bootstrap`がlockfileに対応するfrozen installを完了してから明示Buildを実行できる
 
 ## 5. Docker
 
@@ -127,16 +131,20 @@ sites:
 - mise設定とlockfileを更新してbootstrapを再実行すると、準備済み環境が安全に更新される
 - bootstrap失敗時も既に起動しているappは停止・再起動されない
 
-## 6. Git操作
+## 6. Git・デプロイプレビュー操作
 
 - Syncが対象サイトのrepoで実行される
-- 単一記事publishが対象サイトのcontent pathをcommit対象にする
-- publish時に対象サイトの`git_remote`/`git_branch`/`static_dir`設定が使われる
-- static directoryが未作成でも単一記事publishが失敗しない
-- push失敗後の再publishで、既存commitがremoteへpushされる
+- autosaveと本文プレビューではcommit/pushされない
+- 「デプロイプレビューを更新」でだけ`cms-preview/<draft-id>`へcommit/pushされる
+- production worktreeのcurrent branch/indexが切り替わらない
+- draftごと、siteごとにbranch/stateが分離される
+- Cloudflareで`queued / building / ready / failed`がCMS状態へ正規化される
+- ready URLとstateのcommit SHAが一致し、build中/失敗時は古いURLを表示しない
+- retryとdiscard cleanupを再実行できる
+- ready後のPublishがproduction branchへ直接pushせずPRを作成する
 
 ## 7. 注意点
 
-- preview bind/portはサイト間で重複させないでください。重複したSite Registryは起動時に拒否されます。
-- preview processはCMSサーバー上でサイトのコードを実行します。Site Registryには信頼済みリポジトリだけを登録してください。
-- 主要なsite-aware APIは`SiteRuntime`を明示的にサービスへ渡します。default site向け起動・readiness経路と選択siteのAPI結果が混ざらないことを重点的に確認してください。
+- Cloudflare preview branchをbuild対象にし、API tokenを最小権限にしてください。
+- `noindex`は認証ではありません。未公開contentにはCloudflare Accessを設定してください。
+- 主要なsite-aware APIは`SiteRuntime`を明示的にserviceへ渡します。site間でcontent、media、draft branch、deployment stateが混ざらないことを重点的に確認してください。

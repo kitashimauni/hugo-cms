@@ -5,7 +5,7 @@ Hugo CMSのREST API仕様です。
 ## 認証
 
 すべての `/admin/api/*` エンドポイントは認証が必要です。
-`/admin/preview/*` も認証済みadmin route配下で提供されます。
+本文preview、deployment preview、media rawも認証済みadmin API配下で提供されます。
 
 ### セッション認証
 
@@ -17,7 +17,7 @@ GitHub OAuthでログイン後、セッションCookieが発行されます。
 
 ```javascript
 // CSRFトークンの取得
-const response = await fetch('/admin/api/csrf');
+const response = await fetch('/admin/api/csrf-token');
 const { token } = await response.json();
 
 // リクエスト時にヘッダーに含める
@@ -93,7 +93,7 @@ OAuth認証コールバック。GitHubから呼び出されます。
 }
 ```
 
-### GET /admin/api/csrf
+### GET /admin/api/csrf-token
 
 CSRFトークンを取得します。
 
@@ -157,7 +157,7 @@ CSRFトークンを取得します。
 }
 ```
 
-### PUT /admin/api/article
+### POST /admin/api/article
 
 記事を保存します。
 
@@ -182,7 +182,7 @@ CSRFトークンを取得します。
 }
 ```
 
-### POST /admin/api/article
+### POST /admin/api/create
 
 新規記事を作成します。
 
@@ -216,7 +216,7 @@ CSRFトークンを取得します。
 }
 ```
 
-### DELETE /admin/api/article
+### POST /admin/api/delete
 
 記事を削除します。
 
@@ -231,7 +231,7 @@ CSRFトークンを取得します。
 }
 ```
 
-### GET /admin/api/diff
+### POST /admin/api/diff
 
 記事の差分を取得します。
 
@@ -276,7 +276,14 @@ CSRFトークンを取得します。
       "content_dir": "content",
       "static_dir": "static",
       "public_dir": "public",
-      "hugo_server_port": "1314",
+      "preview": {
+        "markdown": {"enabled": true},
+        "deployment": {
+          "provider": "cloudflare_pages",
+          "access_protected": true,
+          "cloudflare_pages": {"account_id": "...", "project_name": "techblog"}
+        }
+      },
       "snippet_paths": ["D:/sites/techblog/.vscode/md.code-snippets"]
     }
   ]
@@ -287,21 +294,64 @@ CSRFトークンを取得します。
 
 ## Preview
 
-### GET /admin/preview/:site/*
+### POST /admin/api/preview/markdown
 
-選択サイトのpreview processへproxyします。管理画面のiframeが使用する内部routeです。
+編集中のMarkdownを安全なHTMLへ変換します。保存やremote buildは行いません。raw HTMLは無効化され、sanitize後のfragmentだけを返します。最大本文サイズは1 MiBです。
 
-例:
+**リクエスト**:
 
-```text
-/admin/preview/techblog/posts/hello/
+```json
+{
+  "path": "posts/hello/index.md",
+  "body": "# Hello\n\n![image](image.png)",
+  "frontmatter": {"title": "Hello", "draft": true}
+}
 ```
 
-このrouteは必要に応じて対象サイトのpreview processを起動し、Site Registryの`hugo_server_bind`と`hugo_server_port`へproxyします。初回起動時はpreview portが接続可能になるまで短時間待機してからproxyします。サイトIDが存在しない場合は`400`、preview processを起動できない場合やport readiness timeout時は`502`を返します。
+**レスポンス**:
 
-Generator Adapterはpreview serverを`/admin/preview/:site/`配下へmountする共通契約です。Hugoは`--baseURL`、Eleventyは`--pathprefix`を使用します。proxyは外向きrequestのpath、percent-encoding、queryを再構築せず上流へ転送するため、ジェネレーター固有のsectionやpermalinkをproxy側へハードコードしません。
+```json
+{"html": "<dl class=\"markdown-preview-frontmatter\">...</dl><h1>Hello</h1>..."}
+```
 
-iframe内でroot-relative URLへの遷移やasset requestが発生した場合、CMSは`Referer`の`/admin/preview/:site/...`から選択サイトを復元し、同じpreview route配下へ一時リダイレクトします。
+relative imageは記事bundle、root-relative imageはサイトの`static_dir`から解決し、許可済みmediaを`/admin/api/media/raw`経由で表示します。外部HTTP(S)画像以外のschemeは拒否します。
+
+### POST /admin/api/preview/deployments
+
+保存済みworking treeからdraft branchをcommit/pushし、deployment追跡を開始します。remote変更を行うのはこの明示APIだけです。
+
+```json
+{"path":"posts/hello/index.md","draft_id":"550e8400-e29b-41d4-a716-446655440000"}
+```
+
+レスポンスは次のstateです。
+
+```json
+{
+  "draft_id": "550e8400-e29b-41d4-a716-446655440000",
+  "branch": "cms-preview/550e8400-e29b-41d4-a716-446655440000",
+  "commit_sha": "0123456789abcdef...",
+  "deployment_id": "...",
+  "status": "queued",
+  "url": "",
+  "created_at": "2026-08-01T12:00:00Z",
+  "updated_at": "2026-08-01T12:00:00Z"
+}
+```
+
+### GET /admin/api/preview/deployments/:draft_id
+
+providerを照会し、`queued`、`building`、`ready`、`failed`のstateを返します。`ready`の`url`はレスポンスの`commit_sha`と一致するdeployment固有URLです。
+
+### POST /admin/api/preview/deployments/:draft_id/retry
+
+failed deploymentを明示的に再試行します。
+
+### POST /admin/api/preview/deployments/:draft_id/discard
+
+provider deploymentとremote draft branchをcleanupします。失敗時は再試行できるstateを残します。
+
+旧`/admin/preview/:site/*` proxy、`POST /admin/api/build`、`POST /admin/api/build/restart`は廃止されました。
 
 ---
 
@@ -321,47 +371,21 @@ iframe内でroot-relative URLへの遷移やasset requestが発生した場合�
 
 ### POST /admin/api/publish
 
-変更をリモートリポジトリにプッシュします。
+readyになったdraft branchからproduction branchへのPull Requestを作成します。production branchへ直接pushしません。
 
-**リクエストボディ** (オプション):
+**リクエストボディ**:
 ```json
 {
-    "path": "posts/2026-01-10-hello/index.md"
+    "path": "posts/2026-01-10-hello/index.md",
+    "draft_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
-
-- `path`を指定: その記事のみ公開
-- `path`省略: 全変更を公開
 
 **レスポンス**:
 ```json
 {
     "status": "ok",
-    "log": "--- Git Add ---\n(Success)\n\n--- Git Commit ---\n[main abc1234] Update posts/2026-01-10-hello/index.md via HomeCMS\n..."
-}
-```
-
-### POST /admin/api/restart
-
-Hugoサーバーを再起動します。
-
-**レスポンス**:
-```json
-{
-    "status": "ok",
-    "log": "Hugo Server Restarted"
-}
-```
-
-### POST /admin/api/build
-
-サイトをビルドします (Hugoサーバー使用時は通常不要)。
-
-**レスポンス**:
-```json
-{
-    "status": "ok",
-    "log": "Preview managed by Hugo Server"
+    "url": "https://github.com/owner/repository/pull/123"
 }
 ```
 
@@ -485,6 +509,12 @@ CMS設定を取得します。サイトリポジトリ直下の `.homecms.yml` �
         "public_dir": "public",
         "site_generator": "hugo",
         "config_source": ".homecms.yml",
+        "markdown_preview": {"enabled": true},
+        "preview_deployment": {
+            "enabled": true,
+            "provider": "cloudflare_pages",
+            "access_protected": true
+        },
         "warnings": [
             {
                 "severity": "warning",
@@ -528,13 +558,8 @@ CMS設定を取得します。サイトリポジトリ直下の `.homecms.yml` �
     "timestamp": "2026-01-10T12:00:00Z",
     "uptime": "1h30m45s",
     "checks": {
-        "preview_server": {
-            "healthy": true,
-            "message": "Preview server is running"
-        },
         "content_dir": {
-            "healthy": true,
-            "path": "./repo/content"
+            "healthy": true
         },
         "git_repo": {
             "healthy": true
@@ -551,12 +576,7 @@ CMS設定を取得します。サイトリポジトリ直下の `.homecms.yml` �
 ```json
 {
     "status": "degraded",
-    "checks": {
-        "preview_server": {
-            "healthy": false,
-            "message": "Hugo server is not running"
-        }
-    }
+    "checks": {"content_dir": {"healthy": false}}
 }
 ```
 

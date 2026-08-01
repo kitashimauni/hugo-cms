@@ -484,59 +484,142 @@ export function collectFrontMatter() {
     return fm;
 }
 
-export function previewUrlFromPath(path) {
-    let previewPath = path.replace(/\.md$/, "");
-
-    if (previewPath.endsWith("/index") || previewPath.endsWith("/_index")) {
-        previewPath = previewPath.substring(0, previewPath.lastIndexOf("/"));
-    } else if (previewPath === "index" || previewPath === "_index") {
-        previewPath = "";
+export function clearMarkdownPreview() {
+    const preview = document.getElementById('markdown-preview');
+    const status = document.getElementById('markdown-preview-status');
+    if (preview) preview.replaceChildren();
+    if (status) {
+        status.textContent = '記事を選択すると本文プレビューを表示します。';
+        status.className = 'markdown-preview-status empty';
     }
-
-    const rootRelativePath = "/" + previewPath.replace(/^\//, "");
-    return rootRelativePath + (rootRelativePath.endsWith("/") ? "" : "/");
 }
 
-export function previewUrlFromFrontMatter(config, frontmatter) {
-    const fieldName = config?.preview?.url_field;
-    if (!fieldName || !frontmatter || frontmatter[fieldName] === undefined || frontmatter[fieldName] === null) {
-        return "";
-    }
+export function showMarkdownPreviewLoading() {
+    const status = document.getElementById('markdown-preview-status');
+    if (!status) return;
+    status.textContent = '本文プレビューを更新中…';
+    status.className = 'markdown-preview-status loading';
+    status.setAttribute('aria-busy', 'true');
+}
 
-    const rawValue = String(frontmatter[fieldName]).trim();
-    if (rawValue === "") return "";
+export function renderMarkdownPreview(html) {
+    const preview = document.getElementById('markdown-preview');
+    const status = document.getElementById('markdown-preview-status');
+    if (!preview || !status) return;
 
+    // /admin/api/preview/markdown is the trust boundary: the server returns
+    // sanitized HTML with raw Markdown HTML disabled.
+    preview.innerHTML = html;
+    status.removeAttribute('aria-busy');
+    status.className = 'markdown-preview-status';
+    status.textContent = html.trim() === '' ? '本文は空です。' : '';
+
+    preview.querySelectorAll('a[href]').forEach(link => {
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+    });
+    preview.querySelectorAll('img').forEach(image => {
+        image.loading = 'lazy';
+        image.decoding = 'async';
+        image.referrerPolicy = 'no-referrer';
+    });
+}
+
+export function showMarkdownPreviewError(error) {
+    const preview = document.getElementById('markdown-preview');
+    const status = document.getElementById('markdown-preview-status');
+    if (!status) return;
+    if (preview) preview.replaceChildren();
+    status.removeAttribute('aria-busy');
+    status.className = 'markdown-preview-status error';
+    status.textContent = `本文プレビューを更新できませんでした: ${error?.message || 'Unknown error'}`;
+}
+
+export function safeExternalURL(value) {
+    if (!value) return '';
     try {
-        if (/^https?:\/\//i.test(rawValue)) {
-            const parsed = new URL(rawValue);
-            return parsed.pathname + parsed.search + parsed.hash;
-        }
-    } catch (e) {
-        return "";
+        const rawValue = String(value).trim();
+        if (!/^https?:\/\//i.test(rawValue)) return '';
+        const parsed = new URL(rawValue);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';
+    } catch (_) {
+        return '';
     }
-
-    if (/^[a-z][a-z0-9+.-]*:/i.test(rawValue) || rawValue.startsWith("//")) {
-        return "";
-    }
-
-    return "/" + rawValue.replace(/^\//, "");
 }
 
-export function addCacheBuster(url, now = Date.now()) {
-    const hashIndex = url.indexOf("#");
-    const base = hashIndex === -1 ? url : url.slice(0, hashIndex);
-    const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
-    const separator = base.includes("?") ? "&" : "?";
-    return base + separator + "t=" + now + hash;
+export function normalizeDeploymentState(value) {
+    if (!value || typeof value !== 'object') return null;
+    const rawStatus = String(value.status || value.state || '').toLowerCase();
+    const status = ['queued', 'building', 'ready', 'failed', 'stale'].includes(rawStatus) ? rawStatus : 'queued';
+    return {
+        ...value,
+        status,
+        commit_sha: String(value.commit_sha || value.commit || ''),
+        url: safeExternalURL(value.url || value.deployment_url),
+        log_url: safeExternalURL(value.log_url),
+    };
 }
 
-export function setPreviewUrl(path, config, frontmatter) {
-    const frame = document.getElementById('preview-frame');
-    const targetUrl = previewUrlFromFrontMatter(config, frontmatter) || previewUrlFromPath(path);
-    const siteID = API.getCurrentSite();
-    const previewBase = siteID ? `/admin/preview/${encodeURIComponent(siteID)}` : "";
+export function configureDeploymentPreview(config) {
+    const panel = document.getElementById('deployment-panel');
+    if (!panel) return false;
+    const deployment = config?._cms?.preview_deployment;
+    const enabled = deployment?.enabled === true;
+    panel.classList.toggle('hidden', !enabled);
 
-    frame.src = previewBase + addCacheBuster(targetUrl);
+    const provider = document.getElementById('deployment-provider');
+    if (provider) provider.textContent = enabled && deployment.provider ? deployment.provider : '';
+
+    const warning = document.getElementById('deployment-access-warning');
+    if (warning) warning.classList.toggle('hidden', !enabled || deployment.access_protected === true);
+    if (!enabled) renderDeploymentState(null);
+    return enabled;
+}
+
+export function renderDeploymentState(rawState) {
+    const state = normalizeDeploymentState(rawState);
+    const status = document.getElementById('deployment-status');
+    const commit = document.getElementById('deployment-commit');
+    const message = document.getElementById('deployment-message');
+    const openLink = document.getElementById('deployment-open-link');
+    const logLink = document.getElementById('deployment-log-link');
+    const updateButton = document.getElementById('deployment-update-btn');
+    const retryButton = document.getElementById('deployment-retry-btn');
+    const discardButton = document.getElementById('deployment-discard-btn');
+    const publishButton = document.getElementById('publish-preview-btn');
+    if (!status) return;
+
+    const inProgress = state?.status === 'queued' || state?.status === 'building';
+    status.textContent = state ? ({
+        queued: '待機中',
+        building: 'ビルド中',
+        ready: '確認可能',
+        failed: '失敗',
+        stale: '更新が必要',
+    })[state.status] : '未作成';
+    status.className = `deployment-status ${state?.status || 'idle'}`;
+    if (commit) commit.textContent = state?.commit_sha ? state.commit_sha.slice(0, 8) : '';
+    if (message) message.textContent = state?.message || state?.failure_reason || state?.error || '';
+
+    setExternalLink(openLink, state?.status === 'ready' ? state.url : '', 'デプロイプレビューを開く');
+    setExternalLink(logLink, state?.status === 'failed' ? state.log_url : '', 'ビルドログを開く');
+    if (updateButton) updateButton.disabled = inProgress;
+    if (retryButton) retryButton.classList.toggle('hidden', state?.status !== 'failed' || state?.retryable === false);
+    if (discardButton) discardButton.classList.toggle('hidden', !state);
+    if (publishButton) publishButton.classList.toggle('hidden', state?.status !== 'ready' || !state.url);
+}
+
+function setExternalLink(link, url, label) {
+    if (!link) return;
+    link.classList.toggle('hidden', !url);
+    if (!url) {
+        link.removeAttribute('href');
+        return;
+    }
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = label;
 }
 
 export function showDiffModal(diffText) {

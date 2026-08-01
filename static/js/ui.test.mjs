@@ -1,79 +1,108 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+const localValues = new Map();
+const sessionValues = new Map();
+const storage = values => ({
+    getItem(key) { return values.get(key) || null; },
+    setItem(key, value) { values.set(key, value); },
+    removeItem(key) { values.delete(key); },
+});
+
 globalThis.window = {
-    localStorage: {
-        getItem() { return ""; },
-        setItem() {},
-        removeItem() {},
-    },
+    localStorage: storage(localValues),
+    sessionStorage: storage(sessionValues),
+    crypto: { randomUUID: () => "browser-generated-uuid" },
     location: {
         origin: "http://localhost:8080",
     },
 };
 
 const {
-    addCacheBuster,
-    previewUrlFromFrontMatter,
-    previewUrlFromPath,
+    normalizeDeploymentState,
+    safeExternalURL,
 } = await import("./ui.js");
+const { getOrCreateDraftID } = await import("./editor.js");
+const API = await import("./api.js");
 
-describe("previewUrlFromPath", () => {
-    it("converts regular content files to trailing-slash preview paths", () => {
-        assert.equal(previewUrlFromPath("posts/hello.md"), "/posts/hello/");
-    });
-
-    it("collapses leaf bundle index files to their bundle URL", () => {
-        assert.equal(previewUrlFromPath("posts/hello/index.md"), "/posts/hello/");
-    });
-
-    it("maps root index files to the site root", () => {
-        assert.equal(previewUrlFromPath("index.md"), "/");
-        assert.equal(previewUrlFromPath("_index.md"), "/");
+describe("safeExternalURL", () => {
+    it("accepts only absolute HTTP(S) links", () => {
+        assert.equal(safeExternalURL("https://preview.example.test/build/1"), "https://preview.example.test/build/1");
+        assert.equal(safeExternalURL("javascript:alert(1)"), "");
+        assert.equal(safeExternalURL("/admin"), "");
+        assert.equal(safeExternalURL("//evil.example.test"), "");
     });
 });
 
-describe("previewUrlFromFrontMatter", () => {
-    const config = { preview: { url_field: "permalink" } };
-
-    it("uses a root-relative permalink field when configured", () => {
-        assert.equal(
-            previewUrlFromFrontMatter(config, { permalink: "/blog/hello/" }),
-            "/blog/hello/",
-        );
+describe("normalizeDeploymentState", () => {
+    it("normalizes provider field aliases and safe links", () => {
+        assert.deepEqual(normalizeDeploymentState({
+            state: "READY",
+            commit: "0123456789abcdef",
+            deployment_url: "https://preview.example.test/commit",
+            log_url: "javascript:alert(1)",
+        }), {
+            state: "READY",
+            commit: "0123456789abcdef",
+            deployment_url: "https://preview.example.test/commit",
+            log_url: "",
+            status: "ready",
+            commit_sha: "0123456789abcdef",
+            url: "https://preview.example.test/commit",
+        });
     });
 
-    it("normalizes relative permalink values to root-relative paths", () => {
-        assert.equal(
-            previewUrlFromFrontMatter(config, { permalink: "blog/hello/" }),
-            "/blog/hello/",
-        );
-    });
-
-    it("keeps the path, query, and hash from absolute http URLs", () => {
-        assert.equal(
-            previewUrlFromFrontMatter(config, { permalink: "https://example.com/blog/hello/?draft=1#top" }),
-            "/blog/hello/?draft=1#top",
-        );
-    });
-
-    it("falls back when the configured field is missing or empty", () => {
-        assert.equal(previewUrlFromFrontMatter(config, {}), "");
-        assert.equal(previewUrlFromFrontMatter(config, { permalink: "" }), "");
-    });
-
-    it("rejects non-http schemes and protocol-relative URLs", () => {
-        assert.equal(previewUrlFromFrontMatter(config, { permalink: "javascript:alert(1)" }), "");
-        assert.equal(previewUrlFromFrontMatter(config, { permalink: "//example.com/blog/" }), "");
+    it("does not treat an unknown state as ready", () => {
+        assert.equal(normalizeDeploymentState({ status: "unexpected" }).status, "queued");
+        assert.equal(normalizeDeploymentState({ status: "stale", url: "https://old.example.test" }).status, "stale");
+        assert.equal(normalizeDeploymentState(null), null);
     });
 });
 
-describe("addCacheBuster", () => {
-    it("adds the cache buster before a hash fragment", () => {
-        assert.equal(addCacheBuster("/blog/hello/#top", 123), "/blog/hello/?t=123#top");
-    });
+describe("draft IDs", () => {
+    it("persists one UUID per site and article for the browser session", () => {
+        const values = new Map();
+        const memoryStorage = storage(values);
+        let sequence = 0;
+        const createUUID = () => `uuid-${++sequence}`;
 
-    it("uses an ampersand when the URL already has a query string", () => {
-        assert.equal(addCacheBuster("/blog/hello/?draft=1#top", 123), "/blog/hello/?draft=1&t=123#top");
+        assert.equal(getOrCreateDraftID("docs", "posts/one.md", memoryStorage, createUUID), "uuid-1");
+        assert.equal(getOrCreateDraftID("docs", "posts/one.md", memoryStorage, createUUID), "uuid-1");
+        assert.equal(getOrCreateDraftID("docs", "posts/two.md", memoryStorage, createUUID), "uuid-2");
+        assert.equal(getOrCreateDraftID("blog", "posts/one.md", memoryStorage, createUUID), "uuid-3");
+    });
+});
+
+describe("preview API contracts", () => {
+    it("scopes Markdown and deployment operations to the selected site", async () => {
+        const calls = [];
+        globalThis.fetch = async (url, options = {}) => {
+            calls.push({ url, options });
+            if (url === "/admin/api/csrf-token") {
+                return { ok: true, status: 200, json: async () => ({ csrf_token: "csrf" }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ status: "queued", html: "<p>safe</p>" }) };
+        };
+
+        API.setCurrentSite("docs site");
+        const article = { path: "posts/one.md", body: "# Draft", frontmatter: { title: "Draft" } };
+        await API.renderMarkdownPreview(article);
+        await API.triggerPreviewDeployment(article.path, "draft/id");
+        await API.fetchPreviewDeployment("draft/id");
+        await API.retryPreviewDeployment("draft/id");
+        await API.discardPreviewDeployment("draft/id");
+        await API.runPublish(article.path, "draft/id");
+
+        assert.equal(calls[1].url, "/admin/api/preview/markdown?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[1].options.body), article);
+        assert.equal(calls[2].url, "/admin/api/preview/deployments?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[2].options.body), { path: article.path, draft_id: "draft/id" });
+        assert.equal(calls[3].url, "/admin/api/preview/deployments/draft%2Fid?site=docs+site");
+        assert.equal(calls[4].url, "/admin/api/preview/deployments/draft%2Fid/retry?site=docs+site");
+        assert.equal(calls[5].url, "/admin/api/preview/deployments/draft%2Fid/discard?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[6].options.body), { path: article.path, draft_id: "draft/id" });
+        calls.slice(1).forEach(call => {
+            assert.equal(call.options.headers["X-CMS-Site"], "docs site");
+        });
     });
 });

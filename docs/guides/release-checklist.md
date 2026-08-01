@@ -39,8 +39,9 @@ git diff --check
 - 新規作成が `content_dir` 配下に作成される
 - メディア一覧、アップロード、削除、Markdown挿入が動く
 - スニペット挿入が動く
-- Preview / Restart Preview が動く
-- Publish が対象記事と関連メディアをcommit/pushする
+- 安全な本文プレビューが保存前入力へ追従する
+- 明示操作だけがdraft branchをcommit/pushする
+- ready deploymentからPRを作成し、production branchへ直接pushしない
 
 ## 4. 複数サイトの基本動作
 
@@ -50,24 +51,26 @@ Site Registryありで、少なくとも2サイトを用意して確認します
 - 記事一覧、記事取得、作成、保存、削除が選択サイトだけを対象にする
 - APIの `?site=<site_id>` と `X-CMS-Site` が同じ結果になる
 - default siteの `/ready` と選択site APIが混ざらない
-- siteごとの preview port が重複していない
-- 非default site previewのroot-relative URLがdefault siteへ落ちない
-- preview proxyが`/admin/preview/<site_id>/`、percent-encoding、queryを保持して上流へ転送する
+- siteごとの本文preview image pathとdeployment stateが混ざらない
 - siteごとの snippets / media / Git設定が使われる
 
 ## 5. Hugo / Eleventy
 
 Hugoサイトでは次を確認します。
 
-- `CONTENT_DIR` / Site Registryの `content_dir` を変えた場合も `hugo server` / `hugo build` が対象contentを読む
+- `CONTENT_DIR` / Site Registryの `content_dir` を変えた場合も `hugo build` が対象contentを読む
 - `hugo new content <path>` のfallback作成が期待通り
 
 Eleventyサイトでは次を確認します。
 
 - `package.json` とlockfileがある
-- lockfileに対応するpackage managerでpreview/buildされる
-- `--pathprefix`で認証付きpreview route配下へmountされる
-- preview停止時にwrapperの子プロセスが残らない
+- lockfileに対応するpackage managerで明示buildされる
+
+デプロイプレビューでは次を確認します。
+
+- Cloudflare Pagesが`cms-preview/*`をbuild対象にする
+- CMS statusとimmutable URLが同じcommit SHAに対応する
+- Access未保護警告、failed retry、discard cleanupが動く
 
 ## 6. Docker
 

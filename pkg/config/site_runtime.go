@@ -8,75 +8,89 @@ import "path/filepath"
 // process settings that are currently global, so services can gradually accept
 // explicit runtime data instead of reading mutable package globals.
 type SiteRuntime struct {
-	ID              string
-	Name            string
-	RepoPath        string
-	Generator       string
-	Runtime         string
-	ContentDir      string
-	StaticDir       string
-	PublicDir       string
-	PublicPath      string
-	PreviewURL      string
-	HugoServerPort  string
-	HugoServerBind  string
-	ArticleMediaDir string
-	StaticMediaDir  string
-	SnippetPaths    []string
-	AppURL          string
-	GitUserEmail    string
-	GitUserName     string
-	GitBranch       string
-	GitRemote       string
+	ID                     string
+	Name                   string
+	RepoPath               string
+	Generator              string
+	Runtime                string
+	ContentDir             string
+	StaticDir              string
+	PublicDir              string
+	PublicPath             string
+	PreviewURL             string
+	HugoServerPort         string
+	HugoServerBind         string
+	ArticleMediaDir        string
+	StaticMediaDir         string
+	SnippetPaths           []string
+	AppURL                 string
+	GitUserEmail           string
+	GitUserName            string
+	GitBranch              string
+	GitRemote              string
+	MarkdownPreviewEnabled bool
+	PreviewDeployment      DeploymentPreviewConfig
 }
 
 func NewSiteRuntime(site SiteConfig) SiteRuntime {
 	return SiteRuntime{
-		ID:              site.ID,
-		Name:            site.Name,
-		RepoPath:        site.RepoPath,
-		Generator:       site.Generator,
-		Runtime:         site.Runtime,
-		ContentDir:      site.ContentDir,
-		StaticDir:       site.StaticDir,
-		PublicDir:       site.PublicDir,
-		PublicPath:      filepath.Join(site.RepoPath, site.PublicDir),
-		PreviewURL:      site.PreviewURL,
-		HugoServerPort:  site.HugoServerPort,
-		HugoServerBind:  site.HugoServerBind,
-		ArticleMediaDir: site.ArticleMediaDir,
-		StaticMediaDir:  site.StaticMediaDir,
-		SnippetPaths:    append([]string(nil), site.SnippetPaths...),
-		AppURL:          GetAppURL(),
-		GitUserEmail:    GitUserEmail,
-		GitUserName:     GitUserName,
-		GitBranch:       GitBranch,
-		GitRemote:       GitRemote,
+		ID:                     site.ID,
+		Name:                   site.Name,
+		RepoPath:               site.RepoPath,
+		Generator:              site.Generator,
+		Runtime:                site.Runtime,
+		ContentDir:             site.ContentDir,
+		StaticDir:              site.StaticDir,
+		PublicDir:              site.PublicDir,
+		PublicPath:             filepath.Join(site.RepoPath, site.PublicDir),
+		PreviewURL:             site.PreviewURL,
+		HugoServerPort:         site.HugoServerPort,
+		HugoServerBind:         site.HugoServerBind,
+		ArticleMediaDir:        site.ArticleMediaDir,
+		StaticMediaDir:         site.StaticMediaDir,
+		SnippetPaths:           append([]string(nil), site.SnippetPaths...),
+		AppURL:                 GetAppURL(),
+		GitUserEmail:           GitUserEmail,
+		GitUserName:            GitUserName,
+		GitBranch:              GitBranch,
+		GitRemote:              GitRemote,
+		MarkdownPreviewEnabled: site.Preview.Markdown.Enabled == nil || *site.Preview.Markdown.Enabled,
+		PreviewDeployment:      site.Preview.Deployment,
 	}
 }
 
 func CurrentSiteRuntime() SiteRuntime {
 	return SiteRuntime{
-		ID:              DefaultSiteID,
-		Name:            "Current",
-		RepoPath:        RepoPath,
-		Generator:       SiteGenerator,
-		Runtime:         GeneratorRuntime,
-		ContentDir:      ContentDir,
-		StaticDir:       StaticDir,
-		PublicDir:       PublicDir,
-		PublicPath:      PublicPath,
-		PreviewURL:      PreviewURL,
-		HugoServerPort:  HugoServerPort,
-		HugoServerBind:  HugoServerBind,
-		ArticleMediaDir: ArticleMediaDir,
-		StaticMediaDir:  StaticMediaDir,
-		SnippetPaths:    append([]string(nil), SnippetPaths...),
-		AppURL:          GetAppURL(),
-		GitUserEmail:    GitUserEmail,
-		GitUserName:     GitUserName,
-		GitBranch:       GitBranch,
-		GitRemote:       GitRemote,
+		ID:                     DefaultSiteID,
+		Name:                   "Current",
+		RepoPath:               RepoPath,
+		Generator:              SiteGenerator,
+		Runtime:                GeneratorRuntime,
+		ContentDir:             ContentDir,
+		StaticDir:              StaticDir,
+		PublicDir:              PublicDir,
+		PublicPath:             PublicPath,
+		PreviewURL:             PreviewURL,
+		HugoServerPort:         HugoServerPort,
+		HugoServerBind:         HugoServerBind,
+		ArticleMediaDir:        ArticleMediaDir,
+		StaticMediaDir:         StaticMediaDir,
+		SnippetPaths:           append([]string(nil), SnippetPaths...),
+		AppURL:                 GetAppURL(),
+		GitUserEmail:           GitUserEmail,
+		GitUserName:            GitUserName,
+		GitBranch:              GitBranch,
+		GitRemote:              GitRemote,
+		MarkdownPreviewEnabled: MarkdownPreviewEnabled,
+		PreviewDeployment: DeploymentPreviewConfig{
+			Provider: PreviewDeploymentProvider,
+			CloudflarePages: CloudflarePagesConfig{
+				AccountID:   CloudflarePagesAccountID,
+				ProjectName: CloudflarePagesProjectName,
+				APITokenEnv: CloudflarePagesAPITokenEnv,
+			},
+			AccessProtected: PreviewDeploymentAccessProtected,
+		},
 	}
 }
 
@@ -96,5 +110,9 @@ func (runtime SiteRuntime) SiteConfig() SiteConfig {
 		ArticleMediaDir: runtime.ArticleMediaDir,
 		StaticMediaDir:  runtime.StaticMediaDir,
 		SnippetPaths:    append([]string(nil), runtime.SnippetPaths...),
+		Preview: SitePreviewConfig{
+			Markdown:   MarkdownPreviewConfig{Enabled: boolPointer(runtime.MarkdownPreviewEnabled)},
+			Deployment: runtime.PreviewDeployment,
+		},
 	}
 }

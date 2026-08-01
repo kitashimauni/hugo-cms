@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,6 +49,14 @@ var (
 	GitBranch    = "main"
 	GitRemote    = "origin"
 
+	// Preview settings
+	MarkdownPreviewEnabled           = true
+	PreviewDeploymentProvider        = ""
+	CloudflarePagesAccountID         = ""
+	CloudflarePagesProjectName       = ""
+	CloudflarePagesAPITokenEnv       = "CLOUDFLARE_API_TOKEN"
+	PreviewDeploymentAccessProtected = false
+
 	// Git timeout settings (generous for large repos/slow networks)
 	GitCommandTimeout = 60 * time.Second // Local git commands (status, diff, etc.)
 	GitNetworkTimeout = 5 * time.Minute  // Network operations (push, pull)
@@ -66,20 +73,46 @@ var (
 var OauthConf *oauth2.Config
 
 type SiteConfig struct {
-	ID              string   `yaml:"id" json:"id"`
-	Name            string   `yaml:"name" json:"name"`
-	RepoPath        string   `yaml:"repo_path" json:"repo_path"`
-	Generator       string   `yaml:"generator" json:"generator"`
-	Runtime         string   `yaml:"runtime" json:"runtime"`
-	ContentDir      string   `yaml:"content_dir" json:"content_dir"`
-	StaticDir       string   `yaml:"static_dir" json:"static_dir"`
-	PublicDir       string   `yaml:"public_dir" json:"public_dir"`
-	PreviewURL      string   `yaml:"preview_url" json:"preview_url"`
-	HugoServerPort  string   `yaml:"hugo_server_port" json:"hugo_server_port"`
-	HugoServerBind  string   `yaml:"hugo_server_bind" json:"hugo_server_bind"`
-	ArticleMediaDir string   `yaml:"article_media_dir" json:"article_media_dir"`
-	StaticMediaDir  string   `yaml:"static_media_dir" json:"static_media_dir"`
-	SnippetPaths    []string `yaml:"snippet_paths" json:"snippet_paths"`
+	ID              string            `yaml:"id" json:"id"`
+	Name            string            `yaml:"name" json:"name"`
+	RepoPath        string            `yaml:"repo_path" json:"repo_path"`
+	Generator       string            `yaml:"generator" json:"generator"`
+	Runtime         string            `yaml:"runtime" json:"runtime"`
+	ContentDir      string            `yaml:"content_dir" json:"content_dir"`
+	StaticDir       string            `yaml:"static_dir" json:"static_dir"`
+	PublicDir       string            `yaml:"public_dir" json:"public_dir"`
+	PreviewURL      string            `yaml:"preview_url" json:"preview_url"`
+	HugoServerPort  string            `yaml:"hugo_server_port" json:"hugo_server_port"`
+	HugoServerBind  string            `yaml:"hugo_server_bind" json:"hugo_server_bind"`
+	ArticleMediaDir string            `yaml:"article_media_dir" json:"article_media_dir"`
+	StaticMediaDir  string            `yaml:"static_media_dir" json:"static_media_dir"`
+	SnippetPaths    []string          `yaml:"snippet_paths" json:"snippet_paths"`
+	Preview         SitePreviewConfig `yaml:"preview" json:"preview"`
+}
+
+type SitePreviewConfig struct {
+	Markdown   MarkdownPreviewConfig   `yaml:"markdown" json:"markdown"`
+	Deployment DeploymentPreviewConfig `yaml:"deployment" json:"deployment"`
+}
+
+type MarkdownPreviewConfig struct {
+	// A pointer preserves the distinction between an omitted value (enabled by
+	// default) and an explicit false value in the site registry.
+	Enabled *bool `yaml:"enabled" json:"enabled,omitempty"`
+}
+
+type DeploymentPreviewConfig struct {
+	Provider        string                `yaml:"provider" json:"provider"`
+	CloudflarePages CloudflarePagesConfig `yaml:"cloudflare_pages" json:"cloudflare_pages"`
+	AccessProtected bool                  `yaml:"access_protected" json:"access_protected"`
+}
+
+type CloudflarePagesConfig struct {
+	AccountID   string `yaml:"account_id" json:"account_id"`
+	ProjectName string `yaml:"project_name" json:"project_name"`
+	// APITokenEnv is the name of the environment variable containing the API
+	// token. The token itself is never accepted in YAML or exposed as JSON.
+	APITokenEnv string `yaml:"token_env" json:"-"`
 }
 
 type SiteRegistryConfig struct {
@@ -136,6 +169,28 @@ func Init() error {
 	GitUserName = getEnv("GIT_USER_NAME", "Hugo CMS Bot")
 	GitBranch = getEnv("GIT_BRANCH", "main")
 	GitRemote = getEnv("GIT_REMOTE", "origin")
+	MarkdownPreviewEnabled = true
+	if markdownEnabled := os.Getenv("MARKDOWN_PREVIEW_ENABLED"); markdownEnabled != "" {
+		value, err := strconv.ParseBool(markdownEnabled)
+		if err != nil {
+			slog.Warn("Invalid MARKDOWN_PREVIEW_ENABLED value; defaulting to true", "value", markdownEnabled)
+		} else {
+			MarkdownPreviewEnabled = value
+		}
+	}
+	PreviewDeploymentProvider = strings.ToLower(strings.TrimSpace(getEnv("PREVIEW_DEPLOYMENT_PROVIDER", "")))
+	CloudflarePagesAccountID = strings.TrimSpace(getEnv("CLOUDFLARE_PAGES_ACCOUNT_ID", ""))
+	CloudflarePagesProjectName = strings.TrimSpace(getEnv("CLOUDFLARE_PAGES_PROJECT_NAME", ""))
+	CloudflarePagesAPITokenEnv = strings.TrimSpace(getEnv("CLOUDFLARE_PAGES_API_TOKEN_ENV", "CLOUDFLARE_API_TOKEN"))
+	PreviewDeploymentAccessProtected = false
+	if protected := os.Getenv("PREVIEW_DEPLOYMENT_ACCESS_PROTECTED"); protected != "" {
+		value, err := strconv.ParseBool(protected)
+		if err != nil {
+			slog.Warn("Invalid PREVIEW_DEPLOYMENT_ACCESS_PROTECTED value; defaulting to false", "value", protected)
+		} else {
+			PreviewDeploymentAccessProtected = value
+		}
+	}
 
 	// Security settings
 	AllowedGitHubUsers = nil
@@ -186,7 +241,11 @@ func Init() error {
 }
 
 func loadSiteRegistry() error {
-	Sites = []SiteConfig{defaultSiteFromGlobals()}
+	defaultSite := defaultSiteFromGlobals()
+	if err := validateSitePreviewConfig(defaultSite); err != nil {
+		return err
+	}
+	Sites = []SiteConfig{defaultSite}
 	if SitesConfigPath == "" {
 		return nil
 	}
@@ -208,15 +267,14 @@ func loadSiteRegistry() error {
 			slog.Warn("Skipping site registry entry without id")
 			continue
 		}
+		if err := validateSitePreviewConfig(site); err != nil {
+			return fmt.Errorf("site %q: %w", site.ID, err)
+		}
 		normalized = append(normalized, site)
 	}
 	if len(normalized) == 0 {
 		return fmt.Errorf("site registry config %q contains no usable sites", SitesConfigPath)
 	}
-	if err := validateUniquePreviewAddresses(normalized); err != nil {
-		return err
-	}
-
 	Sites = normalized
 	if strings.TrimSpace(registry.DefaultSite) != "" {
 		DefaultSiteID = strings.TrimSpace(registry.DefaultSite)
@@ -246,6 +304,18 @@ func defaultSiteFromGlobals() SiteConfig {
 		ArticleMediaDir: ArticleMediaDir,
 		StaticMediaDir:  StaticMediaDir,
 		SnippetPaths:    SnippetPaths,
+		Preview: SitePreviewConfig{
+			Markdown: MarkdownPreviewConfig{Enabled: boolPointer(MarkdownPreviewEnabled)},
+			Deployment: DeploymentPreviewConfig{
+				Provider: PreviewDeploymentProvider,
+				CloudflarePages: CloudflarePagesConfig{
+					AccountID:   CloudflarePagesAccountID,
+					ProjectName: CloudflarePagesProjectName,
+					APITokenEnv: CloudflarePagesAPITokenEnv,
+				},
+				AccessProtected: PreviewDeploymentAccessProtected,
+			},
+		},
 	})
 }
 
@@ -263,6 +333,10 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 	site.HugoServerBind = strings.TrimSpace(site.HugoServerBind)
 	site.ArticleMediaDir = cleanOptionalRelativeDir(site.ArticleMediaDir)
 	site.StaticMediaDir = cleanOptionalRelativeDir(site.StaticMediaDir)
+	site.Preview.Deployment.Provider = strings.ToLower(strings.TrimSpace(site.Preview.Deployment.Provider))
+	site.Preview.Deployment.CloudflarePages.AccountID = strings.TrimSpace(site.Preview.Deployment.CloudflarePages.AccountID)
+	site.Preview.Deployment.CloudflarePages.ProjectName = strings.TrimSpace(site.Preview.Deployment.CloudflarePages.ProjectName)
+	site.Preview.Deployment.CloudflarePages.APITokenEnv = strings.TrimSpace(site.Preview.Deployment.CloudflarePages.APITokenEnv)
 
 	if site.Name == "" {
 		site.Name = site.ID
@@ -285,47 +359,39 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 	if site.HugoServerBind == "" {
 		site.HugoServerBind = "127.0.0.1"
 	}
+	if site.Preview.Markdown.Enabled == nil {
+		site.Preview.Markdown.Enabled = boolPointer(true)
+	}
+	if site.Preview.Deployment.Provider == "cloudflare_pages" && site.Preview.Deployment.CloudflarePages.APITokenEnv == "" {
+		site.Preview.Deployment.CloudflarePages.APITokenEnv = "CLOUDFLARE_API_TOKEN"
+	}
 	site.SnippetPaths = normalizeSnippetPaths(site.SnippetPaths, site.RepoPath)
 	return site
 }
 
-func validateUniquePreviewAddresses(sites []SiteConfig) error {
-	seen := []previewAddressUse{}
-	for _, site := range sites {
-		current := newPreviewAddressUse(site)
-		for _, existing := range seen {
-			if existing.address == current.address {
-				return fmt.Errorf("preview address %s is used by both site %q and site %q", current.address, existing.siteID, current.siteID)
-			}
-			if existing.port == current.port && (existing.wildcard || current.wildcard) {
-				return fmt.Errorf("preview port %s conflicts because wildcard bind is used by site %q (%s) and site %q (%s)", current.port, existing.siteID, existing.address, current.siteID, current.address)
-			}
+func validateSitePreviewConfig(site SiteConfig) error {
+	deployment := site.Preview.Deployment
+	switch deployment.Provider {
+	case "":
+		return nil
+	case "cloudflare_pages":
+		if deployment.CloudflarePages.AccountID == "" {
+			return fmt.Errorf("preview deployment cloudflare_pages.account_id is required")
 		}
-		seen = append(seen, current)
-	}
-	return nil
-}
-
-type previewAddressUse struct {
-	siteID   string
-	address  string
-	port     string
-	wildcard bool
-}
-
-func newPreviewAddressUse(site SiteConfig) previewAddressUse {
-	return previewAddressUse{
-		siteID:   site.ID,
-		address:  net.JoinHostPort(site.HugoServerBind, site.HugoServerPort),
-		port:     site.HugoServerPort,
-		wildcard: isWildcardBind(site.HugoServerBind),
+		if deployment.CloudflarePages.ProjectName == "" {
+			return fmt.Errorf("preview deployment cloudflare_pages.project_name is required")
+		}
+		if deployment.CloudflarePages.APITokenEnv == "" {
+			return fmt.Errorf("preview deployment cloudflare_pages.token_env is required")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported preview deployment provider %q", deployment.Provider)
 	}
 }
 
-func isWildcardBind(bind string) bool {
-	bind = strings.Trim(strings.TrimSpace(bind), "[]")
-	ip := net.ParseIP(bind)
-	return ip != nil && ip.IsUnspecified()
+func boolPointer(value bool) *bool {
+	return &value
 }
 
 func defaultSnippetPaths(repoPath string) []string {
@@ -440,6 +506,12 @@ func ApplyRuntime(runtime SiteRuntime) {
 	ArticleMediaDir = runtime.ArticleMediaDir
 	StaticMediaDir = runtime.StaticMediaDir
 	SnippetPaths = append([]string(nil), runtime.SnippetPaths...)
+	MarkdownPreviewEnabled = runtime.MarkdownPreviewEnabled
+	PreviewDeploymentProvider = runtime.PreviewDeployment.Provider
+	CloudflarePagesAccountID = runtime.PreviewDeployment.CloudflarePages.AccountID
+	CloudflarePagesProjectName = runtime.PreviewDeployment.CloudflarePages.ProjectName
+	CloudflarePagesAPITokenEnv = runtime.PreviewDeployment.CloudflarePages.APITokenEnv
+	PreviewDeploymentAccessProtected = runtime.PreviewDeployment.AccessProtected
 }
 
 // ValidateSecurityConfig rejects insecure authorization defaults.

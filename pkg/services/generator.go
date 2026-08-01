@@ -3,19 +3,13 @@ package services
 import (
 	"fmt"
 	"hugo-cms/pkg/config"
-	"net/url"
-	"path/filepath"
 	"sync"
 )
 
-// GeneratorAdapter implementations must mount their preview server at
-// runtime.PreviewURL. The HTTP proxy preserves that public path verbatim so
-// preview routing remains generator-independent.
+// GeneratorAdapter supports explicit builds and content creation. Preview
+// rendering and deployment are handled by their dedicated services.
 type GeneratorAdapter interface {
 	Name() string
-	StartPreview(runtime config.SiteRuntime) error
-	StopPreview() error
-	IsPreviewRunning() bool
 	Build(runtime config.SiteRuntime) (string, error)
 	CreateContent(runtime config.SiteRuntime, path string) (string, error)
 }
@@ -23,8 +17,6 @@ type GeneratorAdapter interface {
 var (
 	generatorAdapterMu sync.RWMutex
 	generatorAdapter   GeneratorAdapter = NewHugoAdapter()
-	previewAdaptersMu  sync.Mutex
-	previewAdapters    = map[string]GeneratorAdapter{}
 )
 
 func CurrentGeneratorAdapter() GeneratorAdapter {
@@ -40,9 +32,6 @@ func SetGeneratorAdapter(adapter GeneratorAdapter) error {
 
 	generatorAdapterMu.Lock()
 	defer generatorAdapterMu.Unlock()
-	if generatorAdapter != nil && generatorAdapter.IsPreviewRunning() {
-		return fmt.Errorf("cannot replace generator adapter while preview is running")
-	}
 	generatorAdapter = adapter
 	return nil
 }
@@ -80,130 +69,4 @@ func CreateContentForRuntime(runtime config.SiteRuntime, path string) (string, e
 		return "", err
 	}
 	return adapter.CreateContent(runtime, path)
-}
-
-func StartPreviewForSite(site config.SiteConfig) error {
-	return StartPreviewForRuntime(PreviewRuntimeForSite(site))
-}
-
-func StartPreviewForRuntime(runtime config.SiteRuntime) error {
-	adapter, err := previewAdapterForRuntime(runtime)
-	if err != nil {
-		return err
-	}
-	return adapter.StartPreview(runtime)
-}
-
-func StopPreviewForSite(site config.SiteConfig) error {
-	return StopPreviewForRuntime(config.NewSiteRuntime(site))
-}
-
-func StopPreviewForRuntime(runtime config.SiteRuntime) error {
-	adapter, ok := previewAdapterForRuntimeIfExists(runtime)
-	if !ok {
-		return nil
-	}
-	return adapter.StopPreview()
-}
-
-func RestartPreviewForSite(site config.SiteConfig) error {
-	return RestartPreviewForRuntime(PreviewRuntimeForSite(site))
-}
-
-func RestartPreviewForRuntime(runtime config.SiteRuntime) error {
-	adapter, err := previewAdapterForRuntime(runtime)
-	if err != nil {
-		return err
-	}
-	if err := adapter.StopPreview(); err != nil {
-		return err
-	}
-	return adapter.StartPreview(runtime)
-}
-
-func IsPreviewRunningForSite(site config.SiteConfig) bool {
-	return IsPreviewRunningForRuntime(config.NewSiteRuntime(site))
-}
-
-func IsPreviewRunningForRuntime(runtime config.SiteRuntime) bool {
-	adapter, ok := previewAdapterForRuntimeIfExists(runtime)
-	return ok && adapter.IsPreviewRunning()
-}
-
-func StopAllPreviewServers() error {
-	previewAdaptersMu.Lock()
-	adapters := make([]GeneratorAdapter, 0, len(previewAdapters))
-	for _, adapter := range previewAdapters {
-		adapters = append(adapters, adapter)
-	}
-	previewAdapters = map[string]GeneratorAdapter{}
-	previewAdaptersMu.Unlock()
-
-	var stopErr error
-	for _, adapter := range adapters {
-		if err := adapter.StopPreview(); err != nil && stopErr == nil {
-			stopErr = err
-		}
-	}
-	return stopErr
-}
-
-func previewAdapterForRuntime(runtime config.SiteRuntime) (GeneratorAdapter, error) {
-	previewAdaptersMu.Lock()
-	defer previewAdaptersMu.Unlock()
-	return previewAdapterForRuntimeLocked(runtime)
-}
-
-func previewAdapterForRuntimeIfExists(runtime config.SiteRuntime) (GeneratorAdapter, bool) {
-	previewAdaptersMu.Lock()
-	defer previewAdaptersMu.Unlock()
-	adapter, ok := previewAdapters[sitePreviewKey(runtime)]
-	return adapter, ok
-}
-
-func previewAdapterForRuntimeLocked(runtime config.SiteRuntime) (GeneratorAdapter, error) {
-	key := sitePreviewKey(runtime)
-	if adapter, ok := previewAdapters[key]; ok {
-		return adapter, nil
-	}
-
-	adapter, err := NewGeneratorAdapter(runtime.Generator)
-	if err != nil {
-		return nil, err
-	}
-	previewAdapters[key] = adapter
-	return adapter, nil
-}
-
-func sitePreviewKey(runtime config.SiteRuntime) string {
-	if runtime.ID != "" {
-		return runtime.ID
-	}
-	return filepath.ToSlash(filepath.Clean(runtime.RepoPath)) + "\x00" + runtime.HugoServerBind + "\x00" + runtime.HugoServerPort
-}
-
-func DefaultPreviewSite() config.SiteConfig {
-	if site, ok := config.GetSite(config.DefaultSiteID); ok {
-		return site
-	}
-	return config.RuntimeSiteConfig()
-}
-
-func previewRuntimeSite(site config.SiteConfig) config.SiteConfig {
-	return PreviewRuntimeForSite(site).SiteConfig()
-}
-
-// PreviewRuntimeForSite resolves the runtime used by preview processes.
-// Site previews must render with the authenticated proxy route as their base
-// URL so root-relative links and assets stay under /admin/preview/<site>/.
-func PreviewRuntimeForSite(site config.SiteConfig) config.SiteRuntime {
-	return previewRuntime(site)
-}
-
-func previewRuntime(site config.SiteConfig) config.SiteRuntime {
-	if site.ID == "" {
-		return config.NewSiteRuntime(site)
-	}
-	site.PreviewURL = "/admin/preview/" + url.PathEscape(site.ID) + "/"
-	return config.NewSiteRuntime(site)
 }

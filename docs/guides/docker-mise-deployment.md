@@ -151,8 +151,7 @@ HUGO_CMS_HOST_PORT=8080
 HUGO_CMS_UID=1000
 HUGO_CMS_GID=1000
 
-HUGO_SERVER_BIND=127.0.0.1
-HUGO_SERVER_PORT=1314
+MARKDOWN_PREVIEW_ENABLED=true
 
 GIT_REMOTE=origin
 GIT_BRANCH=main
@@ -236,7 +235,9 @@ sites:
     content_dir: content
     static_dir: static
     public_dir: public
-    hugo_server_port: "1314"
+    preview:
+      markdown:
+        enabled: true
 
   - id: docs
     name: Docs
@@ -246,10 +247,9 @@ sites:
     content_dir: src
     static_dir: public-assets
     public_dir: _site
-    hugo_server_port: "1315"
 ```
 
-各サイトのpreview portは重複させないでください。Site Registryへ登録しただけではbootstrap対象になりません。実行を承認したrepoだけを`HUGO_CMS_REPOS`にも追加します。
+本文previewはCMS内でrenderされるためpreview portは不要です。Site Registryへ登録しただけではgenerator bootstrap対象になりません。明示build/content作成で実行を承認したrepoだけを`HUGO_CMS_REPOS`にも追加します。
 
 ## 更新
 
@@ -262,7 +262,7 @@ docker compose up -d hugo-cms
 
 appだけの更新でもbootstrapを再実行して問題ありません。サイトの実行コードを再評価したくない場合は、変更内容を確認したうえでappだけを再作成します。
 
-`mise-data`はnamed volumeです。通常の`docker compose down`では残ります。`docker compose down --volumes`はtoolchainを削除するため、意図した初期化時だけ実行してください。
+`mise-data`と`preview-state`はnamed volumeです。`preview-state`は`/data/homecms`へmountされ、`PREVIEW_STATE_DIR=/data/homecms/preview-deployments`のdraft/deployment stateを保持します。provider tokenは保存しません。通常の`docker compose down`では残ります。`docker compose down --volumes`はtoolchainとpreview stateを削除するため、意図した初期化時だけ実行してください。
 
 ## トラブルシューティング
 

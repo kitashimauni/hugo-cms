@@ -28,8 +28,6 @@ media:
   folder: static/images
   public_path: /images
 
-preview:
-  url_field: permalink
 ```
 
 `.homecms.yml` はジェネレーター非依存の設定です。`content.collections` は既存UIが利用する `collections` 形式へサーバー側で変換されます。`frontmatter` は `yaml`、`toml`、`json` を指定できます。
@@ -47,7 +45,7 @@ HomeCMSは設定を読み込むときに、編集・作成・previewで事故に
 - `content.collections[].name` と `folder` が指定されているか
 - `folder` や `media.folder` がリポジトリ外へ出ない安全な相対パスか
 - `path` に含まれる `{{slug}}` や `{{field_name}}` に対応するfieldがあるか
-- `preview.url_field` に指定したfieldが定義されているか
+- legacy `preview.url_field` に指定したfieldが定義されているか（本文/デプロイプpreviewでは未使用）
 - `frontmatter` が `yaml` / `toml` / `json` のいずれかか
 - 未対応のwidgetを使っていないか
 

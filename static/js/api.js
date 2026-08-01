@@ -52,6 +52,21 @@ function resetCSRFToken() {
     csrfToken = null;
 }
 
+async function fetchWithCSRF(url, options) {
+    await ensureCSRFToken();
+    const request = () => fetch(url, {
+        ...options,
+        headers: { ...(options.headers || {}), ...getCSRFHeaders() }
+    });
+    let res = await request();
+    if (res.status === 403) {
+        resetCSRFToken();
+        await ensureCSRFToken(true);
+        res = await request();
+    }
+    return res;
+}
+
 export async function fetchConfig() {
     const res = await fetch(withSite('/admin/api/config'), { headers: siteHeaders() });
     if (!res.ok) throw new Error("Config fetch failed");
@@ -168,30 +183,6 @@ export async function getDiff(payload) {
     return await res.json();
 }
 
-export async function runBuild() {
-    await ensureCSRFToken();
-    const res = await fetch(withSite('/admin/api/build'), {
-        method: 'POST',
-        headers: {
-            ...siteHeaders(),
-            ...getCSRFHeaders()
-        }
-    });
-    return await res.json();
-}
-
-export async function restartHugo() {
-    await ensureCSRFToken();
-    const res = await fetch(withSite('/admin/api/build/restart'), {
-        method: 'POST',
-        headers: {
-            ...siteHeaders(),
-            ...getCSRFHeaders()
-        }
-    });
-    return await res.json();
-}
-
 export async function runSync() {
     await ensureCSRFToken();
     const res = await fetch(withSite('/admin/api/sync'), {
@@ -204,25 +195,75 @@ export async function runSync() {
     return await res.json();
 }
 
-export async function runPublish(path = null) {
-    await ensureCSRFToken();
-    const options = {
+export async function runPublish(path, draftID) {
+    const res = await fetchWithCSRF(withSite('/admin/api/publish'), {
         method: 'POST',
         headers: {
-            ...siteHeaders(),
-            ...getCSRFHeaders()
-        }
-    };
-    if (path) {
-        options.headers = {
             'Content-Type': 'application/json',
-            ...siteHeaders(),
-            ...getCSRFHeaders()
-        };
-        options.body = JSON.stringify({ path });
-    }
-    const res = await fetch(withSite('/admin/api/publish'), options);
+            ...siteHeaders()
+        },
+        body: JSON.stringify({ path, draft_id: draftID })
+    });
+    if (!res.ok) throw new Error("Publish failed");
     return await res.json();
+}
+
+export async function renderMarkdownPreview(payload, signal) {
+    const res = await fetchWithCSRF(withSite('/admin/api/preview/markdown'), {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            ...siteHeaders()
+        },
+        body: JSON.stringify(payload),
+        signal
+    });
+    if (!res.ok) throw new Error("Markdown preview failed");
+    return await res.json();
+}
+
+export async function triggerPreviewDeployment(path, draftID) {
+    const res = await fetchWithCSRF(withSite('/admin/api/preview/deployments'), {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            ...siteHeaders()
+        },
+        body: JSON.stringify({ path, draft_id: draftID })
+    });
+    if (!res.ok) throw new Error("Failed to update deployment preview");
+    return await res.json();
+}
+
+export async function fetchPreviewDeployment(draftID, signal) {
+    const id = encodeURIComponent(draftID);
+    const res = await fetch(withSite(`/admin/api/preview/deployments/${id}`), {
+        headers: siteHeaders(),
+        signal
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error("Failed to fetch deployment preview");
+    return await res.json();
+}
+
+async function postPreviewDeploymentAction(draftID, action) {
+    const id = encodeURIComponent(draftID);
+    const res = await fetchWithCSRF(withSite(`/admin/api/preview/deployments/${id}/${action}`), {
+        method: 'POST',
+        headers: {
+            ...siteHeaders()
+        }
+    });
+    if (!res.ok) throw new Error(`Failed to ${action} deployment preview`);
+    return await res.json();
+}
+
+export function retryPreviewDeployment(draftID) {
+    return postPreviewDeploymentAction(draftID, 'retry');
+}
+
+export function discardPreviewDeployment(draftID) {
+    return postPreviewDeploymentAction(draftID, 'discard');
 }
 
 export async function fetchMedia(mode, path) {
