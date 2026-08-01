@@ -10,47 +10,14 @@ import (
 	"time"
 )
 
-type HugoAdapter struct {
-	preview *ProcessManager
-}
+type HugoAdapter struct{}
 
 func NewHugoAdapter() *HugoAdapter {
-	return &HugoAdapter{preview: &ProcessManager{}}
+	return &HugoAdapter{}
 }
 
 func (*HugoAdapter) Name() string {
 	return "hugo"
-}
-
-func (adapter *HugoAdapter) StartPreview(runtime config.SiteRuntime) error {
-	slog.Info("Starting Hugo server", "site", runtime.ID, "port", runtime.HugoServerPort)
-
-	err := adapter.preview.Start(func() managedProcess {
-		cmd := generatorCommand(runtime, "hugo", hugoServerArgs(runtime)...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return newExecManagedProcess(cmd)
-	}, func(err error) {
-		slog.Info("Hugo server stopped", "error", err)
-	})
-	if err != nil {
-		return fmt.Errorf("failed to start hugo server: %w", err)
-	}
-	return nil
-}
-
-func (adapter *HugoAdapter) StopPreview() error {
-	slog.Info("Stopping Hugo server")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := adapter.preview.Stop(ctx); err != nil {
-		return fmt.Errorf("failed to stop hugo server: %w", err)
-	}
-	return nil
-}
-
-func (adapter *HugoAdapter) IsPreviewRunning() bool {
-	return adapter.preview.Running()
 }
 
 func (*HugoAdapter) Build(runtime config.SiteRuntime) (string, error) {
@@ -68,21 +35,6 @@ func (*HugoAdapter) Build(runtime config.SiteRuntime) (string, error) {
 		return string(output), fmt.Errorf("hugo build timed out after 5 minutes")
 	}
 	return string(output), err
-}
-
-func hugoServerArgs(runtime config.SiteRuntime) []string {
-	return []string{
-		"server",
-		"--source", ".",
-		"--contentDir", runtime.ContentDir,
-		"--bind", runtime.HugoServerBind,
-		"--port", runtime.HugoServerPort,
-		"--baseURL", runtime.AppURL + runtime.PreviewURL,
-		"--appendPort=false",
-		"--disableLiveReload",
-		"-D",
-		"-F",
-	}
 }
 
 func hugoBuildArgs(runtime config.SiteRuntime) []string {

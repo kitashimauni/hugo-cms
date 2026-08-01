@@ -244,25 +244,52 @@ CMSは設定読み込み時に、collection名・folder・path変数・`preview.
 
 ### Preview
 
-プレビューはサイトごとに独立したプロセスとして管理されます。選択中サイトのiframeは次の内部proxyを参照します。
+プレビューは、保存前の編集内容を安全に表示する「本文プレビュー」と、外部buildでテーマを含めて確認する「デプロイプレビュー」に分かれます。CMSはHugo/Eleventyのpreview processやreverse proxyを起動しません。
 
-```text
-/admin/preview/<site_id>/<page-path>
+Site Registryでサイトごとに設定します。
+
+```yaml
+sites:
+  - id: techblog
+    repo_path: D:/sites/techblog
+    preview:
+      markdown:
+        enabled: true
+      deployment:
+        provider: cloudflare_pages
+        access_protected: true
+        cloudflare_pages:
+          account_id: 0123456789abcdef0123456789abcdef
+          project_name: techblog
+          token_env: TECHBLOG_CLOUDFLARE_API_TOKEN
 ```
 
-サイトごとに`hugo_server_bind`と`hugo_server_port`の組み合わせを重複しない値にしてください。重複がある場合、CMSは起動時にSite Registryを不正として拒否します。`0.0.0.0`や`::`のようなwildcard bindは同じportの任意bindと衝突扱いになります。Hugoでは`hugo server --baseURL <preview_url>`、Eleventyではlockfileに対応するpackage manager経由の`eleventy --serve --pathprefix <preview_url>`を使用します。
+`markdown.enabled`は既定で`true`です。本文プレビューはGFMをsanitizeして表示し、Hugo shortcode、layout、サイト固有CSS/JavaScriptは再現しません。relative imageは記事bundle、root-relative imageは`static_dir`から解決し、既存の許可済みmediaだけを認証付きrouteで表示します。
 
-すべてのGenerator Adapterはpreview serverを`/admin/preview/<site_id>/`配下へmountします。CMSのproxyは受け取ったpath、percent-encoding、queryをそのまま上流へ転送します。新しいGenerator Adapterもこの契約を満たす必要があり、proxy側へサイト固有のsection名やpermalink規則を追加しません。
+`deployment.provider`を省略したサイトでも編集と本文プレビューは利用できます。`cloudflare_pages`を使う場合、`account_id`、`project_name`、`token_env`が必須です。`token_env`はtoken値ではなく、tokenを格納した環境変数名です。token値はYAMLへ書かず、browserにも返りません。
 
-初回preview requestで対象サイトのpreview processを起動した場合、CMSはproxyする前にpreview portが実際に接続可能になるまで短時間待機します。これにより、process起動直後にiframeが`502 Preview unavailable`になる揺らぎを抑えます。
+`access_protected: true`は、Cloudflare Accessを運用側で設定済みであることをCMSへ申告する値です。CMSがAccess policyを作成するわけではありません。`false`では未公開contentがpublic previewに出る可能性をUIで警告します。
 
-preview iframe内のページ・画像・CSSなどが`/images/foo.png`のようなroot-relative URLを要求した場合も、直前のpreview URLから選択サイトを判定し、同じ`/admin/preview/<site_id>/...`配下へリダイレクトします。これにより非defaultサイトのpreviewがdefaultサイトのroot proxyへ落ちることを避けます。
+単一サイトを環境変数だけで設定する場合は次を使用できます。
+
+```env
+MARKDOWN_PREVIEW_ENABLED=true
+PREVIEW_DEPLOYMENT_PROVIDER=cloudflare_pages
+CLOUDFLARE_PAGES_ACCOUNT_ID=0123456789abcdef0123456789abcdef
+CLOUDFLARE_PAGES_PROJECT_NAME=techblog
+CLOUDFLARE_PAGES_API_TOKEN_ENV=CLOUDFLARE_API_TOKEN
+CLOUDFLARE_API_TOKEN=secret-value
+PREVIEW_DEPLOYMENT_ACCESS_PROTECTED=true
+PREVIEW_STATE_DIR=./data/preview-deployments
+```
+
+`PREVIEW_STATE_DIR`はcommit SHA、deployment ID、status、URL、cleanup状態を保存します。tokenは保存しません。複数instanceで運用する場合は、全instanceから同じ永続storageを参照できる配置と排他制御を別途設計してください。
 
 ### site registry項目
 
 | 項目 | 必須 | 説明 |
 |---|---:|---|
-| `id` | はい | サイトID。UI、API、preview routeで使用 |
+| `id` | はい | サイトID。UI、API、draft state分離で使用 |
 | `name` | いいえ | UI表示名。未指定時は`id` |
 | `repo_path` | はい | 対象リポジトリ |
 | `generator` | いいえ | `hugo`または`eleventy` |
@@ -270,8 +297,10 @@ preview iframe内のページ・画像・CSSなどが`/images/foo.png`のよう�
 | `content_dir` | いいえ | Markdown記事のルート。デフォルト`content` |
 | `static_dir` | いいえ | 静的ファイルのルート。デフォルト`static` |
 | `public_dir` | いいえ | build出力先。デフォルト`public` |
-| `hugo_server_port` | いいえ | previewプロセスのポート。`hugo_server_bind`との組み合わせはサイト間で重複不可 |
-| `hugo_server_bind` | いいえ | preview bind address。デフォルト`127.0.0.1`。`0.0.0.0`や`::`は同じportの全bindと衝突扱い |
+| `preview.markdown.enabled` | いいえ | 安全な本文プレビュー。デフォルト`true` |
+| `preview.deployment.provider` | いいえ | 空または`cloudflare_pages` |
+| `preview.deployment.access_protected` | いいえ | Access設定済みの申告。デフォルト`false` |
+| `preview.deployment.cloudflare_pages.*` | provider使用時 | `account_id`、`project_name`、`token_env` |
 | `snippet_paths` | いいえ | スニペットファイル。相対パスは`repo_path`基準 |
 
 ### スニペット設定
@@ -337,27 +366,9 @@ STATIC_MEDIA_DIR=images
 STATIC_MEDIA_DIR=
 ```
 
-### Hugoサーバー設定
+### 廃止したローカルpreview設定
 
-#### `HUGO_SERVER_PORT`
-
-内部Hugoサーバーのポート。デフォルト: `1314`
-
-CMSはHugoサーバーをバックグラウンドで起動し、プレビュー機能を提供します。
-
-#### `HUGO_SERVER_BIND`
-
-Hugoサーバーがバインドするアドレス。デフォルト: `127.0.0.1`
-
-```env
-# ローカルのみ (デフォルト・推奨)
-HUGO_SERVER_BIND=127.0.0.1
-
-# 全インターフェース（previewを別containerから直接接続する特殊構成）
-HUGO_SERVER_BIND=0.0.0.0
-```
-
-標準のDocker構成ではCMSとpreview processが同じcontainer内で動くため、`127.0.0.1`のまま使用します。hostへ公開するのはCMSのloopback portだけです。
+`PREVIEW_URL`、`HUGO_SERVER_PORT`、`HUGO_SERVER_BIND`およびSite Registryの同名項目は旧ローカルpreview用です。移行期間中に読み込める場合があっても本文/デプロイプpreviewでは使用されず、新規設定には追加しないでください。
 
 ### Git設定
 
@@ -406,7 +417,7 @@ PORT=8080
 APP_URL=http://localhost:8080
 REPO_PATH=./repo
 
-HUGO_SERVER_PORT=1314
+MARKDOWN_PREVIEW_ENABLED=true
 ```
 
 ### 本番環境 (単一ユーザー)
@@ -451,8 +462,7 @@ HUGO_CMS_HOST_PORT=8080
 HUGO_CMS_UID=1000
 HUGO_CMS_GID=1000
 
-HUGO_SERVER_BIND=127.0.0.1
-HUGO_SERVER_PORT=1314
+MARKDOWN_PREVIEW_ENABLED=true
 ```
 
 `.env`は必須です。appのcontainer内`PORT=8080`はCompose側で固定されるため、Docker用`.env`では変更しません。`tool-bootstrap`はこのファイルからallowlist等を補間しますが、app用のsecret環境変数をcontainerへ受け取りません。

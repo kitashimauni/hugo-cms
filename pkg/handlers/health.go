@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"hugo-cms/pkg/config"
-	"hugo-cms/pkg/services"
 
 	"github.com/gin-gonic/gin"
 )
@@ -32,17 +31,7 @@ func ReadinessCheck(c *gin.Context) {
 	allHealthy := true
 	runtime := config.CurrentSiteRuntime()
 
-	// Check 1: default preview server is running
-	previewHealthy := services.IsPreviewRunningForRuntime(runtime)
-	checks["preview_server"] = gin.H{
-		"healthy": previewHealthy,
-		"message": getPreviewStatusMessage(previewHealthy),
-	}
-	if !previewHealthy {
-		allHealthy = false
-	}
-
-	// Check 2: Content directory is accessible
+	// Check 1: Content directory is accessible
 	contentDir := filepath.Join(runtime.RepoPath, runtime.ContentDir)
 	contentAccessible := isDirAccessible(contentDir)
 	checks["content_dir"] = gin.H{
@@ -52,7 +41,7 @@ func ReadinessCheck(c *gin.Context) {
 		allHealthy = false
 	}
 
-	// Check 3: Git repository status
+	// Check 2: Git repository status
 	gitHealthy := isGitRepoHealthy(runtime.RepoPath)
 	checks["git_repo"] = gin.H{
 		"healthy": gitHealthy,
@@ -80,13 +69,6 @@ func getOverallStatus(healthy bool) string {
 		return "ok"
 	}
 	return "degraded"
-}
-
-func getPreviewStatusMessage(running bool) string {
-	if running {
-		return "Preview server is running"
-	}
-	return "Preview server is not running"
 }
 
 func isDirAccessible(path string) bool {

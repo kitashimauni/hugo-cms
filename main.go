@@ -11,10 +11,7 @@ import (
 	"hugo-cms/pkg/handlers"
 	"hugo-cms/pkg/services"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -39,124 +36,6 @@ func configureGinMode() error {
 	default:
 		return fmt.Errorf("invalid GIN_MODE %q", mode)
 	}
-}
-
-func sitePreviewProxyHandler(c *gin.Context) {
-	// Preview pages need same-origin referrers so root-relative links and
-	// assets can be routed back to the selected site instead of the default
-	// root proxy. Other admin routes keep the stricter no-referrer policy.
-	c.Header("Referrer-Policy", "same-origin")
-
-	siteID := strings.TrimSpace(c.Param("site"))
-	site, ok := config.GetSite(siteID)
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown site: " + siteID})
-		return
-	}
-
-	if err := services.StartPreviewForSite(site); err != nil {
-		slog.Warn("Failed to start site preview", "site", siteID, "error", err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Preview unavailable"})
-		return
-	}
-	if err := waitForPreviewPort(c.Request.Context(), site, 5*time.Second); err != nil {
-		slog.Warn("Site preview did not become ready", "site", siteID, "error", err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Preview unavailable"})
-		return
-	}
-
-	previewProxyURL, err := url.Parse("http://" + sitePreviewAddress(site))
-	if err != nil {
-		slog.Warn("Invalid site preview address", "site", siteID, "error", err)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Preview unavailable"})
-		return
-	}
-	proxy := newPreviewProxy(previewProxyURL)
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		slog.Warn("Site preview proxy failed", "site", siteID, "error", err)
-		http.Error(w, "Preview unavailable", http.StatusBadGateway)
-	}
-	proxy.ServeHTTP(c.Writer, c.Request)
-}
-
-func newPreviewProxy(target *url.URL) *httputil.ReverseProxy {
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	baseDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		baseDirector(req)
-		req.Host = target.Host
-	}
-	return proxy
-}
-
-func sitePreviewAddress(site config.SiteConfig) string {
-	return net.JoinHostPort(site.HugoServerBind, site.HugoServerPort)
-}
-
-func waitForPreviewPort(parent context.Context, site config.SiteConfig, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-
-	address := sitePreviewAddress(site)
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	var lastErr error
-	for {
-		var dialer net.Dialer
-		conn, err := dialer.DialContext(ctx, "tcp", address)
-		if err == nil {
-			_ = conn.Close()
-			return nil
-		}
-		lastErr = err
-
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return fmt.Errorf("preview port %s not ready: %w", address, lastErr)
-			}
-			return fmt.Errorf("preview port %s not ready: %w", address, ctx.Err())
-		case <-ticker.C:
-		}
-	}
-}
-
-func previewSiteFromReferer(referer string) (config.SiteConfig, bool) {
-	if strings.TrimSpace(referer) == "" {
-		return config.SiteConfig{}, false
-	}
-	refererURL, err := url.Parse(referer)
-	if err != nil {
-		return config.SiteConfig{}, false
-	}
-
-	parts := strings.Split(strings.TrimPrefix(refererURL.EscapedPath(), "/"), "/")
-	if len(parts) < 3 || parts[0] != "admin" || parts[1] != "preview" {
-		return config.SiteConfig{}, false
-	}
-
-	siteID, err := url.PathUnescape(parts[2])
-	if err != nil {
-		return config.SiteConfig{}, false
-	}
-	return config.GetSite(siteID)
-}
-
-func previewRedirectTarget(req *http.Request, site config.SiteConfig) string {
-	path := req.URL.EscapedPath()
-	if path == "" {
-		path = "/"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-
-	target := "/admin/preview/" + url.PathEscape(site.ID) + path
-	if req.URL.RawQuery != "" {
-		target += "?" + req.URL.RawQuery
-	}
-	return target
 }
 
 func SetupRouter() (*gin.Engine, error) {
@@ -230,15 +109,16 @@ func SetupRouter() (*gin.Engine, error) {
 			authorized.Static("/static", "./static")
 
 			authorized.GET("/", func(c *gin.Context) { c.HTML(http.StatusOK, "index.html", nil) })
-			authorized.Any("/preview/:site/*path", sitePreviewProxyHandler)
-
 			api := authorized.Group("/api")
 			api.Use(handlers.RequestBodyLimit(config.MaxUploadSize + (1 << 20)))
 			api.Use(handlers.CSRFProtection) // Apply CSRF protection to all API routes
 			{
 				api.GET("/csrf-token", handlers.GetCSRFToken) // Endpoint to get CSRF token
-				api.POST("/build", handlers.HandleBuild)
-				api.POST("/build/restart", handlers.HandleRestart)
+				api.POST("/preview/markdown", handlers.RenderMarkdownPreview)
+				api.POST("/preview/deployments", handlers.UpdateDeploymentPreview)
+				api.GET("/preview/deployments/:draft_id", handlers.GetDeploymentPreview)
+				api.POST("/preview/deployments/:draft_id/retry", handlers.RetryDeploymentPreview)
+				api.POST("/preview/deployments/:draft_id/discard", handlers.DiscardDeploymentPreview)
 				api.GET("/articles", handlers.ListArticles)
 				api.GET("/article", handlers.GetArticle)
 				api.POST("/article", handlers.SaveArticle)
@@ -249,7 +129,7 @@ func SetupRouter() (*gin.Engine, error) {
 				api.GET("/sites", handlers.ListSites)
 				api.GET("/snippets", handlers.GetSnippets)
 				api.POST("/sync", handlers.HandleSync)
-				api.POST("/publish", handlers.HandlePublish)
+				api.POST("/publish", handlers.PublishDeploymentPreview)
 				api.GET("/media", handlers.ListMedia)
 				api.POST("/media", handlers.UploadMedia)
 				api.POST("/media/delete", handlers.DeleteMedia)
@@ -257,22 +137,6 @@ func SetupRouter() (*gin.Engine, error) {
 			}
 		}
 	}
-
-	// --- Root Proxy to Hugo ---
-	previewProxyURL, _ := url.Parse("http://" + config.HugoServerBind + ":" + config.HugoServerPort)
-	proxy := httputil.NewSingleHostReverseProxy(previewProxyURL)
-
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-		slog.Warn("Hugo preview proxy failed", "error", err)
-		http.Error(w, "Preview unavailable", http.StatusBadGateway)
-	}
-	r.NoRoute(handlers.AuthRequired, handlers.TokenValidation, func(c *gin.Context) {
-		if site, ok := previewSiteFromReferer(c.Request.Referer()); ok {
-			c.Redirect(http.StatusTemporaryRedirect, previewRedirectTarget(c.Request, site))
-			return
-		}
-		proxy.ServeHTTP(c.Writer, c.Request)
-	})
 
 	return r, nil
 }
@@ -317,11 +181,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Start default preview server
-	if err := services.StartPreviewForSite(services.DefaultPreviewSite()); err != nil {
-		slog.Error("Failed to start default preview server", "error", err)
-	}
-
 	srv := newHTTPServer(r)
 
 	go func() {
@@ -335,11 +194,6 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	slog.Info("Shutting down server...")
-
-	// Clean up preview servers
-	if err := services.StopAllPreviewServers(); err != nil {
-		slog.Error("Failed to stop preview servers", "error", err)
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

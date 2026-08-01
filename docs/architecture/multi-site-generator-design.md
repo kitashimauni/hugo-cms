@@ -4,7 +4,7 @@
 
 ## ステータス
 
-段階実装中。現在のHugo向け動作を維持しながら、Site Registry、site-aware API、site別preview processを導入済み。記事、ファイル、メディア、Gitの主要サービスは`SiteRuntime`を明示的に受け取る形へ移行し、handler層でprocess-wide runtimeを一時変更するbridgeは撤去した。サイトリポジトリ直下の`.homecms.yml`も最小対応済み。
+段階実装中。Site Registry、site-aware API、`SiteRuntime`、サイトリポジトリ直下の`.homecms.yml`を導入済み。旧site別preview process/proxy設計はIssue #30で廃止し、安全な本文プレビューと外部デプロイproviderへ移行した。previewの現行契約は[本文プレビューとデプロイプレビュー](preview-deployment-design.md)を正とし、本書後半のpreview process記述は履歴上の旧設計として扱う。
 
 ## 背景
 

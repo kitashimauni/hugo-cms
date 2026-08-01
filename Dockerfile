@@ -60,12 +60,13 @@ COPY templates /app/templates
 COPY deploy/docker-tool-bootstrap.sh /usr/local/bin/docker-tool-bootstrap
 
 RUN chmod 0755 /app/hugo-cms /usr/local/bin/docker-tool-bootstrap \
-    && mkdir -p /data/repos /data/mise /home/hugo-cms \
-    && chown -R "${HUGO_CMS_UID}:${HUGO_CMS_GID}" /data/mise /home/hugo-cms
+    && mkdir -p /data/repos /data/mise /data/homecms /home/hugo-cms \
+    && chown -R "${HUGO_CMS_UID}:${HUGO_CMS_GID}" /data/mise /data/homecms /home/hugo-cms
 
 ENV HOME=/home/hugo-cms \
     MISE_DATA_DIR=/data/mise \
     MISE_CACHE_DIR=/data/mise/cache \
+    PREVIEW_STATE_DIR=/data/homecms/preview-deployments \
     PATH=/data/mise/shims:/usr/local/bin:/usr/bin:/bin \
     GIN_MODE=release \
     PORT=8080 \

@@ -15,32 +15,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func HandleBuild(c *gin.Context) {
-	runtime, err := requestedPreviewRuntime(c)
-	if err != nil {
-		ErrorBadRequest(c, err.Error())
-		return
-	}
-	if err := services.StartPreviewForRuntime(runtime); err != nil {
-		ErrorInternal(c, "Failed to start preview server: "+err.Error())
-		return
-	}
-	RespondOK(c, "Preview server is running")
-}
-
-func HandleRestart(c *gin.Context) {
-	runtime, err := requestedPreviewRuntime(c)
-	if err != nil {
-		ErrorBadRequest(c, err.Error())
-		return
-	}
-	if err := services.RestartPreviewForRuntime(runtime); err != nil {
-		ErrorInternal(c, "Failed to restart preview server: "+err.Error())
-		return
-	}
-	RespondOK(c, "Preview server restarted")
-}
-
 func HandleSync(c *gin.Context) {
 	runtime, err := requestedRuntime(c)
 	if err != nil {
@@ -57,53 +31,6 @@ func HandleSync(c *gin.Context) {
 
 	if err != nil {
 		ErrorInternal(c, "Sync failed: "+log)
-		return
-	}
-	RespondOK(c, log)
-}
-
-func HandlePublish(c *gin.Context) {
-	runtime, err := requestedRuntime(c)
-	if err != nil {
-		ErrorBadRequest(c, err.Error())
-		return
-	}
-	session := sessions.Default(c)
-	token, ok := session.Get("access_token").(string)
-	if !ok {
-		ErrorUnauthorized(c, "Invalid session token")
-		return
-	}
-
-	var req struct {
-		Path string `json:"path"`
-	}
-	// Try to bind JSON. If it fails (e.g. empty body), we assume full publish (Path="")
-	c.ShouldBindJSON(&req)
-
-	gitPath := ""
-	if req.Path != "" {
-		// Convert content-relative path to repo-relative path
-		// e.g. "posts/abc.md" -> "content/posts/abc.md"
-		// We use Join to be OS agnostic, but git expects forward slashes.
-		// git.go's PublishChanges might need to handle ToSlash, but let's do it here.
-		gitPath = filepath.ToSlash(filepath.Join(runtime.ContentDir, req.Path))
-
-		// Verify file exists before passing to git
-		fullPath := services.SafeJoin(runtime.RepoPath, runtime.ContentDir, req.Path)
-		if fullPath == "" {
-			ErrorBadRequest(c, "Invalid path")
-			return
-		}
-		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-			ErrorNotFound(c, "File does not exist")
-			return
-		}
-	}
-
-	log, err := services.PublishChangesForRuntime(runtime, token, gitPath)
-	if err != nil {
-		ErrorInternal(c, "Publish failed: "+log)
 		return
 	}
 	RespondOK(c, log)
@@ -456,6 +383,14 @@ func GetConfig(c *gin.Context) {
 		"site_id":        runtime.ID,
 		"config_source":  configSource,
 		"warnings":       warnings,
+		"markdown_preview": gin.H{
+			"enabled": runtime.MarkdownPreviewEnabled,
+		},
+		"preview_deployment": gin.H{
+			"enabled":          runtime.PreviewDeployment.Provider != "",
+			"provider":         runtime.PreviewDeployment.Provider,
+			"access_protected": runtime.PreviewDeployment.AccessProtected,
+		},
 	}
 	c.JSON(http.StatusOK, cfg)
 }

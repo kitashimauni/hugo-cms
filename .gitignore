@@ -3,6 +3,7 @@
 
 # Data directory (managed as a separate git repo)
 repo/
+data/
 
 # Binaries
 main

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"hugo-cms/pkg/config"
-	"hugo-cms/pkg/services"
 	"net/url"
 	"strings"
 
@@ -40,15 +39,6 @@ func requestedRuntime(c *gin.Context) (config.SiteRuntime, error) {
 	}
 	c.Set(siteContextKey, site.ID)
 	return config.NewSiteRuntime(site), nil
-}
-
-func requestedPreviewRuntime(c *gin.Context) (config.SiteRuntime, error) {
-	site, err := requestedSite(c)
-	if err != nil {
-		return config.SiteRuntime{}, err
-	}
-	c.Set(siteContextKey, site.ID)
-	return services.PreviewRuntimeForSite(site), nil
 }
 
 func currentSiteID(c *gin.Context) string {

@@ -11,9 +11,7 @@ import (
 	"time"
 )
 
-type EleventyAdapter struct {
-	preview *ProcessManager
-}
+type EleventyAdapter struct{}
 
 type eleventyPackageManager struct {
 	Name string
@@ -22,58 +20,11 @@ type eleventyPackageManager struct {
 }
 
 func NewEleventyAdapter() *EleventyAdapter {
-	return &EleventyAdapter{preview: &ProcessManager{}}
+	return &EleventyAdapter{}
 }
 
 func (*EleventyAdapter) Name() string {
 	return "eleventy"
-}
-
-func (adapter *EleventyAdapter) StartPreview(runtime config.SiteRuntime) error {
-	pm, err := detectEleventyPackageManager(runtime.RepoPath)
-	if err != nil {
-		return err
-	}
-	slog.Info("Starting Eleventy server", "site", runtime.ID, "port", runtime.HugoServerPort, "package_manager", pm.Name)
-
-	err = adapter.preview.Start(func() managedProcess {
-		args := append([]string{}, pm.Args...)
-		args = append(args, eleventyServerArgs(runtime)...)
-		cmd := generatorCommandWithEnv(runtime, []string{"NODE_ENV=development"}, pm.Bin, args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return newExecManagedProcess(cmd)
-	}, func(err error) {
-		slog.Info("Eleventy server stopped", "error", err)
-	})
-	if err != nil {
-		return fmt.Errorf("failed to start eleventy server: %w", err)
-	}
-	return nil
-}
-
-func (adapter *EleventyAdapter) StopPreview() error {
-	slog.Info("Stopping Eleventy server")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := adapter.preview.Stop(ctx); err != nil {
-		return fmt.Errorf("failed to stop eleventy server: %w", err)
-	}
-	return nil
-}
-
-func (adapter *EleventyAdapter) IsPreviewRunning() bool {
-	return adapter.preview.Running()
-}
-
-func eleventyServerArgs(runtime config.SiteRuntime) []string {
-	return []string{
-		"--serve",
-		"--port", runtime.HugoServerPort,
-		"--input", runtime.ContentDir,
-		"--output", runtime.PublicDir,
-		"--pathprefix", runtime.PreviewURL,
-	}
 }
 
 func (*EleventyAdapter) Build(runtime config.SiteRuntime) (string, error) {

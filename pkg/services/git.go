@@ -3,7 +3,6 @@ package services
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"log/slog"
@@ -219,126 +218,6 @@ func SyncRepoForRuntime(runtime config.SiteRuntime, token string) (string, error
 		InvalidateCacheForRuntime(runtime)
 	}
 	return log, err
-}
-
-func PublishChangesForRuntime(runtime config.SiteRuntime, token, path string) (string, error) {
-	unlock := LockRepositoryOperation()
-	defer unlock()
-	return publishChanges(runtime, token, path, func(_ string, token string, args ...string) (string, error) {
-		return ExecuteGitWithTokenForRuntime(runtime, token, args...)
-	})
-}
-
-type gitPushFunc func(dir, token string, args ...string) (string, error)
-
-func publishChanges(runtime config.SiteRuntime, token, path string, push gitPushFunc) (string, error) {
-	// Create context with timeout for local git operations
-	ctx, cancel := context.WithTimeout(context.Background(), config.GitCommandTimeout)
-	defer cancel()
-
-	// Ensure Git Identity
-	// We set this locally for the repo so it doesn't affect global config
-
-	cmdConfigEmail := exec.CommandContext(ctx, "git", "config", "--local", "user.email", runtime.GitUserEmail)
-	cmdConfigEmail.Dir = runtime.RepoPath
-	if output, err := cmdConfigEmail.CombinedOutput(); err != nil {
-		return fmt.Sprintf("Failed to set git user.email: %s", output), err
-	}
-
-	cmdConfigName := exec.CommandContext(ctx, "git", "config", "--local", "user.name", runtime.GitUserName)
-	cmdConfigName.Dir = runtime.RepoPath
-	if output, err := cmdConfigName.CombinedOutput(); err != nil {
-		return fmt.Sprintf("Failed to set git user.name: %s", output), err
-	}
-
-	var filesToAdd []string
-	var msg string
-
-	if path != "" {
-		// Single file publish
-		msg = fmt.Sprintf("Update %s via HomeCMS", path)
-
-		// Add static/media changes that may be referenced by the article, but
-		// do not require sites to have a static directory before any media is
-		// uploaded.
-		filesToAdd = appendExistingRepoDir(filesToAdd, runtime, runtime.StaticDir)
-		filesToAdd = appendExistingRepoDir(filesToAdd, runtime, staticMediaTargetForRuntime(runtime).repoRelDir)
-
-		// Check for Page Bundle
-		if strings.HasSuffix(path, "index.md") || strings.HasSuffix(path, "_index.md") {
-			// Add parent directory (bundle root)
-			dir := filepath.Dir(path)
-			filesToAdd = append(filesToAdd, dir)
-		} else {
-			// Just the file
-			filesToAdd = append(filesToAdd, path)
-		}
-	} else {
-		// Publish all
-		filesToAdd = []string{"."}
-		msg = fmt.Sprintf("Update via HomeCMS: %s", time.Now().Format("2006-01-02 15:04:05"))
-	}
-
-	// Prepare arguments for git add
-	gitAddArgs := append([]string{"add", "--"}, filesToAdd...)
-	addCmd := exec.CommandContext(ctx, "git", gitAddArgs...)
-	addCmd.Dir = runtime.RepoPath
-	if out, err := addCmd.CombinedOutput(); err != nil {
-		return fmt.Sprintf("Git Add Failed: %s\nOutput: %s", err.Error(), string(out)), err
-	}
-
-	stagedDiffCmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet", "--exit-code")
-	stagedDiffCmd.Dir = runtime.RepoPath
-	commitLog := "No new changes to commit; checking whether existing commits need to be pushed."
-	if err := stagedDiffCmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
-			return "Failed to inspect staged changes", err
-		}
-
-		commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", msg)
-		commitCmd.Dir = runtime.RepoPath
-		commitOut, commitErr := commitCmd.CombinedOutput()
-		if commitErr != nil {
-			return fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\nCommit failed: %s\nOutput: %s",
-				commitErr.Error(), string(commitOut)), commitErr
-		}
-		commitLog = string(commitOut)
-	}
-
-	pushLog, err := push(runtime.RepoPath, token, "push", runtime.GitRemote, runtime.GitBranch)
-
-	// Invalidate cache after successful publish to refresh dirty status
-	if err == nil {
-		InvalidateCacheForRuntime(runtime)
-	}
-
-	fullLog := fmt.Sprintf("--- Git Add ---\n(Success)\n\n--- Git Commit ---\n%s\n\n--- Git Push ---\n%s", commitLog, pushLog)
-	return fullLog, err
-}
-
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
-func appendExistingRepoDir(files []string, runtime config.SiteRuntime, repoRelDir string) []string {
-	repoRelDir = filepath.ToSlash(filepath.Clean(repoRelDir))
-	if repoRelDir == "" || repoRelDir == "." {
-		return files
-	}
-	if SafeJoin(runtime.RepoPath, "", repoRelDir) == "" {
-		return files
-	}
-	for _, file := range files {
-		if filepath.ToSlash(filepath.Clean(file)) == repoRelDir {
-			return files
-		}
-	}
-	if dirExists(filepath.Join(runtime.RepoPath, filepath.FromSlash(repoRelDir))) {
-		return append(files, repoRelDir)
-	}
-	return files
 }
 
 func DiffForRuntime(runtime config.SiteRuntime, f1Path, f2Path, relPath string) (string, string) {

@@ -18,11 +18,13 @@ services:
       PORT: "8080"
       MISE_DATA_DIR: /data/mise
       MISE_CACHE_DIR: /data/mise/cache
+      PREVIEW_STATE_DIR: /data/homecms/preview-deployments
       HUGO_CMS_REPOS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
       MISE_TRUSTED_CONFIG_PATHS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
     volumes:
       - ./repos:/data/repos
       - mise-data:/data/mise
+      - preview-state:/data/homecms
       # Enable this bind mount when using SITES_CONFIG_PATH=/app/sites.yml.
       # - ./sites.yml:/app/sites.yml:ro
     healthcheck:
@@ -63,3 +65,4 @@ services:
 
 volumes:
   mise-data:
+  preview-state:

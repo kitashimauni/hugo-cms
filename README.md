@@ -125,7 +125,13 @@ appは非rootで動作し、bind mountしたrepoを`chown`しません。mise to
 | `MAX_UPLOAD_SIZE_MB` | 最大アップロードサイズ(MB) | `10` |
 | `ARTICLE_MEDIA_DIR` | 記事バンドル内の画像ディレクトリ | (空) |
 | `STATIC_MEDIA_DIR` | static内の画像ディレクトリ | (空) |
-| `HUGO_SERVER_PORT` | Hugoサーバーポート | `1314` |
+| `MARKDOWN_PREVIEW_ENABLED` | 安全な本文プレビュー | `true` |
+| `PREVIEW_DEPLOYMENT_PROVIDER` | デプロイprovider (`cloudflare_pages`または空) | (空) |
+| `CLOUDFLARE_PAGES_ACCOUNT_ID` | Cloudflare account ID | (provider使用時必須) |
+| `CLOUDFLARE_PAGES_PROJECT_NAME` | Cloudflare Pages project | (provider使用時必須) |
+| `CLOUDFLARE_PAGES_API_TOKEN_ENV` | API tokenを保持する環境変数名 | `CLOUDFLARE_API_TOKEN` |
+| `PREVIEW_DEPLOYMENT_ACCESS_PROTECTED` | Cloudflare Access設定済みの申告 | `false` |
+| `PREVIEW_STATE_DIR` | draft/deployment state保存先 | `data/preview-deployments` |
 | `GIT_USER_NAME` | Gitコミット用ユーザー名 | `Hugo CMS Bot` |
 | `GIT_USER_EMAIL` | Gitコミット用メール | `bot@hugo-cms.local` |
 | `GIT_BRANCH` | Gitブランチ | `main` |
@@ -140,6 +146,7 @@ appは非rootで動作し、bind mountしたrepoを`chown`しません。mise to
 - [CMS設定](docs/reference/cms-config.md) - コレクションとフィールドの設定
 - [現行アーキテクチャ](docs/architecture/current-architecture.md) - 現在のシステム構成
 - [マルチサイト・マルチジェネレーター設計](docs/architecture/multi-site-generator-design.md) - 複数HugoサイトとEleventy等への対応方針
+- [本文プレビューとデプロイプレビュー](docs/architecture/preview-deployment-design.md) - 安全な本文表示とdraft deploymentの設計
 - [セキュリティ・品質監査](docs/audits/security-and-quality-audit.md) - 既知の問題と推奨対応
 
 ## プロジェクト構造

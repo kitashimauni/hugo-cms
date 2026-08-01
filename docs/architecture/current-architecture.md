@@ -1,5 +1,7 @@
 # 現行アーキテクチャ
 
+> PreviewについてはIssue #30でローカルgenerator process/proxyを廃止したため、[本文プレビューとデプロイプレビュー](preview-deployment-design.md)を正とします。本書に残るHugo preview serverの記述は旧構成です。
+
 Hugo CMSのシステム構成と実装詳細について説明します。
 
 ## システム概要

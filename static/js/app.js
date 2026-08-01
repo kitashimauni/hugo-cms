@@ -6,6 +6,11 @@ import * as Editor from './editor.js';
 let cmsConfig = null;
 let siteRegistry = null;
 let publishInProgress = false;
+let deploymentEnabled = false;
+let deploymentState = null;
+let deploymentPollTimer = null;
+let deploymentController = null;
+let deploymentOperationInProgress = false;
 
 // Initialization
 init();
@@ -33,14 +38,8 @@ async function init() {
     window.closeModal = UI.closeModal;
 
     // Editor
-    window.loadFile = Editor.loadFile;
-    window.buildAndPreview = async () => {
-        try {
-            await Editor.flushPendingSave();
-        } catch (e) {
-            UI.showToast("Preview update cancelled: save failed", "error");
-        }
-    };
+    window.loadFile = loadFile;
+    window.buildAndPreview = () => Editor.refreshMarkdownPreview();
     window.saveFile = async () => {
         await Editor.saveFile();
         await refreshFileList();
@@ -106,21 +105,11 @@ async function init() {
 
     // Actions
     window.runSync = runSync;
-    window.runPublish = runPublish;
     window.publishFile = publishFile;
-    window.restartPreview = async () => {
-        if (!confirm("Restart Hugo Server? (This helps if preview is stuck)")) return;
-        UI.showToast("Restarting server...", "info");
-        try {
-            await API.restartHugo();
-            UI.showToast("Server Restarted", "success");
-            // Reload iframe
-            const currentPath = Editor.getCurrentPath();
-            if (currentPath) UI.setPreviewUrl(currentPath, cmsConfig, UI.collectFrontMatter());
-        } catch (e) {
-            UI.showToast("Restart Failed", "error");
-        }
-    };
+    window.updateDeploymentPreview = updateDeploymentPreview;
+    window.retryDeploymentPreview = retryDeploymentPreview;
+    window.discardDeploymentPreview = discardDeploymentPreview;
+    window.markDeploymentPreviewStale = markDeploymentPreviewStale;
 
     console.log("Hugo CMS Initialized");
 }
@@ -129,6 +118,9 @@ async function loadSiteData() {
     cmsConfig = await API.fetchConfig();
     Editor.setConfig(cmsConfig);
     UI.renderConfigWarnings(cmsConfig);
+    deploymentEnabled = UI.configureDeploymentPreview(cmsConfig);
+    deploymentState = null;
+    UI.renderDeploymentState(null);
     await refreshFileList();
 }
 
@@ -144,6 +136,7 @@ async function switchSite(siteID) {
         return;
     }
 
+    stopDeploymentPolling();
     API.setCurrentSite(siteID);
     Editor.clearEditor();
     try {
@@ -163,6 +156,16 @@ async function switchSite(siteID) {
     }
 }
 
+async function loadFile(path) {
+    stopDeploymentPolling();
+    deploymentState = null;
+    UI.renderDeploymentState(null);
+    await Editor.loadFile(path);
+    if (deploymentEnabled && Editor.getCurrentPath() === path) {
+        await refreshDeploymentState();
+    }
+}
+
 async function refreshFileList() {
     try {
         const files = await API.fetchArticles();
@@ -175,13 +178,12 @@ async function refreshFileList() {
 }
 
 async function switchView(viewName) {
-    // Trigger save to ensure preview is up to date
     if (viewName === 'preview') {
         try {
-            await Editor.flushPendingSave();
+            await Editor.refreshMarkdownPreview();
         } catch (e) {
-            UI.showToast("Preview cancelled: save failed", "error");
-            return;
+            // The preview surface already shows the request error. Editing and
+            // saving remain available even when rendering is temporarily down.
         }
     }
     UI.switchView(viewName);
@@ -209,40 +211,33 @@ async function runSync() {
     }
 }
 
-async function runPublish(path = null) {
+async function runPublish(path, draftID) {
     if (publishInProgress) {
         UI.showToast("Publish is already running", "warning");
         return;
     }
-
-    const isSingle = !!path;
-    const msg = isSingle
-        ? "このファイルの変更をGitHubにPushして公開しますか？"
-        : "全ての変更をGitHubにPushして公開しますか？";
-
-    if (!confirm(msg)) return;
+    if (!path || !draftID || deploymentState?.status !== 'ready') {
+        UI.showToast("Readyになったデプロイプレビューを確認してから公開してください", "warning");
+        return;
+    }
+    if (!confirm("確認済みのデプロイ内容からPRを作成しますか？")) return;
     publishInProgress = true;
 
-    // UI Feedback
-    let btnSelector = 'button[onclick="runPublish()"]';
-    if (isSingle) {
-        btnSelector = 'button[onclick="publishFile()"], button[onclick="publishFile(); toggleHeaderMenu()"]';
-    }
-
-    const btn = document.querySelector(btnSelector);
+    const btn = document.getElementById('publish-preview-btn');
     let originalText = "";
     if (btn) {
         originalText = btn.innerHTML;
-        btn.innerHTML = isSingle ? "🚀..." : "Pushing...";
+        btn.textContent = "PRを作成中…";
         btn.disabled = true;
     }
 
     try {
         await Editor.flushPendingSave();
-        const data = await API.runPublish(path);
+        const data = await API.runPublish(path, draftID);
         if (data.status === 'ok') {
-            UI.showToast("Published Successfully! 🚀", "success");
-            // Refresh file list to update dirty flags
+            UI.showToast("PRを作成しました", "success");
+            const url = UI.safeExternalURL(data.url);
+            if (url) window.open(url, '_blank', 'noopener');
             await refreshFileList();
         } else {
             UI.showToast("Publish Error: " + data.log, "error");
@@ -264,5 +259,121 @@ async function publishFile() {
         UI.showToast("No file selected", "warning");
         return;
     }
-    await runPublish(currentPath);
+    await runPublish(currentPath, Editor.getDraftID());
+}
+
+function stopDeploymentPolling() {
+    if (deploymentPollTimer) {
+        clearTimeout(deploymentPollTimer);
+        deploymentPollTimer = null;
+    }
+    if (deploymentController) {
+        deploymentController.abort();
+        deploymentController = null;
+    }
+}
+
+function applyDeploymentState(state) {
+    deploymentState = UI.normalizeDeploymentState(state);
+    UI.renderDeploymentState(deploymentState);
+    if (deploymentState?.status === 'queued' || deploymentState?.status === 'building') {
+        deploymentPollTimer = setTimeout(() => refreshDeploymentState(), 3000);
+    }
+}
+
+function markDeploymentPreviewStale() {
+    if (!deploymentState || deploymentState.status === 'stale') return;
+    stopDeploymentPolling();
+    applyDeploymentState({
+        ...deploymentState,
+        status: 'stale',
+        url: '',
+        message: '編集内容が変わりました。デプロイプレビューを更新してください。',
+    });
+}
+
+async function refreshDeploymentState() {
+    stopDeploymentPolling();
+    if (!deploymentEnabled || !Editor.getCurrentPath()) {
+        applyDeploymentState(null);
+        return;
+    }
+    const path = Editor.getCurrentPath();
+    const draftID = Editor.getDraftID();
+    const controller = new AbortController();
+    deploymentController = controller;
+    try {
+        const state = await API.fetchPreviewDeployment(draftID, controller.signal);
+        if (path !== Editor.getCurrentPath() || draftID !== Editor.getDraftID()) return;
+        applyDeploymentState(state);
+    } catch (e) {
+        if (e?.name !== 'AbortError') {
+            UI.showToast(e.message, 'error');
+            if (deploymentState?.status === 'queued' || deploymentState?.status === 'building') {
+                deploymentPollTimer = setTimeout(() => refreshDeploymentState(), 5000);
+            }
+        }
+    } finally {
+        if (deploymentController === controller) deploymentController = null;
+    }
+}
+
+async function updateDeploymentPreview() {
+    const path = Editor.getCurrentPath();
+    if (!deploymentEnabled || !path) {
+        UI.showToast("デプロイ対象の記事を選択してください", "warning");
+        return;
+    }
+    if (deploymentOperationInProgress) {
+        UI.showToast("デプロイ操作を実行中です", "warning");
+        return;
+    }
+    deploymentOperationInProgress = true;
+    try {
+        stopDeploymentPolling();
+        await Editor.flushPendingSave();
+        applyDeploymentState({ status: 'queued', message: 'デプロイを開始しています…' });
+        const state = await API.triggerPreviewDeployment(path, Editor.getDraftID());
+        if (path === Editor.getCurrentPath()) applyDeploymentState(state);
+    } catch (e) {
+        applyDeploymentState({ status: 'failed', message: e.message, retryable: false });
+        UI.showToast(e.message, 'error');
+    } finally {
+        deploymentOperationInProgress = false;
+    }
+}
+
+async function retryDeploymentPreview() {
+    if (!deploymentEnabled || !Editor.getCurrentPath()) return;
+    if (deploymentOperationInProgress) return;
+    deploymentOperationInProgress = true;
+    try {
+        stopDeploymentPolling();
+        applyDeploymentState({ ...deploymentState, status: 'queued', message: '再試行しています…' });
+        const state = await API.retryPreviewDeployment(Editor.getDraftID());
+        applyDeploymentState(state);
+    } catch (e) {
+        applyDeploymentState({ ...deploymentState, status: 'failed', message: e.message });
+        UI.showToast(e.message, 'error');
+    } finally {
+        deploymentOperationInProgress = false;
+    }
+}
+
+async function discardDeploymentPreview() {
+    if (!deploymentEnabled || !Editor.getCurrentPath()) return;
+    if (deploymentOperationInProgress) return;
+    if (!confirm("このデプロイプレビューと下書きbranchを破棄しますか？")) return;
+    deploymentOperationInProgress = true;
+    try {
+        stopDeploymentPolling();
+        await API.discardPreviewDeployment(Editor.getDraftID());
+        Editor.resetDraftID();
+        applyDeploymentState(null);
+        UI.showToast("デプロイプレビューを破棄しました", "success");
+    } catch (e) {
+        UI.showToast(e.message, "error");
+    } finally {
+        deploymentOperationInProgress = false;
+    }
 }
