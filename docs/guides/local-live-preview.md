@@ -1,6 +1,6 @@
 # Local Live Preview設定ガイド
 
-> Issue #32 Phase 2では、Hugo preview processのlazy start/stop、loopback port allocation、hostname reverse proxy、redirect補正、WebSocket/LiveReload中継まで実装します。未保存editor stateをshadow workspaceへ反映する処理はPhase 3で実装します。
+> Issue #32ではPhase 1/2までmainへmerge済みです。Phase 3では、editorの未保存内容をproduction working treeとは別のshadow content workspaceへdebounce反映し、Hugo watcher/LiveReloadへつなぎます。
 
 ## 基本設定
 
@@ -18,20 +18,9 @@ PREVIEW_SCHEME=https
 https://tech.preview.example.com/
 ```
 
-`PREVIEW_DOMAIN`には`*.`、scheme、path、portを含めません。
-
-```text
-OK: preview.example.com
-NG: *.preview.example.com
-NG: https://preview.example.com
-NG: preview.example.com:443
-```
-
-`PREVIEW_SCHEME`は`http`または`https`だけを使用できます。
+`PREVIEW_DOMAIN`には`*.`、scheme、path、portを含めません。`PREVIEW_SCHEME`は`http`または`https`だけを使用できます。
 
 ## Site Registry
-
-`LOCAL_LIVE_PREVIEW_ENABLED`はsite全体の既定値です。site単位でoverrideできます。
 
 ```yaml
 default_site: tech
@@ -51,80 +40,34 @@ sites:
         enabled: false
 ```
 
-有効なsiteについて、`GET /admin/api/sites`のsite設定にはderived valueとして次のようなURLが含まれます。
+`preview.local_preview.enabled`を省略すると`LOCAL_LIVE_PREVIEW_ENABLED`を継承します。有効siteの`GET /admin/api/sites`にはderived `preview.local_preview.url`が含まれます。URLはSite Registryへ永続化しません。
 
-```json
-{
-  "preview": {
-    "local_preview": {
-      "enabled": true,
-      "url": "https://tech.preview.example.com/"
-    }
-  }
-}
-```
+## hostname制約
 
-`url`は`sites.yml`へ保存する値ではありません。
+Local Live Previewで有効にするsite IDはlowercase DNS labelとして有効でなければなりません。`<site-id>.<preview-domain>`全体も253文字以内の有効なDNS名である必要があります。
 
-## site ID / hostname制約
+HTTPSではport省略または`:443`、HTTPではport省略または`:80`だけを許可します。non-standard external portはサポートしません。
 
-Local Live Previewで有効にするsite IDは、そのままDNS labelになります。
+## wildcard DNS / TLS / viewer authentication
 
-許可例:
-
-```text
-tech
-daily-blog
-blog2
-```
-
-拒否例:
-
-```text
-Tech
-foo.bar
--tech
-tech-
-tech_blog
-```
-
-Local Live Previewを無効にしているsiteにはこのDNS label制約を追加しません。
-
-site ID単体だけでなく、`<site-id>.<preview-domain>`を連結したhostname全体も有効なDNS名で、253文字以内である必要があります。設定検証、URL生成、Host resolverは同じ制約を使用します。
-
-## wildcard DNS / TLS
-
-想定DNSは1レコードです。
+想定DNS:
 
 ```text
 *.preview.example.com -> preview ingress
 ```
 
-site追加ごとにDNS recordを追加する必要はありません。
-
-hugo-cms自身はTLS certificateやDNS provider credentialを管理しません。たとえば以下の構成を利用できます。
+hugo-cms自身はTLS certificateやDNS provider credentialを管理しません。たとえば次の運用を利用できます。
 
 - Tailscale内だけでpreview ingressへ到達可能にする
-- DNS-01 challengeで`*.preview.example.com`のwildcard certificateを取得する
+- DNS-01で`*.preview.example.com`のwildcard certificateを取得する
 - Caddy / Traefik / NginxでTLS terminateする
-- 必要に応じてCloudflare等を利用する
+- 必要に応じてCloudflareを利用する
 
-これらは外部ingressの責務です。
+**wildcard DNSとHost validationは閲覧者認可ではありません。** preview ingressはprivate network内に置くか、Internet reachableならCloudflare Access等の独立viewer authenticationで保護してください。
 
-## 閲覧者認可
+CMS session cookieを`*.preview.example.com`へ共有して認証に使わないでください。
 
-**wildcard DNSとHost validationは閲覧者認可ではありません。** Local Live Previewには未公開contentが含まれ、site repository由来のJavaScriptも実行され得るため、preview ingressは必ず独立したアクセス制御の内側に置いてください。
-
-次のいずれかを必須とします。
-
-- Tailscale等のprivate networkからのみ到達可能にする
-- Internet reachableにする場合はCloudflare Access等のpreview専用viewer authenticationで保護する
-
-CMSの既存session cookieを`*.preview.example.com`へ共有して認証に使わないでください。preview site由来のJavaScriptへCMS sessionを露出させないためです。
-
-hugo-cmsは外部ingressの認証方式を自動検出・設定しません。この閲覧制御はdeployment時にoperatorが満たす契約です。
-
-## Host validation / routing
+## Host routing
 
 `PREVIEW_DOMAIN=preview.example.com`の場合、次を許可します。
 
@@ -133,36 +76,26 @@ tech.preview.example.com
 tech.preview.example.com:443
 ```
 
-次はpreview namespaceとして受け取ってもsiteへ解決せず404相当で拒否します。
+次はpreview namespaceとしてfail closedします。
 
 ```text
 preview.example.com
 foo.tech.preview.example.com
 unknown.preview.example.com
+tech.preview.example.com:8443
 tech.preview.example.com:evil
 ```
 
-次はpreview namespace外なので通常のCMS routingへ進みます。
-
-```text
-cms.example.com
-tech.preview.example.com.evil.example
-```
-
-Hostからrepository path、generator command、internal portを作ることはありません。Site Registryに登録されたsite IDとのlookupだけに使用します。
-
-preview hostnameのrequestはCMS session middlewareより前で処理されるため、CMS admin cookieをpreview siteへ渡しません。
+Hostからrepository path、generator command、internal portを作ることはありません。Site Registry lookupだけに使用します。
 
 ## Hugo process
 
-Phase 2のLocal Live Preview runtimeはHugoを対象にします。最初のpreview requestが来た時点でsiteごとのHugo serverをlazy startします。CMS起動時に全siteを常駐起動しません。
-
-概ね次のflagsを使用します。
+最初のpreview hostname requestでsiteごとのHugo serverをlazy startします。
 
 ```text
 hugo server
   --source .
-  --contentDir <content_dir>
+  --contentDir <content-dir>
   --bind 127.0.0.1
   --port <internal-port>
   --baseURL https://tech.preview.example.com/
@@ -171,72 +104,99 @@ hugo server
   --renderToMemory
   --buildDrafts
   --buildFuture
+  --buildExpired
   --watch
   --noHTTPCache
 ```
 
-HTTP previewでは`--liveReloadPort 80`を使用します。
+Hugoは`127.0.0.1`だけへbindします。内部portは`14100-14999`から自動予約し、起動raceでは別portで有限回retryします。child environmentは既存generator allowlistを使用し、CMS secretを継承しません。
 
-Hugo serverは`127.0.0.1`だけへbindし、外部からinternal portへ直接接続させません。CMS shutdown時には起動済みprocessを停止します。異常終了したprocessはfailed状態となり、次のpreview requestで再起動できます。
+CMS shutdown開始後は新規preview processを起動せず、HTTP serverをdrainしてからchild processを停止します。
 
-child processのenvironmentは既存generator allowlistを使うため、`SESSION_SECRET`、GitHub OAuth secret、deployment provider token等をそのまま継承しません。
+## Reverse proxy / LiveReload
 
-## 内部port
-
-初期の自動予約範囲は次です。
-
-```text
-14100-14999
-```
-
-managerは候補portがloopbackで利用可能かprobeしてからHugoを起動します。probeとHugo bindの間にraceがあり得るため、起動失敗時はslotを解放し、別portで有限回retryします。
-
-内部portはpreview URLに現れません。
-
-## Reverse proxy / asset / redirect
-
-preview requestにはpath prefixを付けません。
+preview requestはpath prefixを書き換えません。
 
 ```text
 https://tech.preview.example.com/css/main.css
+  -> http://127.0.0.1:<internal-port>/css/main.css
 ```
 
-は内部では次へproxyされます。
+内部upstreamを指すabsolute `Location`だけを外部preview originへ補正します。HTTP Upgradeも透過するため、Hugo LiveReload WebSocketを同じhostnameで利用できます。
+
+## Phase 3: 未保存editor内容
+
+### 動作
+
+Local Live Previewが有効なsiteでは、editor変更を約250ms debounceして次のAPIへ送ります。
 
 ```text
-http://127.0.0.1:<internal-port>/css/main.css
+POST /admin/api/preview/local
 ```
 
-そのため、`/css/...`、`/images/...`、`/js/...`のようなroot-relative URLを旧path-prefix方式のようにrewriteする必要がありません。
+初回update時にrepositoryの`content_dir`をOS temporary directoryへmirrorし、対象記事だけshadow側へ反映します。
 
-Hugoが内部`127.0.0.1:<port>`または`localhost:<port>`を指すabsolute `Location`を返した場合だけ、CMSが外部preview originへ書き換えます。外部siteへのredirectは変更しません。
+```text
+Editor
+  -> 250ms debounce
+  -> shadow content workspace
+  -> Hugo watcher
+  -> rebuild / LiveReload
+```
 
-HTTP Upgradeもproxyするため、Hugo LiveReloadのWebSocketを同じpreview hostnameで利用できます。
+Hugoのsource rootは元repositoryのままなので、theme/layout/config/static/assetsは通常どおり元repoを利用します。`--contentDir`だけshadow directoryのabsolute pathへ切り替えます。
 
-## 旧preview設定との違い
+既存の3秒autosaveは保存機能として残りますが、250msのLocal Preview update経路はproduction working treeへ書き込みません。
 
-`PREVIEW_URL`、`HUGO_SERVER_PORT`、`HUGO_SERVER_BIND`はIssue #30以前のpath-prefix preview用legacy設定です。新Local Live Previewの公開URL・port管理には使用しません。
+### revision
 
-旧方式:
+各Local Preview updateには単調増加`revision`を付けます。network responseの順序が逆転しても、serverは現在revision以下の古いupdateを適用しません。
+
+### tab / draft競合
+
+初期実装では同一siteにつきactive Local Live Preview sessionは1つです。
+
+別tabから同じsiteを編集し始めた場合、後から来たsessionは`409 Conflict`となり、既存workspaceを上書きしません。別siteは独立して利用できます。
+
+### article/site切替
+
+記事またはsiteを切り替える際は、in-flight update完了を待ってからLocal Preview sessionをreleaseします。
+
+releaseは次の順で行います。
+
+```text
+Hugo process stop
+  -> shadow workspace delete
+```
+
+これによりHugo watcherが参照中のdirectoryを先に削除しません。
+
+CMS shutdownでもHugo child停止後にtemporary workspaceをcleanupします。
+
+### workspaceの永続性
+
+shadow workspaceは`PREVIEW_STATE_DIR`へ保存しません。CMS process単位のephemeral temporary directoryです。Git branch/ref/indexも使用しません。
+
+### page resourceの注意
+
+workspace作成時点のcontent directoryはresource画像等も含めてmirrorされます。ただしworkspace作成後にarticle bundleへ新規upload/deleteしたpage resourceはPhase 3初期実装では自動同期しません。必要性を実環境で確認後、media API連携として追加します。
+
+Hugo Modulesでcontentをcustom mountしているsiteも実blog repositoryでのsmoke test対象です。必要ならmount-awareなpreview方式を追加します。
+
+## 旧preview方式との違い
+
+旧設定`PREVIEW_URL`、`HUGO_SERVER_PORT`、`HUGO_SERVER_BIND`はIssue #30以前のpath-prefix preview用です。新Local Live Previewには使用しません。
+
+旧:
 
 ```text
 /admin/preview/tech/...
 ```
 
-新方式:
+新:
 
 ```text
 https://tech.preview.example.com/...
 ```
-
-root-relative assetやLiveReloadがsite自身のorigin rootで動作できることが新方式の重要な違いです。
-
-## 編集中データ
-
-Phase 1で、未保存editor stateはproduction working treeやGit worktreeへ書かず、**shadow content workspace**へ反映する方針を確定しました。
-
-Phase 2のHugo processは保存済みrepository contentを表示します。workspaceの作成・同期・cleanupとeditor debounce連携はPhase 3で実装します。
-
-初期契約では同一siteのactive Local Live Preview sessionは1つに制限し、別tab/draftから同時更新された場合は混在させず競合として扱います。
 
 詳細は[Local Live Preview設計](../architecture/local-live-preview-design.md)を参照してください。
