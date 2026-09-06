@@ -2,9 +2,11 @@
 
 ## ステータス
 
-現在の実装では、Hugo CMSのプレビューをCMS内の安全な「本文プレビュー」と、外部providerが生成する「デプロイプレビュー」に分離している。Issue #30で旧`/admin/preview/:site/*` path-prefix proxyとローカルgenerator preview processを廃止したため、現時点ではCMSプロセスはHugo/Eleventyのpreview serverを常駐起動しない。
+現在のHugo CMSは、CMS内の安全な「本文プレビュー」、site別hostnameでHugoを動かす「Local Live Preview」、外部providerが生成する「デプロイプレビュー」の3段階を持つ。
 
-Issue #32 Phase 1では、この2段階を維持したまま、`https://<site-id>.<preview-domain>/`をorigin rootとして使う任意の「Local Live Preview」の設定model、derived URL、Host validation、process lifecycle/port reservation契約を導入した。generator serverの実起動、reverse proxy、LiveReload、editor連携はPhase 2以降で実装する。旧path-prefix proxyは復活させない。TLS終端、wildcard DNS、DNS-01、Tailscale等のpreview ingressはCMS本体から分離する。
+Issue #30で旧`/admin/preview/:site/*` path-prefix proxyとローカルgenerator preview processを廃止したが、Issue #32ではpath prefixを復活させず、`https://<site-id>.<preview-domain>/`をorigin rootとする方式でLocal Live Previewを再導入する。
+
+Phase 1で設定model、derived URL、Host validation、process lifecycle/port reservation契約を導入し、Phase 2でHugo preview processのlazy start/stop、loopback port retry、hostname reverse proxy、redirect補正、WebSocket/LiveReload中継を実装する。未保存editor stateのshadow workspace連携はPhase 3で実装する。TLS終端、wildcard DNS、DNS-01、Tailscale等のpreview ingressはCMS本体から分離する。
 
 ## 現行の決定
 
@@ -32,11 +34,12 @@ previewは次の3段階として扱う。
    - generatorを実行しない
    - 編集入力を即時に安全表示する
    - theme/layout/shortcodeの再現は目的としない
-2. **Local Live Preview**（Issue #32。Phase 1基盤実装済み、runtime/proxyは未実装）
-   - Hugo等のgenerator preview processを実際に起動する
+2. **Local Live Preview**（Issue #32 Phase 2でHugo runtime/proxyを実装）
+   - Hugo preview processを実際に起動する
    - `<site-id>.<preview-domain>`をsite自身のorigin rootとして利用する
-   - theme/layout/shortcode/CSS/JS/LiveReloadを含む編集中の確認を目的とする
+   - theme/layout/shortcode/CSS/JS/LiveReloadを確認する
    - remote commit/pushを要求しない
+   - Phase 2では保存済みrepository contentを表示し、未保存editor入力はPhase 3でshadow workspaceへ反映する
 3. **Deployment Preview**
    - 明示操作でdraft branchをcommit/pushする
    - 外部providerでbuildし、特定commitの本番同等表示を確認する
@@ -76,17 +79,25 @@ production branchへ直接commit/pushする従来Publishは使用しない。rea
 
 ### Local Live Preview
 
-Issue #32では、ローカルgenerator codeを再び実行するため、次を追加の境界とする。
-
 - Site Registryでallowlistされたsiteだけを起動対象にする
+- preview namespaceに属するinvalid/unknown HostはCMS admin routeへfall throughさせず404相当で拒否する
 - Host値から任意repository path、port、commandを生成しない
 - generatorへ渡す環境変数をallowlistし、CMSのOAuth/session/provider secretを継承させない
-- generator portを直接公開せず、preview ingress経由でのみ到達させる
-- unknownな`<site-id>.<preview-domain>`は拒否する
+- generator portを`127.0.0.1`だけへbindし、preview ingress経由でのみ到達させる
 - wildcard DNSやHost validationを閲覧者認可として扱わない
 - preview ingressはTailscale等のprivate network内に置くか、Internet reachableな場合はCloudflare Access等の独立viewer authenticationを必須とする
-- CMS session cookieをpreview subdomainと共有しない
+- preview hostname requestはCMS session middlewareより前で処理し、CMS session cookieをpreview subdomainへ共有しない
 - TLS証明書やDNS provider tokenをCMS自身が保持することを必須にしない
+
+## Local Live Preview process / proxy
+
+Hugo processは最初のpreview requestでlazy startし、内部portはCMSが`14100-14999`から予約する。port利用可否をloopbackでprobeしたあとに起動し、bind race等でstartupに失敗した場合はslotを解放して別portで有限回retryする。
+
+Hugoにはexternal preview URLを`--baseURL`として渡し、`--appendPort=false`を使う。HTTPS previewではLiveReload portを443、HTTP previewでは80に固定し、internal portをbrowserへ露出させない。`--renderToMemory`、draft/future content、watchを有効にする。
+
+reverse proxyはpath prefixを加えずrequest pathをそのままHugoへ渡す。root-relative `/css/...`、`/js/...`、`/images/...`はsite自身のorigin rootから取得される。内部`127.0.0.1:<port>`または`localhost:<port>`を指すabsolute `Location`だけをexternal preview originへ書き換え、外部redirectは保持する。HTTP Upgradeを透過してHugo LiveReloadのWebSocketを通す。
+
+CMS shutdown時には起動済みHugo processを停止する。異常終了したprocessはfailed状態となり、次のrequestで再起動可能とする。
 
 ## ライフサイクルと競合
 
@@ -94,10 +105,10 @@ draft IDはbrowser sessionとsite/article pathの組み合わせごとに生成�
 
 preview更新は既存preview commitではなく、その時点のlocal production branchをbaseにして対象pathsだけを一時indexへ適用する。production branchが進んでnon-fast-forward更新になる場合は、前回commitを期待値とする`--force-with-lease`でdraft branchだけを更新し、失敗時はlocal draft refをrollbackする。commit SHAでdeploymentを照合するため、providerがbranch aliasを新しいbuildへ切り替えている途中でも誤ったpreviewを表示しない。
 
-Local Live Previewの未保存editor stateはproduction working treeやGit worktreeへ書かず、CMS管理領域の**shadow content workspace**へ保持する方針をIssue #32 Phase 1で確定した。初期実装では同一siteにつきactive Local Live Preview sessionを1つに制限し、別draft/tabの未保存stateを混在させない。詳細は[Local Live Preview設計](local-live-preview-design.md)を正とする。
+Local Live Previewの未保存editor stateはproduction working treeやGit worktreeへ書かず、CMS管理領域の**shadow content workspace**へ保持する方針をIssue #32 Phase 1で確定した。初期実装では同一siteにつきactive Local Live Preview sessionを1つに制限し、別draft/tabの未保存stateを混在させない。workspace作成・同期・cleanupはPhase 3で実装する。詳細は[Local Live Preview設計](local-live-preview-design.md)を正とする。
 
 ## 移行
 
-`preview_url`、`hugo_server_bind`、`hugo_server_port`はIssue #30以前のpath-prefix型ローカルpreview用の旧設定であり、現行の本文/デプロイプpreviewおよび新Local Live Previewの公開URL/port管理には使用しない。`/admin/preview/:site/*`、`POST /admin/api/build`、`POST /admin/api/build/restart`も廃止済みであり、Issue #32でもこれらをそのまま復活させない。
+`preview_url`、`hugo_server_bind`、`hugo_server_port`はIssue #30以前のpath-prefix型ローカルpreview用の旧設定であり、現行の本文/デプロイプpreviewおよび新Local Live Previewの公開URL/port管理には使用しない。`/admin/preview/:site/*`、`POST /admin/api/build`、`POST /admin/api/build/restart`も廃止済みであり、Issue #32でもこれらを復活させない。
 
-Issue #32 Phase 1では、`LOCAL_LIVE_PREVIEW_ENABLED`、`PREVIEW_DOMAIN`、`PREVIEW_SCHEME`とsite単位の`preview.local_preview.enabled`を導入した。`https://<site-id>.<preview-domain>/`はderived valueとして生成し、旧`preview_url`等との互換性を前提にしない。Phase 2実装まではgenerator runtimeは明示的なbuild/content作成で引き続き使用できるが、CMS起動時にLocal Live Previewを自動起動する仕様はない。
+新Local Live Previewは`LOCAL_LIVE_PREVIEW_ENABLED`、`PREVIEW_DOMAIN`、`PREVIEW_SCHEME`とsite単位の`preview.local_preview.enabled`を使用する。`https://<site-id>.<preview-domain>/`はderived valueとして生成し、旧`preview_url`等との互換性を前提にしない。CMS起動時に全siteのLocal Live Previewを自動起動せず、最初のpreview requestでlazy startする。
