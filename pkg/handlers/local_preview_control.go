@@ -54,15 +54,15 @@ func GetLocalPreviewStatus(c *gin.Context) {
 	}
 
 	response := gin.H{
-		"enabled":          true,
-		"status":           status,
-		"process_state":    processState,
-		"process_error":    processError,
-		"preview_url":      runtime.LocalPreview.URL,
-		"session_active":   active,
-		"session_owned":    owned,
-		"session_stale":    stale,
-		"lease_seconds":    int(workspaceManager.LeaseTTL().Seconds()),
+		"enabled":           true,
+		"status":            status,
+		"process_state":     processState,
+		"process_error":     processError,
+		"preview_url":       runtime.LocalPreview.URL,
+		"session_active":    active,
+		"session_owned":     owned,
+		"session_stale":     stale,
+		"lease_seconds":     int(workspaceManager.LeaseTTL().Seconds()),
 		"has_current_owner": active && !stale,
 	}
 	if active && !workspace.LastSeenAt.IsZero() {
@@ -94,7 +94,10 @@ func HeartbeatLocalPreviewContent(c *gin.Context) {
 	workspace, err := workspaceManager.Heartbeat(runtime.ID, req.DraftID)
 	if err != nil {
 		switch {
-		case errors.Is(err, services.ErrLocalPreviewSessionConflict), errors.Is(err, services.ErrLocalPreviewSessionNotFound):
+		case errors.Is(err, services.ErrLocalPreviewSessionConflict),
+			errors.Is(err, services.ErrLocalPreviewSessionNotFound),
+			errors.Is(err, services.ErrLocalPreviewSessionExpired),
+			errors.Is(err, services.ErrLocalPreviewSessionReclaiming):
 			ErrorConflict(c, err.Error())
 		default:
 			ErrorBadRequest(c, err.Error())
@@ -141,7 +144,7 @@ func StopLocalPreview(c *gin.Context) {
 	}
 	if active {
 		if _, err := workspaceManager.Release(runtime.ID, req.DraftID); err != nil {
-			if errors.Is(err, services.ErrLocalPreviewSessionConflict) {
+			if errors.Is(err, services.ErrLocalPreviewSessionConflict) || errors.Is(err, services.ErrLocalPreviewSessionReclaiming) {
 				ErrorConflict(c, err.Error())
 				return
 			}
@@ -163,13 +166,18 @@ func ReclaimStaleLocalPreview(c *gin.Context) {
 		ErrorInternal(c, "Local preview workspace is unavailable")
 		return
 	}
-	_, active, stale := workspaceManager.Status(runtime.ID)
-	if !active {
-		c.JSON(http.StatusOK, gin.H{"status": "stopped", "reclaimed": false})
+
+	claim, claimed, err := workspaceManager.ClaimStale(runtime.ID)
+	if err != nil {
+		if errors.Is(err, services.ErrLocalPreviewSessionNotStale) || errors.Is(err, services.ErrLocalPreviewSessionReclaiming) {
+			ErrorConflict(c, err.Error())
+			return
+		}
+		ErrorBadRequest(c, err.Error())
 		return
 	}
-	if !stale {
-		ErrorConflict(c, services.ErrLocalPreviewSessionNotStale.Error())
+	if !claimed {
+		c.JSON(http.StatusOK, gin.H{"status": "stopped", "reclaimed": false})
 		return
 	}
 
@@ -177,12 +185,14 @@ func ReclaimStaleLocalPreview(c *gin.Context) {
 	stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
 	cancel()
 	if stopErr != nil {
+		workspaceManager.CancelReclaim(claim)
 		ErrorInternal(c, "Failed to stop stale Local Live Preview process")
 		return
 	}
-	reclaimed, err := workspaceManager.ReleaseStale(runtime.ID)
+	reclaimed, err := workspaceManager.FinishReclaim(claim)
 	if err != nil {
-		if errors.Is(err, services.ErrLocalPreviewSessionNotStale) {
+		workspaceManager.CancelReclaim(claim)
+		if errors.Is(err, services.ErrLocalPreviewSessionConflict) || errors.Is(err, services.ErrLocalPreviewSessionReclaiming) {
 			ErrorConflict(c, err.Error())
 			return
 		}
