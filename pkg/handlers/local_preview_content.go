@@ -79,8 +79,6 @@ func UpdateLocalPreviewContent(c *gin.Context) {
 	}
 
 	if created {
-		// A preview process may already be serving the repository content. Stop
-		// it once so the next request starts Hugo with the shadow contentDir.
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 		stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
 		cancel()
@@ -91,11 +89,14 @@ func UpdateLocalPreviewContent(c *gin.Context) {
 		}
 	}
 
+	// session_id is returned only to the authenticated document that supplied
+	// it. Status/recovery endpoints never disclose another tab's owner ID.
 	c.JSON(http.StatusOK, gin.H{
 		"status":      "updated",
 		"applied":     applied,
 		"revision":    workspace.Revision,
 		"preview_url": runtime.LocalPreview.URL,
+		"session_id":  req.DraftID,
 	})
 }
 
@@ -126,8 +127,6 @@ func ReleaseLocalPreviewContent(c *gin.Context) {
 		return
 	}
 
-	// Hugo may be watching files inside the shadow directory. Stop it before
-	// removing contentDir so shutdown cannot race filesystem cleanup.
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
 	cancel()
