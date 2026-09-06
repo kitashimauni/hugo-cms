@@ -29,6 +29,7 @@ type SiteRuntime struct {
 	GitBranch              string
 	GitRemote              string
 	MarkdownPreviewEnabled bool
+	LocalPreview           LocalPreviewConfig
 	PreviewDeployment      DeploymentPreviewConfig
 }
 
@@ -55,11 +56,19 @@ func NewSiteRuntime(site SiteConfig) SiteRuntime {
 		GitBranch:              GitBranch,
 		GitRemote:              GitRemote,
 		MarkdownPreviewEnabled: site.Preview.Markdown.Enabled == nil || *site.Preview.Markdown.Enabled,
+		LocalPreview:           site.Preview.LocalPreview,
 		PreviewDeployment:      site.Preview.Deployment,
 	}
 }
 
 func CurrentSiteRuntime() SiteRuntime {
+	localPreview := LocalPreviewConfig{Enabled: boolPointer(LocalLivePreviewEnabled)}
+	if LocalLivePreviewEnabled {
+		if previewURL, err := LocalPreviewURL(DefaultSiteID); err == nil {
+			localPreview.URL = previewURL
+		}
+	}
+
 	return SiteRuntime{
 		ID:                     DefaultSiteID,
 		Name:                   "Current",
@@ -82,6 +91,7 @@ func CurrentSiteRuntime() SiteRuntime {
 		GitBranch:              GitBranch,
 		GitRemote:              GitRemote,
 		MarkdownPreviewEnabled: MarkdownPreviewEnabled,
+		LocalPreview:           localPreview,
 		PreviewDeployment: DeploymentPreviewConfig{
 			Provider: PreviewDeploymentProvider,
 			CloudflarePages: CloudflarePagesConfig{
@@ -111,8 +121,9 @@ func (runtime SiteRuntime) SiteConfig() SiteConfig {
 		StaticMediaDir:  runtime.StaticMediaDir,
 		SnippetPaths:    append([]string(nil), runtime.SnippetPaths...),
 		Preview: SitePreviewConfig{
-			Markdown:   MarkdownPreviewConfig{Enabled: boolPointer(runtime.MarkdownPreviewEnabled)},
-			Deployment: runtime.PreviewDeployment,
+			Markdown:     MarkdownPreviewConfig{Enabled: boolPointer(runtime.MarkdownPreviewEnabled)},
+			LocalPreview: runtime.LocalPreview,
+			Deployment:   runtime.PreviewDeployment,
 		},
 	}
 }
