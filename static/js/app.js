@@ -11,8 +11,17 @@ let deploymentState = null;
 let deploymentPollTimer = null;
 let deploymentController = null;
 let deploymentOperationInProgress = false;
+let localPreviewEnabled = false;
+let localPreviewState = null;
+let localPreviewSessionID = "";
+let localPreviewPollTimer = null;
+let localPreviewHeartbeatTimer = null;
+let localPreviewController = null;
+let localPreviewOperationInProgress = false;
 
-// Initialization
+const LOCAL_PREVIEW_POLL_MS = 3000;
+const LOCAL_PREVIEW_HEARTBEAT_MS = 30000;
+
 init();
 
 async function init() {
@@ -28,16 +37,12 @@ async function init() {
 
     Editor.initAutoSave();
 
-    // --- Expose functions to Global Scope for HTML onclick handlers ---
-
-    // UI
     window.switchView = switchView;
     window.toggleSplitView = UI.toggleSplitView;
     window.toggleSidebar = UI.toggleSidebar;
     window.toggleHeaderMenu = UI.toggleHeaderMenu;
     window.closeModal = UI.closeModal;
 
-    // Editor
     window.loadFile = loadFile;
     window.buildAndPreview = () => Editor.refreshMarkdownPreview();
     window.saveFile = async () => {
@@ -45,14 +50,16 @@ async function init() {
         await refreshFileList();
     };
     window.createNewFile = () => Editor.createNewFile(refreshFileList);
-    window.deleteFile = () => Editor.deleteFile(refreshFileList);
+    window.deleteFile = async () => {
+        await Editor.deleteFile(refreshFileList);
+        await refreshLocalPreviewStatus();
+        if (!localPreviewState?.session_active) localPreviewSessionID = "";
+    };
     window.insertImage = () => {
         const currentPath = Editor.getCurrentPath();
         let collectionName = null;
         const collection = UI.getCollectionForPath(currentPath, cmsConfig);
-        if (collection) {
-            collectionName = collection.name;
-        }
+        if (collection) collectionName = collection.name;
 
         UI.showMediaLibrary((file) => {
             const markdown = `![${file.name}](${file.path})`;
@@ -62,40 +69,30 @@ async function init() {
     window.insertSnippet = async () => {
         try {
             const snippets = await API.fetchSnippets();
-            
             const showList = () => {
                 UI.showSnippetsModal(snippets, (snippet) => {
                     let body = Array.isArray(snippet.body) ? snippet.body.join('\n') : snippet.body;
-    
                     const vars = new Map();
-                    // Regex for ${1:default} or ${1}
                     const regex = /\$\{(\d+)(?::([^}]*))?\}/g;
                     let match;
                     while ((match = regex.exec(body)) !== null) {
                         const id = match[1];
                         const def = match[2] || "";
-                        if (!vars.has(id)) {
-                            vars.set(id, { id, label: def || `Param ${id}`, default: def });
-                        }
+                        if (!vars.has(id)) vars.set(id, { id, label: def || `Param ${id}`, default: def });
                     }
-    
                     if (vars.size > 0) {
                         const varList = Array.from(vars.values()).sort((a, b) => a.id - b.id);
                         UI.showSnippetInputModal(varList, (values) => {
-                            let finalBody = body.replace(regex, (m, id, def) => {
-                                return values[id] !== undefined ? values[id] : (def || "");
-                            });
+                            const finalBody = body.replace(regex, (m, id, def) => values[id] !== undefined ? values[id] : (def || ""));
                             Editor.insertText(finalBody);
-                        }, showList); // Pass showList as onBack
+                        }, showList);
                     } else {
                         Editor.insertText(body);
                         UI.closeModal();
                     }
                 });
             };
-            
             showList();
-
         } catch (e) {
             UI.showToast("Failed to load snippets: " + e.message, "error");
         }
@@ -103,24 +100,39 @@ async function init() {
     window.resetChanges = Editor.resetChanges;
     window.showDiff = Editor.showDiff;
 
-    // Actions
     window.runSync = runSync;
     window.publishFile = publishFile;
     window.updateDeploymentPreview = updateDeploymentPreview;
     window.retryDeploymentPreview = retryDeploymentPreview;
     window.discardDeploymentPreview = discardDeploymentPreview;
     window.markDeploymentPreviewStale = markDeploymentPreviewStale;
+    window.openLocalLivePreview = openLocalLivePreview;
+    window.toggleEmbeddedLocalPreview = toggleEmbeddedLocalPreview;
+    window.stopLocalLivePreview = stopLocalLivePreview;
+    window.reclaimLocalLivePreview = reclaimLocalLivePreview;
 
     console.log("Hugo CMS Initialized");
 }
 
 async function loadSiteData() {
+    stopLocalPreviewMonitoring();
+    localPreviewSessionID = "";
+    localPreviewState = null;
+
     cmsConfig = await API.fetchConfig();
     const site = siteRegistry?.sites?.find(s => s.id === API.getCurrentSite());
     if (!cmsConfig._cms) cmsConfig._cms = {};
     cmsConfig._cms.local_preview = site?.preview?.local_preview || { enabled: false, url: '' };
     Editor.setConfig(cmsConfig);
     UI.renderConfigWarnings(cmsConfig);
+
+    localPreviewEnabled = cmsConfig?._cms?.local_preview?.enabled === true && Boolean(localPreviewURL());
+    configureLocalPreviewPanel();
+    if (localPreviewEnabled) {
+        await refreshLocalPreviewStatus();
+        scheduleLocalPreviewMonitoring();
+    }
+
     deploymentEnabled = UI.configureDeploymentPreview(cmsConfig);
     deploymentState = null;
     UI.renderDeploymentState(null);
@@ -140,16 +152,17 @@ async function switchSite(siteID) {
     }
 
     try {
-        // Release while API.getCurrentSite() still points at the old site so
-        // the old site's shadow workspace cannot leak into a later edit.
         await Editor.releaseLocalLivePreview();
+        localPreviewSessionID = "";
     } catch (e) {
         UI.showToast("Site switch cancelled: Local Live Preview cleanup failed", "error");
         UI.renderSiteSelector(siteRegistry, previousSiteID, switchSite);
         return;
     }
 
+    stopLocalPreviewMonitoring();
     stopDeploymentPolling();
+    closeEmbeddedLocalPreview();
     API.setCurrentSite(siteID);
     Editor.clearEditor();
     try {
@@ -173,7 +186,17 @@ async function loadFile(path) {
     stopDeploymentPolling();
     deploymentState = null;
     UI.renderDeploymentState(null);
+    localPreviewSessionID = "";
     await Editor.loadFile(path);
+    if (localPreviewEnabled && Editor.getCurrentPath() === path) {
+        try {
+            await ensureLocalPreviewSession();
+        } catch (_) {
+            // Editor already reports 409 conflicts; status panel provides the
+            // persistent recovery action when the old session becomes stale.
+        }
+        await refreshLocalPreviewStatus();
+    }
     if (deploymentEnabled && Editor.getCurrentPath() === path) {
         await refreshDeploymentState();
     }
@@ -182,9 +205,7 @@ async function loadFile(path) {
 async function refreshFileList() {
     try {
         const files = await API.fetchArticles();
-        if (files) {
-            UI.renderFileList(files, cmsConfig);
-        }
+        if (files) UI.renderFileList(files, cmsConfig);
     } catch (e) {
         UI.showToast("Failed to fetch file list", "error");
     }
@@ -194,12 +215,229 @@ async function switchView(viewName) {
     if (viewName === 'preview') {
         try {
             await Editor.refreshMarkdownPreview();
-        } catch (e) {
-            // The preview surface already shows the request error. Editing and
-            // saving remain available even when rendering is temporarily down.
+        } catch (_) {
+            // The preview surface already shows the request error.
         }
     }
     UI.switchView(viewName);
+}
+
+function localPreviewURL() {
+    return UI.safeExternalURL(cmsConfig?._cms?.local_preview?.url || "");
+}
+
+function configureLocalPreviewPanel() {
+    const panel = document.getElementById('local-preview-panel');
+    if (!panel) return;
+    panel.classList.toggle('hidden', !localPreviewEnabled);
+    if (!localPreviewEnabled) {
+        closeEmbeddedLocalPreview();
+        return;
+    }
+    renderLocalPreviewState({ enabled: true, status: 'stopped', process_state: 'stopped', session_active: false });
+}
+
+function localPreviewStatusClass(status) {
+    if (status === 'ready') return 'ready';
+    if (status === 'starting') return 'queued';
+    if (status === 'failed' || status === 'stale' || status === 'conflict') return 'failed';
+    return 'idle';
+}
+
+function localPreviewStatusLabel(status) {
+    return ({
+        stopped: '停止',
+        starting: '起動中',
+        ready: 'Ready',
+        failed: '失敗',
+        stopping: '停止中',
+        stale: '期限切れ',
+        conflict: '別タブ使用中',
+        disabled: '無効',
+    })[status] || status || '停止';
+}
+
+function renderLocalPreviewState(state) {
+    localPreviewState = state || null;
+    const statusEl = document.getElementById('local-preview-status');
+    const messageEl = document.getElementById('local-preview-message');
+    const reclaimBtn = document.getElementById('local-preview-reclaim-btn');
+    const stopBtn = document.getElementById('local-preview-stop-btn');
+    if (!statusEl || !messageEl) return;
+
+    const status = state?.status || 'stopped';
+    statusEl.textContent = localPreviewStatusLabel(status);
+    statusEl.className = `deployment-status ${localPreviewStatusClass(status)}`;
+
+    let message = '記事を選択すると未保存内容をshadow workspaceへ同期します。';
+    if (status === 'ready') message = 'Hugo Live Preview is ready. 編集内容はLiveReloadで反映されます。';
+    else if (status === 'starting') message = 'Hugoを起動しています…';
+    else if (status === 'failed') message = state?.process_error || 'Hugo Live Previewの起動に失敗しました。';
+    else if (status === 'stale') message = '以前のタブのpreview sessionが期限切れです。安全に回収して再開できます。';
+    else if (status === 'conflict') message = 'このsiteのLocal Live Previewは別のタブで使用中です。';
+    else if (state?.session_active && state?.session_owned) message = '未保存内容は同期済みです。Previewを開くとHugoを起動します。';
+    else if (state?.session_active) message = 'このsiteには別の編集sessionがあります。';
+    messageEl.textContent = message;
+
+    if (reclaimBtn) reclaimBtn.classList.toggle('hidden', !state?.session_stale);
+    if (stopBtn) {
+        const processRunning = state?.process_state && state.process_state !== 'stopped';
+        stopBtn.classList.toggle('hidden', !(state?.session_owned || (!state?.session_active && processRunning)));
+    }
+}
+
+async function ensureLocalPreviewSession() {
+    if (!localPreviewEnabled || !Editor.getCurrentPath()) return null;
+    try {
+        const result = await Editor.refreshLocalLivePreview();
+        if (result?.session_id) localPreviewSessionID = result.session_id;
+        return result;
+    } catch (e) {
+        if (e?.status === 409) {
+            renderLocalPreviewState({
+                ...(localPreviewState || {}),
+                enabled: true,
+                status: 'conflict',
+                session_active: true,
+                session_owned: false,
+            });
+        }
+        throw e;
+    }
+}
+
+function stopLocalPreviewMonitoring() {
+    if (localPreviewPollTimer) clearTimeout(localPreviewPollTimer);
+    if (localPreviewHeartbeatTimer) clearTimeout(localPreviewHeartbeatTimer);
+    localPreviewPollTimer = null;
+    localPreviewHeartbeatTimer = null;
+    if (localPreviewController) localPreviewController.abort();
+    localPreviewController = null;
+}
+
+function scheduleLocalPreviewMonitoring() {
+    if (!localPreviewEnabled) return;
+    if (!localPreviewPollTimer) {
+        localPreviewPollTimer = setTimeout(async () => {
+            localPreviewPollTimer = null;
+            await refreshLocalPreviewStatus();
+            scheduleLocalPreviewMonitoring();
+        }, LOCAL_PREVIEW_POLL_MS);
+    }
+    if (!localPreviewHeartbeatTimer) {
+        localPreviewHeartbeatTimer = setTimeout(async () => {
+            localPreviewHeartbeatTimer = null;
+            if (localPreviewSessionID) {
+                try {
+                    await API.heartbeatLocalPreviewContent(localPreviewSessionID);
+                } catch (e) {
+                    if (e?.status !== 409) console.error('[LocalPreview] heartbeat failed', e);
+                }
+            }
+            scheduleLocalPreviewMonitoring();
+        }, LOCAL_PREVIEW_HEARTBEAT_MS);
+    }
+}
+
+async function refreshLocalPreviewStatus() {
+    if (!localPreviewEnabled) return null;
+    if (localPreviewController) localPreviewController.abort();
+    const controller = new AbortController();
+    localPreviewController = controller;
+    try {
+        const state = await API.fetchLocalPreviewStatus(localPreviewSessionID, controller.signal);
+        renderLocalPreviewState(state);
+        return state;
+    } catch (e) {
+        if (e?.name !== 'AbortError') console.error('[LocalPreview] status failed', e);
+        return null;
+    } finally {
+        if (localPreviewController === controller) localPreviewController = null;
+    }
+}
+
+async function openLocalLivePreview() {
+    const url = localPreviewURL();
+    if (!localPreviewEnabled || !url) {
+        UI.showToast('Local Live Preview is not configured', 'warning');
+        return;
+    }
+    try {
+        if (Editor.getCurrentPath()) await ensureLocalPreviewSession();
+        window.open(url, '_blank', 'noopener');
+        setTimeout(() => refreshLocalPreviewStatus(), 500);
+    } catch (e) {
+        UI.showToast('Local Live Previewを開けません: ' + e.message, 'error');
+    }
+}
+
+async function toggleEmbeddedLocalPreview() {
+    const wrapper = document.getElementById('local-preview-embed');
+    const frame = document.getElementById('local-preview-frame');
+    const btn = document.getElementById('local-preview-embed-btn');
+    if (!wrapper || !frame || !btn) return;
+    if (!wrapper.classList.contains('hidden')) {
+        closeEmbeddedLocalPreview();
+        return;
+    }
+
+    const url = localPreviewURL();
+    if (!url) return UI.showToast('Local Live Preview URL is unavailable', 'warning');
+    try {
+        if (Editor.getCurrentPath()) await ensureLocalPreviewSession();
+        frame.src = url;
+        wrapper.classList.remove('hidden');
+        btn.textContent = '埋め込みを閉じる';
+        setTimeout(() => refreshLocalPreviewStatus(), 500);
+    } catch (e) {
+        UI.showToast('埋め込みpreviewを開始できません: ' + e.message, 'error');
+    }
+}
+
+function closeEmbeddedLocalPreview() {
+    const wrapper = document.getElementById('local-preview-embed');
+    const frame = document.getElementById('local-preview-frame');
+    const btn = document.getElementById('local-preview-embed-btn');
+    if (wrapper) wrapper.classList.add('hidden');
+    if (frame) frame.src = 'about:blank';
+    if (btn) btn.textContent = '埋め込み表示';
+}
+
+async function stopLocalLivePreview() {
+    if (!localPreviewEnabled || localPreviewOperationInProgress) return;
+    localPreviewOperationInProgress = true;
+    try {
+        // Editor owns the authoritative document-scoped ID. Releasing it first
+        // safely stops/removes an owned shadow workspace. The explicit stop API
+        // then handles the saved-content-only process case idempotently.
+        await Editor.releaseLocalLivePreview();
+        localPreviewSessionID = "";
+        await API.stopLocalPreviewContent("");
+        closeEmbeddedLocalPreview();
+        UI.showToast('Local Live Previewを停止しました', 'success');
+    } catch (e) {
+        UI.showToast('Local Live Previewを停止できません: ' + e.message, 'error');
+    } finally {
+        localPreviewOperationInProgress = false;
+        await refreshLocalPreviewStatus();
+    }
+}
+
+async function reclaimLocalLivePreview() {
+    if (!localPreviewEnabled || localPreviewOperationInProgress) return;
+    if (!confirm('期限切れのLocal Live Preview sessionを回収して再開しますか？')) return;
+    localPreviewOperationInProgress = true;
+    try {
+        await API.reclaimStaleLocalPreview();
+        localPreviewSessionID = "";
+        if (Editor.getCurrentPath()) await ensureLocalPreviewSession();
+        UI.showToast('Local Live Preview sessionを回収しました', 'success');
+    } catch (e) {
+        UI.showToast('Local Live Previewを回収できません: ' + e.message, 'error');
+    } finally {
+        localPreviewOperationInProgress = false;
+        await refreshLocalPreviewStatus();
+    }
 }
 
 async function runSync() {
@@ -367,7 +605,7 @@ async function retryDeploymentPreview() {
         applyDeploymentState(state);
     } catch (e) {
         applyDeploymentState({ ...deploymentState, status: 'failed', message: e.message });
-        UI.showToast(e.message, 'error');
+        UI.showToast(e.message, "error");
     } finally {
         deploymentOperationInProgress = false;
     }
