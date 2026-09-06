@@ -22,7 +22,7 @@ const {
     normalizeDeploymentState,
     safeExternalURL,
 } = await import("./ui.js");
-const { createDraftUUID, getOrCreateDraftID } = await import("./editor.js");
+const { createDraftUUID, createLocalPreviewSessionID, getOrCreateDraftID } = await import("./editor.js");
 const API = await import("./api.js");
 
 describe("safeExternalURL", () => {
@@ -94,6 +94,15 @@ describe("draft IDs", () => {
         assert.equal(getOrCreateDraftID("docs", "posts/one.md", memoryStorage, createUUID), "uuid-1");
         assert.equal(getOrCreateDraftID("docs", "posts/two.md", memoryStorage, createUUID), "uuid-2");
         assert.equal(getOrCreateDraftID("blog", "posts/one.md", memoryStorage, createUUID), "uuid-3");
+    });
+
+    it("creates Local Preview ownership IDs without browser storage persistence", () => {
+        let sequence = 0;
+        const createUUID = () => `local-${++sequence}`;
+
+        assert.equal(createLocalPreviewSessionID(createUUID), "local-1");
+        assert.equal(createLocalPreviewSessionID(createUUID), "local-2");
+        assert.equal(sessionValues.size, 0);
     });
 });
 
