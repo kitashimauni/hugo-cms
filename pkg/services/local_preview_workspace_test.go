@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLocalPreviewWorkspaceMirrorsAndUpdatesContent(t *testing.T) {
@@ -148,6 +149,72 @@ func TestLocalPreviewWorkspaceReleaseProtectsActiveDraft(t *testing.T) {
 	}
 	if _, err := os.Stat(workspace.ContentDir); !os.IsNotExist(err) {
 		t.Fatalf("workspace still exists after release: %v", err)
+	}
+}
+
+func TestLocalPreviewWorkspaceLeaseAndHeartbeat(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.leaseTTL = 2 * time.Minute
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	workspace, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !workspace.LastSeenAt.Equal(now) {
+		t.Fatalf("last seen = %s, want %s", workspace.LastSeenAt, now)
+	}
+
+	now = now.Add(3 * time.Minute)
+	_, active, stale := manager.Status("tech")
+	if !active || !stale {
+		t.Fatalf("active=%v stale=%v, want true/true", active, stale)
+	}
+	workspace, err = manager.Heartbeat("tech", "draft-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !workspace.LastSeenAt.Equal(now) {
+		t.Fatalf("heartbeat last seen = %s, want %s", workspace.LastSeenAt, now)
+	}
+	_, _, stale = manager.Status("tech")
+	if stale {
+		t.Fatal("heartbeat did not renew lease")
+	}
+	if _, err := manager.Heartbeat("tech", "draft-2"); !errors.Is(err, ErrLocalPreviewSessionConflict) {
+		t.Fatalf("heartbeat error = %v, want conflict", err)
+	}
+}
+
+func TestLocalPreviewWorkspaceReleaseStaleRequiresExpiredLease(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.leaseTTL = time.Minute
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	workspace, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ReleaseStale("tech"); !errors.Is(err, ErrLocalPreviewSessionNotStale) {
+		t.Fatalf("ReleaseStale error = %v, want not stale", err)
+	}
+	now = now.Add(2 * time.Minute)
+	released, err := manager.ReleaseStale("tech")
+	if err != nil || !released {
+		t.Fatalf("ReleaseStale released=%v err=%v", released, err)
+	}
+	if _, err := os.Stat(workspace.ContentDir); !os.IsNotExist(err) {
+		t.Fatalf("stale workspace still exists: %v", err)
 	}
 }
 
