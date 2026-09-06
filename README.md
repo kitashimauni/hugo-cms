@@ -12,7 +12,7 @@ Hugoサイト用のセルフホスト型ヘッドレスCMSです。GitHub OAuth�
 - ⚡ **高速キャッシュ** - 並列処理による記事一覧の高速表示
 - 🛡️ **セキュリティ** - CSRF保護、パストラバーサル対策、入力検証
 
-> Hugoのtheme/layout/shortcode/CSS/JSを含むローカルLive Previewは現在未実装です。Issue #32で、`https://<site-id>.<preview-domain>/`形式のwildcard subdomainを使う方式を検討しています。旧`/admin/preview/:site/*` path-prefix proxyは復活させません。
+> Issue #32 Phase 1で、`https://<site-id>.<preview-domain>/`形式のLocal Live Preview向け設定、URL生成、Host validation、process lifecycle/port reservation基盤を追加しています。Hugo/Eleventy preview serverの実起動、proxy、LiveReload、editor連携はPhase 2以降です。旧`/admin/preview/:site/*` path-prefix proxyは復活させません。
 
 ## クイックスタート
 
@@ -129,6 +129,9 @@ appは非rootで動作し、bind mountしたrepoを`chown`しません。mise to
 | `ARTICLE_MEDIA_DIR` | 記事バンドル内の画像ディレクトリ | (空) |
 | `STATIC_MEDIA_DIR` | static内の画像ディレクトリ | (空) |
 | `MARKDOWN_PREVIEW_ENABLED` | 安全な本文プレビュー | `true` |
+| `LOCAL_LIVE_PREVIEW_ENABLED` | Local Live Previewの全体既定値 | `false` |
+| `PREVIEW_DOMAIN` | Local Live Previewの共通domain | (空) |
+| `PREVIEW_SCHEME` | Local Live Preview URL scheme (`http` / `https`) | `https` |
 | `PREVIEW_DEPLOYMENT_PROVIDER` | デプロイprovider (`cloudflare_pages`または空) | (空) |
 | `CLOUDFLARE_PAGES_ACCOUNT_ID` | Cloudflare account ID | (provider使用時必須) |
 | `CLOUDFLARE_PAGES_PROJECT_NAME` | Cloudflare Pages project | (provider使用時必須) |
@@ -145,11 +148,13 @@ appは非rootで動作し、bind mountしたrepoを`chown`しません。mise to
 
 - [ドキュメント一覧](docs/README.md) - 目的別の索引
 - [設定ガイド](docs/guides/configuration.md) - 詳細な設定オプション
+- [Local Live Preview設定ガイド](docs/guides/local-live-preview.md) - wildcard subdomain、閲覧制御、Host validation
 - [Docker + mise デプロイガイド](docs/guides/docker-mise-deployment.md) - secret-free bootstrapと非root appによる推奨デプロイ
 - [CMS設定](docs/reference/cms-config.md) - コレクションとフィールドの設定
 - [現行アーキテクチャ](docs/architecture/current-architecture.md) - 現在のシステム構成
 - [マルチサイト・マルチジェネレーター設計](docs/architecture/multi-site-generator-design.md) - 複数HugoサイトとEleventy等への対応方針
 - [本文プレビューとデプロイプレビュー](docs/architecture/preview-deployment-design.md) - 安全な本文表示、draft deployment、Local Live Previewとの役割分担
+- [Local Live Preview設計](docs/architecture/local-live-preview-design.md) - hostname、process lifecycle、shadow workspace、security boundary
 - [セキュリティ・品質監査](docs/audits/security-and-quality-audit.md) - 既知の問題と推奨対応
 
 ## プロジェクト構造
@@ -215,6 +220,7 @@ mise run build
 - **CSRF保護**: 全てのPOST/PUT/DELETEリクエストにCSRFトークンを要求
 - **パス検証**: パストラバーサル攻撃を防止
 - **トークン検証**: GitHubトークンの定期的な有効性確認
+- **Local Live Preview**: preview ingressはprivate networkまたは独立viewer authenticationで保護し、CMS session cookieは共有しない
 
 ## ライセンス
 
