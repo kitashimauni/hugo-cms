@@ -116,6 +116,9 @@ async function init() {
 
 async function loadSiteData() {
     cmsConfig = await API.fetchConfig();
+    const site = siteRegistry?.sites?.find(s => s.id === API.getCurrentSite());
+    if (!cmsConfig._cms) cmsConfig._cms = {};
+    cmsConfig._cms.local_preview = site?.preview?.local_preview || { enabled: false, url: '' };
     Editor.setConfig(cmsConfig);
     UI.renderConfigWarnings(cmsConfig);
     deploymentEnabled = UI.configureDeploymentPreview(cmsConfig);
@@ -132,6 +135,16 @@ async function switchSite(siteID) {
         await Editor.flushPendingSave();
     } catch (e) {
         UI.showToast("Site switch cancelled: save failed", "error");
+        UI.renderSiteSelector(siteRegistry, previousSiteID, switchSite);
+        return;
+    }
+
+    try {
+        // Release while API.getCurrentSite() still points at the old site so
+        // the old site's shadow workspace cannot leak into a later edit.
+        await Editor.releaseLocalLivePreview();
+    } catch (e) {
+        UI.showToast("Site switch cancelled: Local Live Preview cleanup failed", "error");
         UI.renderSiteSelector(siteRegistry, previousSiteID, switchSite);
         return;
     }
