@@ -32,23 +32,31 @@ func validateLocalPreviewBaseSettings(enabled bool) error {
 }
 
 func validateLocalPreviewSite(site SiteConfig) error {
-	if err := validateLocalPreviewBaseSettings(true); err != nil {
-		return err
-	}
-	if site.ID != strings.ToLower(site.ID) || !validDNSLabel(site.ID) {
-		return fmt.Errorf("local preview site id %q must be a lowercase DNS label", site.ID)
-	}
-	return nil
+	_, err := localPreviewHostname(site.ID)
+	return err
 }
 
-func LocalPreviewURL(siteID string) (string, error) {
+func localPreviewHostname(siteID string) (string, error) {
 	if err := validateLocalPreviewBaseSettings(true); err != nil {
 		return "", err
 	}
 	if siteID != strings.ToLower(siteID) || !validDNSLabel(siteID) {
 		return "", fmt.Errorf("local preview site id %q must be a lowercase DNS label", siteID)
 	}
-	return fmt.Sprintf("%s://%s.%s/", PreviewScheme, siteID, PreviewDomain), nil
+
+	hostname := siteID + "." + PreviewDomain
+	if !validDNSName(hostname) {
+		return "", fmt.Errorf("local preview hostname %q is not a valid DNS name", hostname)
+	}
+	return hostname, nil
+}
+
+func LocalPreviewURL(siteID string) (string, error) {
+	hostname, err := localPreviewHostname(siteID)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s://%s/", PreviewScheme, hostname), nil
 }
 
 // ResolveLocalPreviewHost maps an HTTP Host header to an enabled site. Only a
@@ -71,6 +79,11 @@ func ResolveLocalPreviewHost(host string) (SiteConfig, error) {
 	siteID := strings.TrimSuffix(hostname, suffix)
 	if siteID == "" || strings.Contains(siteID, ".") || !validDNSLabel(siteID) {
 		return SiteConfig{}, fmt.Errorf("host %q does not contain exactly one valid site label", hostname)
+	}
+
+	expectedHostname, err := localPreviewHostname(siteID)
+	if err != nil || hostname != expectedHostname {
+		return SiteConfig{}, fmt.Errorf("invalid local preview hostname %q", hostname)
 	}
 
 	site, ok := GetSite(siteID)
