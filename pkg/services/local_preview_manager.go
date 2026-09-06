@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hugo-cms/pkg/config"
-	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -185,7 +185,8 @@ func (m *LocalPreviewManager) EnsureReady(site config.SiteConfig) (LocalPreviewP
 	if site.Preview.LocalPreview.Enabled == nil || !*site.Preview.LocalPreview.Enabled {
 		return LocalPreviewProcessSlot{}, fmt.Errorf("local preview is disabled for site %q", site.ID)
 	}
-	if !strings.EqualFold(strings.TrimSpace(site.Generator), "hugo") {
+	generator := strings.TrimSpace(site.Generator)
+	if generator != "" && !strings.EqualFold(generator, "hugo") {
 		return LocalPreviewProcessSlot{}, fmt.Errorf("local live preview currently supports Hugo only, got %q", site.Generator)
 	}
 
@@ -272,7 +273,10 @@ func (m *LocalPreviewManager) startProcess(runtime config.SiteRuntime, port int,
 	}
 
 	stderr := newCappedBuffer(localPreviewStderrLimit)
-	cmd.Stdout = io.Discard
+	// Hugo may emit useful startup/build diagnostics to either stream. Keep the
+	// bounded tail of both without allowing child output to grow memory without
+	// limit or leak CMS secrets through the browser response.
+	cmd.Stdout = stderr
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -498,7 +502,8 @@ func newLocalPreviewReverseProxy(site config.SiteConfig, port int) (*httputil.Re
 			return nil
 		},
 		ErrorHandler: func(writer http.ResponseWriter, _ *http.Request, proxyErr error) {
-			http.Error(writer, "local preview upstream unavailable: "+proxyErr.Error(), http.StatusBadGateway)
+			slog.Error("Local preview upstream error", "site", site.ID, "error", proxyErr)
+			http.Error(writer, "local preview upstream unavailable", http.StatusBadGateway)
 		},
 	}
 	return proxy, nil
