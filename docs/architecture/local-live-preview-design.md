@@ -2,7 +2,7 @@
 
 ## ステータス
 
-Issue #32 Phase 1で設計・設定契約を確定する。Phase 1ではgenerator processの実起動、reverse proxy、LiveReload中継、editorからshadow workspaceへの書き込みはまだ実装しない。
+Issue #32 Phase 1で設計・設定契約を確定し、設定model、derived URL、Host validation、process lifecycle/port reservationの基盤まで実装済み。Phase 1ではgenerator processの実起動、reverse proxy、LiveReload中継、editorからshadow workspaceへの書き込みはまだ実装しない。
 
 Local Live Previewは既存のMarkdown本文プレビュー、Deployment Previewを置き換えず、第3のpreview段階として追加する。
 
@@ -31,7 +31,20 @@ daily -> https://daily.preview.example.com/
 
 DNSは`*.preview.example.com`のwildcardを想定し、site追加ごとのDNS変更を要求しない。
 
-TLS、wildcard certificate、DNS-01 challenge、Cloudflare、Tailscale、Caddy/Traefik/Nginx等はpreview ingressの責務であり、hugo-cmsへ証明書秘密鍵やDNS provider credentialを持たせることを必須にしない。Tailscale内だけでpreview ingressへ到達できる構成を正式な運用形態として許容する。
+TLS、wildcard certificate、DNS-01 challenge、Cloudflare、Tailscale、Caddy/Traefik/Nginx等はpreview ingressの責務であり、hugo-cmsへ証明書秘密鍵やDNS provider credentialを持たせることを必須にしない。
+
+### 閲覧者認可
+
+wildcard DNSやHost validationは閲覧者認可ではない。Local Live Previewは未公開contentとrepository由来のJavaScriptを配信し得るため、**preview ingressは必ずCMSとは独立した閲覧制御の内側に置く**。
+
+許容する運用は次のいずれかとする。
+
+- Tailscale等のprivate networkからのみpreview ingressへ到達可能にする
+- Internet reachableにする場合は、Cloudflare Access等のpreview専用viewer authenticationを必須にする
+
+CMSの既存session cookieを`*.preview.example.com`へ共有して認証に使わない。preview側で実行されるsite由来JavaScriptへCMS sessionを露出させないためである。
+
+hugo-cmsは外部ingressの認証方式そのものを実装・検出しないため、この要件はoperatorが満たすdeployment contractとする。Phase 2の実装でも「hostnameを知っているだけで閲覧可能」なpublic ingressを推奨構成として扱わない。
 
 ## 設定契約
 
@@ -65,6 +78,8 @@ Local Live Previewを有効にするsite IDはDNS labelとしてそのままhost
 - 1〜63文字
 
 `PREVIEW_DOMAIN`はscheme、`*.`、path、portを含まないDNS名だけを受け付ける。`PREVIEW_SCHEME`は`http`または`https`だけを許可する。
+
+さらに`<site-id>.<preview-domain>`を連結したhostname全体がDNS名として有効で、253文字以内であることを必須とする。設定検証、URL生成、Host resolverは同じ制約を使用する。
 
 Site RegistryをAPIへ返す際、Local Live Previewが有効ならderived valueとして`preview.local_preview.url`を返す。URLはYAMLへ永続化しない。
 
@@ -196,11 +211,12 @@ Phase 3は以下を実装する。
 ## セキュリティ要点
 
 - wildcard DNSはauthorizationではない
+- preview ingressにはprivate networkまたは独立viewer authenticationを必須とする
+- CMS session cookieをpreview subdomainと共有しない
 - unknown site IDは404相当で拒否する
 - Local Live Preview無効siteは起動しない
 - Host値をcommand/path/portへ直接変換しない
 - generatorは明示的に登録されたrepositoryだけで実行する
 - internal generator serverはloopback bindのみ
 - TLS/DNS credentialをCMSへ要求しない
-- private ingress/Tailscale運用を許容する
 - Local Live Previewはrepository内generator codeを実行するため、Markdown本文プレビューより広いtrust boundaryである
