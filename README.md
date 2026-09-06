@@ -13,7 +13,7 @@ Hugoサイト用のセルフホスト型ヘッドレスCMSです。GitHub OAuth�
 - ⚡ **高速キャッシュ** - 並列処理による記事一覧の高速表示
 - 🛡️ **セキュリティ** - CSRF保護、パストラバーサル対策、入力検証
 
-> Issue #32 Phase 2で、Hugo Local Live Previewのlazy process起動、loopback port管理、`https://<site-id>.<preview-domain>/`からのreverse proxy、redirect補正、LiveReload/WebSocket中継まで追加しています。Phase 2では保存済みrepository contentを表示し、未保存editor入力のshadow workspace反映はPhase 3で追加します。旧`/admin/preview/:site/*` path-prefix proxyは復活させません。
+> Issue #32では、Phase 1/2でsite別hostnameのHugo process/proxy/LiveReload基盤まで実装済みです。Phase 3 (#35)では未保存editor入力をephemeral shadow content workspaceへ約250msで反映し、Hugo watcherへつなぎます。content配下のmedia upload/deleteもactive workspaceへ同期します。Local Previewを開く/停止するUIや状態表示はPhase 4で追加します。旧`/admin/preview/:site/*` path-prefix proxyは復活させません。
 
 ## クイックスタート
 
@@ -111,7 +111,7 @@ appは非rootで動作し、bind mountしたrepoを`chown`しません。mise to
 | 環境変数 | 説明 | デフォルト |
 |----------|------|-----------|
 | `GITHUB_CLIENT_ID` | GitHub OAuth Client ID | (必須) |
-| `GITHUB_CLIENT_SECRET` | GitHub OAuth Client Secret | (必須) |
+| `GITHUB_CLIENT_SECRET` | GitHub Client Secret | (必須) |
 | `SESSION_SECRET` | セッション暗号化キー | (自動生成・非推奨) |
 | `ALLOWED_GITHUB_USERS` | 許可するGitHubユーザー名(カンマ区切り) | (必須) |
 | `ALLOW_ALL_GITHUB_USERS` | 全GitHubユーザーを許可する開発用設定 | `false` |
@@ -149,7 +149,7 @@ appは非rootで動作し、bind mountしたrepoを`chown`しません。mise to
 
 - [ドキュメント一覧](docs/README.md) - 目的別の索引
 - [設定ガイド](docs/guides/configuration.md) - 詳細な設定オプション
-- [Local Live Preview設定ガイド](docs/guides/local-live-preview.md) - wildcard subdomain、閲覧制御、Host validation、Hugo runtime/proxy
+- [Local Live Preview設定ガイド](docs/guides/local-live-preview.md) - wildcard subdomain、閲覧制御、Hugo runtime、shadow workspace
 - [Docker + mise デプロイガイド](docs/guides/docker-mise-deployment.md) - secret-free bootstrapと非root appによる推奨デプロイ
 - [CMS設定](docs/reference/cms-config.md) - コレクションとフィールドの設定
 - [現行アーキテクチャ](docs/architecture/current-architecture.md) - 現在のシステム構成
@@ -172,6 +172,7 @@ hugo-cms/
 │   │   ├── api.go       # 記事API
 │   │   ├── auth.go      # 認証・CSRF
 │   │   ├── local_preview.go # preview hostname ingress
+│   │   ├── local_preview_content.go # shadow content update/release API
 │   │   ├── media.go     # メディアAPI
 │   │   ├── health.go    # ヘルスチェック
 │   │   └── errors.go    # エラーレスポンス
@@ -185,6 +186,7 @@ hugo-cms/
 │       ├── hugo_adapter.go # Hugoアダプター
 │       ├── local_preview_lifecycle.go # preview state/port reservation
 │       ├── local_preview_manager.go # Hugo preview process/proxy管理
+│       ├── local_preview_workspace.go # ephemeral shadow content管理
 │       └── media.go     # メディアファイル管理
 ├── docs/
 │   ├── guides/          # 設定・デプロイ手順
@@ -196,7 +198,7 @@ hugo-cms/
 │   └── js/
 │       ├── app.js       # メインアプリケーション
 │       ├── api.js       # APIクライアント
-│       ├── editor.js    # Markdownエディタ
+│       ├── editor.js    # Markdownエディタ/preview debounce
 │       └── ui.js        # UI操作
 ├── templates/           # HTMLテンプレート
 └── repo/                # Hugoサイト (デフォルト)
