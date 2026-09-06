@@ -7,9 +7,9 @@ import (
 )
 
 const (
-	LocalPreviewBindAddress       = "127.0.0.1"
-	DefaultLocalPreviewPortMin    = 14100
-	DefaultLocalPreviewPortMax    = 14999
+	LocalPreviewBindAddress    = "127.0.0.1"
+	DefaultLocalPreviewPortMin = 14100
+	DefaultLocalPreviewPortMax = 14999
 )
 
 type LocalPreviewProcessState string
@@ -30,8 +30,8 @@ type LocalPreviewProcessSlot struct {
 }
 
 // LocalPreviewLifecycle reserves internal loopback ports and records process
-// state. It deliberately does not start generator processes; Phase 2 will own
-// command construction, readiness checks, proxying, and retry on bind races.
+// state. LocalPreviewManager owns command construction, readiness checks,
+// proxying, process shutdown and retry on bind races.
 type LocalPreviewLifecycle struct {
 	mu        sync.Mutex
 	portMin   int
@@ -62,9 +62,9 @@ func NewDefaultLocalPreviewLifecycle() *LocalPreviewLifecycle {
 	return lifecycle
 }
 
-// Reserve returns one stable slot per site. portAvailable is a Phase 2 hook for
-// probing loopback availability; a nil callback treats every unreserved port as
-// available. A child-process bind failure must release/re-reserve and retry.
+// Reserve returns one stable slot per site. portAvailable probes loopback
+// availability; a nil callback treats every unreserved port as available. A
+// child-process bind failure must release/re-reserve and retry.
 func (l *LocalPreviewLifecycle) Reserve(siteID string, portAvailable func(int) bool) (LocalPreviewProcessSlot, error) {
 	siteID = strings.TrimSpace(siteID)
 	if siteID == "" {
