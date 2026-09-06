@@ -371,7 +371,10 @@ export async function loadFile(path) {
         // Loading another file remains possible after a failed save.
     });
 
-    if (currentPath && currentPath !== path) {
+    // A failed cleanup can leave preview ownership alive even after the
+    // production article was deleted and currentPath was cleared. Base the
+    // retry decision on Local Preview ownership rather than editor selection.
+    if (localPreviewSessionID && localPreviewSessionPath && localPreviewSessionPath !== path) {
         try {
             await releaseLocalLivePreview();
         } catch (e) {
