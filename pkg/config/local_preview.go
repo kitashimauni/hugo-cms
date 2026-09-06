@@ -59,6 +59,31 @@ func LocalPreviewURL(siteID string) (string, error) {
 	return fmt.Sprintf("%s://%s/", PreviewScheme, hostname), nil
 }
 
+// IsLocalPreviewHostCandidate reports whether a Host value belongs to the
+// configured preview namespace. It is intentionally broader than
+// ResolveLocalPreviewHost: malformed or unknown hosts under PREVIEW_DOMAIN are
+// still classified as preview traffic so they fail closed instead of falling
+// through to the CMS admin application.
+func IsLocalPreviewHostCandidate(host string) bool {
+	if PreviewDomain == "" {
+		return false
+	}
+
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	hostname := host
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		hostname = parsedHost
+	} else if index := strings.LastIndex(host, ":"); index >= 0 {
+		// Preserve fail-closed behavior for malformed ports such as :evil.
+		hostname = host[:index]
+	}
+	hostname = strings.TrimSuffix(hostname, ".")
+	return hostname == PreviewDomain || strings.HasSuffix(hostname, "."+PreviewDomain)
+}
+
 // ResolveLocalPreviewHost maps an HTTP Host header to an enabled site. Only a
 // single DNS label directly below PREVIEW_DOMAIN is accepted. The Host header
 // never controls repository paths, commands, or internal preview ports.
