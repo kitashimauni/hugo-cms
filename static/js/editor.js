@@ -12,8 +12,15 @@ let deletingPath = "";
 let previewTimer = null;
 let previewController = null;
 let previewRevision = 0;
+let localPreviewTimer = null;
+let localPreviewRevision = 0;
+let localPreviewSessionID = "";
+let localPreviewSessionPath = "";
+let localPreviewConflictNotified = false;
+const localPreviewInflight = new Set();
 
 const PREVIEW_DEBOUNCE_MS = 180;
+const LOCAL_PREVIEW_DEBOUNCE_MS = 250;
 
 export function getCurrentPath() {
     return currentPath;
@@ -21,6 +28,10 @@ export function getCurrentPath() {
 
 function draftStorageKey(siteID, path) {
     return `hugo-cms:draft:${siteID}:${path}`;
+}
+
+function localPreviewStorageKey(siteID, path) {
+    return `hugo-cms:local-preview:${siteID}:${path}`;
 }
 
 export function createDraftUUID(cryptoProvider = window.crypto) {
@@ -51,6 +62,17 @@ export function getOrCreateDraftID(siteID, path, storage = window.sessionStorage
     return draftID;
 }
 
+function getOrCreateLocalPreviewSessionID(siteID, path, storage = window.sessionStorage, createUUID = createDraftUUID) {
+    if (!siteID || !path) return "";
+    const key = localPreviewStorageKey(siteID, path);
+    let sessionID = storage.getItem(key);
+    if (!sessionID) {
+        sessionID = createUUID();
+        storage.setItem(key, sessionID);
+    }
+    return sessionID;
+}
+
 export function getDraftID() {
     return getOrCreateDraftID(API.getCurrentSite(), currentPath);
 }
@@ -63,9 +85,15 @@ export function setConfig(cfg) {
     cmsConfig = cfg;
 }
 
+function localPreviewEnabled() {
+    return cmsConfig?._cms?.local_preview?.enabled === true;
+}
+
 export function clearEditor() {
     clearAutoSaveTimer();
     cancelMarkdownPreview();
+    cancelLocalPreviewTimer();
+    resetLocalPreviewClientState();
     currentPath = "";
     currentData = null;
     lastSavedPayload = "";
@@ -105,6 +133,7 @@ export function initAutoSave() {
 function handleEditorChange() {
     triggerAutoSave();
     scheduleMarkdownPreview();
+    scheduleLocalLivePreview();
     if (window.markDeploymentPreviewStale) window.markDeploymentPreviewStale();
 }
 
@@ -199,6 +228,89 @@ export async function refreshMarkdownPreview() {
     }
 }
 
+function cancelLocalPreviewTimer() {
+    if (localPreviewTimer) {
+        clearTimeout(localPreviewTimer);
+        localPreviewTimer = null;
+    }
+}
+
+function resetLocalPreviewClientState() {
+    localPreviewRevision = 0;
+    localPreviewSessionID = "";
+    localPreviewSessionPath = "";
+    localPreviewConflictNotified = false;
+}
+
+function scheduleLocalLivePreview() {
+    if (!localPreviewEnabled() || !currentPath || currentPath === deletingPath) return;
+    if (localPreviewTimer) clearTimeout(localPreviewTimer);
+    localPreviewTimer = setTimeout(() => {
+        localPreviewTimer = null;
+        refreshLocalLivePreview().catch(() => undefined);
+    }, LOCAL_PREVIEW_DEBOUNCE_MS);
+}
+
+export async function refreshLocalLivePreview() {
+    if (!localPreviewEnabled() || !currentPath || currentPath === deletingPath) return null;
+    cancelLocalPreviewTimer();
+
+    const requestPath = currentPath;
+    const siteID = API.getCurrentSite();
+    const sessionID = localPreviewSessionID || getOrCreateLocalPreviewSessionID(siteID, requestPath);
+    if (!sessionID) return null;
+
+    if (localPreviewSessionPath && localPreviewSessionPath !== requestPath) {
+        throw new Error("Local Live Preview session path changed without release");
+    }
+    localPreviewSessionID = sessionID;
+    localPreviewSessionPath = requestPath;
+    const revision = ++localPreviewRevision;
+    const payload = getPayload();
+
+    const request = API.updateLocalPreviewContent(payload, sessionID, revision);
+    localPreviewInflight.add(request);
+    try {
+        return await request;
+    } catch (e) {
+        if (e?.status === 409) {
+            if (!localPreviewConflictNotified) {
+                localPreviewConflictNotified = true;
+                UI.showToast("Local Live Preview is active in another tab for this site", "warning");
+            }
+        } else {
+            console.error("[LocalPreview] Update failed:", e);
+        }
+        throw e;
+    } finally {
+        localPreviewInflight.delete(request);
+    }
+}
+
+export async function releaseLocalLivePreview() {
+    cancelLocalPreviewTimer();
+    const sessionID = localPreviewSessionID;
+    if (!sessionID) {
+        resetLocalPreviewClientState();
+        return false;
+    }
+
+    // Do not race release against an update that the server may still be
+    // applying even when the UI has moved on to another article/site.
+    await Promise.allSettled(Array.from(localPreviewInflight));
+    try {
+        const result = await API.releaseLocalPreviewContent(sessionID);
+        return result?.released === true;
+    } catch (e) {
+        // A different tab may own the site's active session. Our stale tab must
+        // not release that workspace, but it can safely forget its local state.
+        if (e?.status !== 409) throw e;
+        return false;
+    } finally {
+        resetLocalPreviewClientState();
+    }
+}
+
 export async function execAutoSave() {
     return queueCurrentSave("Auto Saving...");
 }
@@ -260,9 +372,19 @@ export async function flushPendingSave() {
 export async function loadFile(path) {
     clearAutoSaveTimer();
     cancelMarkdownPreview();
+    cancelLocalPreviewTimer();
     await saveQueue.catch(() => {
         // Loading another file remains possible after a failed save.
     });
+
+    if (currentPath && currentPath !== path) {
+        try {
+            await releaseLocalLivePreview();
+        } catch (e) {
+            UI.showToast("Failed to release Local Live Preview: " + e.message, "error");
+            return;
+        }
+    }
 
     currentPath = path;
     const display = document.getElementById('filename-display');
@@ -278,6 +400,7 @@ export async function loadFile(path) {
         lastSavedPayload = JSON.stringify(getPayload());
         lastQueuedPayload = "";
         await refreshMarkdownPreview();
+        refreshLocalLivePreview().catch(() => undefined);
 
     } catch (e) {
         UI.showEditorError(e);
@@ -325,6 +448,7 @@ export async function deleteFile(refreshListCb) {
     const pathToDelete = currentPath;
     let deleted = false;
     clearAutoSaveTimer();
+    cancelLocalPreviewTimer();
     deletingPath = pathToDelete;
 
     try {
@@ -332,6 +456,7 @@ export async function deleteFile(refreshListCb) {
         // queued saves for this path from starting before DELETE.
         await saveQueue;
         await API.deleteArticle(pathToDelete);
+        await releaseLocalLivePreview();
         deleted = true;
         UI.showToast("Article deleted", "success");
 
