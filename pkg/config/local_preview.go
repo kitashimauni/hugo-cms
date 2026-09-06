@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -93,9 +94,13 @@ func normalizePreviewHost(host string) (string, error) {
 
 	hostname := host
 	if strings.Contains(host, ":") {
-		parsedHost, port, err := net.SplitHostPort(host)
-		if err != nil || parsedHost == "" || port == "" {
+		parsedHost, portText, err := net.SplitHostPort(host)
+		if err != nil || parsedHost == "" || portText == "" {
 			return "", fmt.Errorf("invalid preview host %q", host)
+		}
+		port, err := strconv.Atoi(portText)
+		if err != nil || port < 1 || port > 65535 {
+			return "", fmt.Errorf("invalid preview host port %q", portText)
 		}
 		hostname = parsedHost
 	}
