@@ -94,6 +94,33 @@ func TestLocalPreviewURLRejectsOversizedCombinedHostname(t *testing.T) {
 	}
 }
 
+func TestIsLocalPreviewHostCandidate(t *testing.T) {
+	preserveLocalPreviewGlobals(t)
+	PreviewDomain = "preview.example.com"
+
+	tests := []struct {
+		host string
+		want bool
+	}{
+		{host: "tech.preview.example.com", want: true},
+		{host: "tech.preview.example.com:443", want: true},
+		{host: "tech.preview.example.com:evil", want: true},
+		{host: "preview.example.com", want: true},
+		{host: "foo.tech.preview.example.com", want: true},
+		{host: "cms.example.com", want: false},
+		{host: "tech.preview.example.com.evil.example", want: false},
+		{host: "preview.example.com.evil", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			if got := IsLocalPreviewHostCandidate(tt.host); got != tt.want {
+				t.Fatalf("IsLocalPreviewHostCandidate(%q) = %v, want %v", tt.host, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveLocalPreviewHost(t *testing.T) {
 	preserveLocalPreviewGlobals(t)
 	PreviewDomain = "preview.example.com"
