@@ -33,6 +33,29 @@ func TestLocalPreviewURL(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewURLRoundTripsThroughResolver(t *testing.T) {
+	preserveLocalPreviewGlobals(t)
+	PreviewDomain = "preview.example.com"
+	PreviewScheme = "https"
+	enabled := true
+	Sites = []SiteConfig{
+		{ID: "tech", Preview: SitePreviewConfig{LocalPreview: LocalPreviewConfig{Enabled: &enabled}}},
+	}
+
+	previewURL, err := LocalPreviewURL("tech")
+	if err != nil {
+		t.Fatalf("LocalPreviewURL() error = %v", err)
+	}
+	host := strings.TrimSuffix(strings.TrimPrefix(previewURL, "https://"), "/")
+	site, err := ResolveLocalPreviewHost(host)
+	if err != nil {
+		t.Fatalf("ResolveLocalPreviewHost(%q) error = %v", host, err)
+	}
+	if site.ID != "tech" {
+		t.Fatalf("resolved site = %q, want tech", site.ID)
+	}
+}
+
 func TestLocalPreviewURLRejectsInvalidSiteID(t *testing.T) {
 	preserveLocalPreviewGlobals(t)
 	PreviewDomain = "preview.example.com"
@@ -44,6 +67,30 @@ func TestLocalPreviewURLRejectsInvalidSiteID(t *testing.T) {
 				t.Fatalf("LocalPreviewURL(%q) should fail", siteID)
 			}
 		})
+	}
+}
+
+func TestLocalPreviewURLRejectsOversizedCombinedHostname(t *testing.T) {
+	preserveLocalPreviewGlobals(t)
+	PreviewScheme = "https"
+	PreviewDomain = strings.Join([]string{
+		strings.Repeat("a", 63),
+		strings.Repeat("b", 63),
+		strings.Repeat("c", 63),
+		strings.Repeat("d", 57),
+	}, ".")
+
+	if !validDNSName(PreviewDomain) {
+		t.Fatalf("test PREVIEW_DOMAIN length %d should be valid", len(PreviewDomain))
+	}
+	if _, err := LocalPreviewURL("tech"); err == nil {
+		t.Fatalf("combined hostname length %d should be rejected", len("tech."+PreviewDomain))
+	}
+
+	enabled := true
+	site := SiteConfig{ID: "tech", Preview: SitePreviewConfig{LocalPreview: LocalPreviewConfig{Enabled: &enabled}}}
+	if err := validateLocalPreviewSite(site); err == nil {
+		t.Fatal("validateLocalPreviewSite() should reject an oversized combined hostname")
 	}
 }
 
