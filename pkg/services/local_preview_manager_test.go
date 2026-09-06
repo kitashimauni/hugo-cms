@@ -3,6 +3,7 @@ package services
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"io"
@@ -36,6 +37,7 @@ func TestHugoLocalPreviewArgs(t *testing.T) {
 		"--renderToMemory",
 		"--buildDrafts",
 		"--buildFuture",
+		"--buildExpired",
 		"--watch",
 		"--noHTTPCache",
 	}
@@ -159,6 +161,37 @@ func TestLocalPreviewManagerStopReleasesSlot(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewManagerBeginShutdownRejectsNewStarts(t *testing.T) {
+	manager, site := newTestLocalPreviewManager(t)
+	manager.BeginShutdown()
+
+	if _, err := manager.EnsureReady(site); !errors.Is(err, errLocalPreviewShuttingDown) {
+		t.Fatalf("EnsureReady() error = %v, want shutting down", err)
+	}
+	if _, ok := manager.Status(site.ID); ok {
+		t.Fatal("EnsureReady() should not reserve a slot after BeginShutdown")
+	}
+}
+
+func TestLocalPreviewManagerShutdownRejectsRestart(t *testing.T) {
+	manager, site := newTestLocalPreviewManager(t)
+	if _, err := manager.EnsureReady(site); err != nil {
+		t.Fatalf("EnsureReady() error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := manager.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	if _, ok := manager.Status(site.ID); ok {
+		t.Fatal("Shutdown() should release the lifecycle slot")
+	}
+	if _, err := manager.EnsureReady(site); !errors.Is(err, errLocalPreviewShuttingDown) {
+		t.Fatalf("EnsureReady() after Shutdown error = %v, want shutting down", err)
+	}
+}
+
 func newTestLocalPreviewManager(t *testing.T) (*LocalPreviewManager, config.SiteConfig) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -180,9 +213,9 @@ func newTestLocalPreviewManager(t *testing.T) (*LocalPreviewManager, config.Site
 
 	enabled := true
 	site := config.SiteConfig{
-		ID:        "tech",
-		Generator: "hugo",
-		RepoPath:  ".",
+		ID:         "tech",
+		Generator:  "hugo",
+		RepoPath:   ".",
 		ContentDir: "content",
 		Preview: config.SitePreviewConfig{
 			LocalPreview: config.LocalPreviewConfig{
