@@ -88,11 +88,11 @@ func IsLocalPreviewHostCandidate(host string) bool {
 // single DNS label directly below PREVIEW_DOMAIN is accepted. The Host header
 // never controls repository paths, commands, or internal preview ports.
 func ResolveLocalPreviewHost(host string) (SiteConfig, error) {
-	hostname, err := normalizePreviewHost(host)
-	if err != nil {
+	if err := validateLocalPreviewBaseSettings(true); err != nil {
 		return SiteConfig{}, err
 	}
-	if err := validateLocalPreviewBaseSettings(true); err != nil {
+	hostname, err := normalizePreviewHost(host)
+	if err != nil {
 		return SiteConfig{}, err
 	}
 
@@ -139,6 +139,13 @@ func normalizePreviewHost(host string) (string, error) {
 		port, err := strconv.Atoi(portText)
 		if err != nil || port < 1 || port > 65535 {
 			return "", fmt.Errorf("invalid preview host port %q", portText)
+		}
+		expectedPort := "443"
+		if PreviewScheme == "http" {
+			expectedPort = "80"
+		}
+		if portText != expectedPort {
+			return "", fmt.Errorf("local preview host port %q does not match %s default port %s", portText, PreviewScheme, expectedPort)
 		}
 		hostname = parsedHost
 	}
