@@ -200,17 +200,23 @@ func main() {
 	<-quit
 	slog.Info("Shutting down server...")
 
-	previewCtx, cancelPreview := context.WithTimeout(context.Background(), 3*time.Second)
-	if err := services.DefaultLocalPreviewManager().Shutdown(previewCtx); err != nil {
-		slog.Error("Failed to stop local preview processes cleanly", "error", err)
-	}
-	cancelPreview()
+	previewManager := services.DefaultLocalPreviewManager()
+	// Reject any new lazy preview starts immediately. Existing preview requests
+	// may finish while the HTTP server drains, then all child processes are
+	// stopped after no new HTTP requests can be accepted.
+	previewManager.BeginShutdown()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Error("Server forced to shutdown", "error", err)
 	}
+	cancel()
+
+	previewCtx, cancelPreview := context.WithTimeout(context.Background(), 3*time.Second)
+	if err := previewManager.Shutdown(previewCtx); err != nil {
+		slog.Error("Failed to stop local preview processes cleanly", "error", err)
+	}
+	cancelPreview()
 
 	slog.Info("Server exiting")
 }
