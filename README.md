@@ -1,15 +1,18 @@
 # Hugo CMS
 
-Hugoサイト用のセルフホスト型ヘッドレスCMSです。GitHub OAuthによる認証、リアルタイムプレビュー、Gitベースのコンテンツ管理を提供します。
+Hugoサイト用のセルフホスト型ヘッドレスCMSです。GitHub OAuthによる認証、安全なMarkdown本文プレビュー、デプロイプレビュー、Gitベースのコンテンツ管理を提供します。
 
 ## 特徴
 
 - 🔐 **GitHub OAuth認証** - 安全なログインとユーザー制限
-- 📝 **リアルタイムプレビュー** - 組み込みHugoサーバーによる即座のプレビュー
+- 📝 **本文プレビュー** - 編集中のMarkdownをsanitizeして即座に確認
+- 🚀 **デプロイプレビュー** - draft branchを外部providerでbuildし、公開前に特定commitを確認
 - 🖼️ **メディア管理** - ドラッグ&ドロップでの画像アップロード
 - 🔄 **Gitワークフロー** - 変更の同期・公開をワンクリックで
 - ⚡ **高速キャッシュ** - 並列処理による記事一覧の高速表示
 - 🛡️ **セキュリティ** - CSRF保護、パストラバーサル対策、入力検証
+
+> Hugoのtheme/layout/shortcode/CSS/JSを含むローカルLive Previewは現在未実装です。Issue #32で、`https://<site-id>.<preview-domain>/`形式のwildcard subdomainを使う方式を検討しています。旧`/admin/preview/:site/*` path-prefix proxyは復活させません。
 
 ## クイックスタート
 
@@ -146,7 +149,7 @@ appは非rootで動作し、bind mountしたrepoを`chown`しません。mise to
 - [CMS設定](docs/reference/cms-config.md) - コレクションとフィールドの設定
 - [現行アーキテクチャ](docs/architecture/current-architecture.md) - 現在のシステム構成
 - [マルチサイト・マルチジェネレーター設計](docs/architecture/multi-site-generator-design.md) - 複数HugoサイトとEleventy等への対応方針
-- [本文プレビューとデプロイプレビュー](docs/architecture/preview-deployment-design.md) - 安全な本文表示とdraft deploymentの設計
+- [本文プレビューとデプロイプレビュー](docs/architecture/preview-deployment-design.md) - 安全な本文表示、draft deployment、Local Live Previewとの役割分担
 - [セキュリティ・品質監査](docs/audits/security-and-quality-audit.md) - 既知の問題と推奨対応
 
 ## プロジェクト構造
