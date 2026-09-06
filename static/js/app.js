@@ -186,9 +186,19 @@ async function loadFile(path) {
     stopDeploymentPolling();
     deploymentState = null;
     UI.renderDeploymentState(null);
-    localPreviewSessionID = "";
+    const previousLocalPreviewSessionID = localPreviewSessionID;
     await Editor.loadFile(path);
-    if (localPreviewEnabled && Editor.getCurrentPath() === path) {
+    if (Editor.getCurrentPath() !== path) {
+        // Editor keeps its owner ID when release failed; keep the matching
+        // heartbeat handle so the live session does not expire while the user
+        // retries the switch.
+        localPreviewSessionID = previousLocalPreviewSessionID;
+        await refreshLocalPreviewStatus();
+        return;
+    }
+
+    localPreviewSessionID = "";
+    if (localPreviewEnabled) {
         try {
             await ensureLocalPreviewSession();
         } catch (_) {
@@ -197,9 +207,7 @@ async function loadFile(path) {
         }
         await refreshLocalPreviewStatus();
     }
-    if (deploymentEnabled && Editor.getCurrentPath() === path) {
-        await refreshDeploymentState();
-    }
+    if (deploymentEnabled) await refreshDeploymentState();
 }
 
 async function refreshFileList() {
@@ -407,12 +415,9 @@ async function stopLocalLivePreview() {
     if (!localPreviewEnabled || localPreviewOperationInProgress) return;
     localPreviewOperationInProgress = true;
     try {
-        // Editor owns the authoritative document-scoped ID. Releasing it first
-        // safely stops/removes an owned shadow workspace. The explicit stop API
-        // then handles the saved-content-only process case idempotently.
-        await Editor.releaseLocalLivePreview();
+        const released = await Editor.releaseLocalLivePreview();
         localPreviewSessionID = "";
-        await API.stopLocalPreviewContent("");
+        if (!released) await API.stopLocalPreviewContent("");
         closeEmbeddedLocalPreview();
         UI.showToast('Local Live Previewを停止しました', 'success');
     } catch (e) {
