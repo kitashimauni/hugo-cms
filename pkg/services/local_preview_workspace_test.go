@@ -151,6 +151,69 @@ func TestLocalPreviewWorkspaceReleaseProtectsActiveDraft(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewWorkspaceSyncsContentResource(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resourcePath := filepath.Join(repo, "content", "images", "new.png")
+	if err := os.MkdirAll(filepath.Dir(resourcePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resourcePath, []byte("image-bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	synced, err := manager.SyncContentResource(runtime, filepath.ToSlash(filepath.Join("content", "images", "new.png")), false)
+	if err != nil || !synced {
+		t.Fatalf("SyncContentResource() synced=%v err=%v", synced, err)
+	}
+	got, err := os.ReadFile(filepath.Join(workspace.ContentDir, "images", "new.png"))
+	if err != nil || string(got) != "image-bytes" {
+		t.Fatalf("shadow resource = %q err=%v", got, err)
+	}
+
+	if err := os.Remove(resourcePath); err != nil {
+		t.Fatal(err)
+	}
+	synced, err = manager.SyncContentResource(runtime, filepath.ToSlash(filepath.Join("content", "images", "new.png")), true)
+	if err != nil || !synced {
+		t.Fatalf("delete SyncContentResource() synced=%v err=%v", synced, err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace.ContentDir, "images", "new.png")); !os.IsNotExist(err) {
+		t.Fatalf("shadow resource still exists: %v", err)
+	}
+}
+
+func TestLocalPreviewWorkspaceIgnoresStaticResourceSync(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	if err := os.MkdirAll(filepath.Join(repo, "static"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	staticPath := filepath.Join(repo, "static", "logo.png")
+	if err := os.WriteFile(staticPath, []byte("logo"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content", StaticDir: "static"}
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft")); err != nil {
+		t.Fatal(err)
+	}
+	synced, err := manager.SyncContentResource(runtime, "static/logo.png", false)
+	if err != nil || synced {
+		t.Fatalf("static resource synced=%v err=%v, want false/nil", synced, err)
+	}
+}
+
 func TestLocalPreviewWorkspaceRejectsContentSymlink(t *testing.T) {
 	repo := t.TempDir()
 	contentDir := filepath.Join(repo, "content")
