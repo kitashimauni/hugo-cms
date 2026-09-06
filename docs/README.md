@@ -5,6 +5,7 @@ Hugo CMSの利用方法、仕様、設計、および監査結果を目的別に
 ## ガイド
 
 - [設定ガイド](guides/configuration.md) - 環境変数と実行設定
+- [Local Live Preview設定ガイド](guides/local-live-preview.md) - wildcard subdomain、Host validation、private ingress設定
 - [デプロイガイド](guides/deployment.md) - サーバー、Docker、リバースプロキシ
 - [Docker + mise デプロイガイド](guides/docker-mise-deployment.md) - secret-free one-shot bootstrap、非root app、サイト別toolchainの運用
 - [`.homecms.yml` 移行ガイド](guides/migrating-to-homecms.md) - legacy `static/admin/config.yml` からの移行
@@ -22,6 +23,7 @@ Hugo CMSの利用方法、仕様、設計、および監査結果を目的別に
 - [現行アーキテクチャ](architecture/current-architecture.md) - 現在のHugo向け実装
 - [マルチサイト・マルチジェネレーター設計](architecture/multi-site-generator-design.md) - 複数HugoサイトとEleventy等へ対応するための提案
 - [本文プレビューとデプロイプレビュー](architecture/preview-deployment-design.md) - preview責務、draft branch、provider、security、cleanup
+- [Local Live Preview設計](architecture/local-live-preview-design.md) - wildcard hostname、process lifecycle、port reservation、shadow workspace
 - [ADR-0001: Cloudflare Pages preview](architecture/adr-0001-cloudflare-pages-preview.md) - 初期providerの選定理由
 
 ## 監査
