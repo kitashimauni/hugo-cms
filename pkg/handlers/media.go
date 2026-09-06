@@ -4,6 +4,7 @@ import (
 	"errors"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/services"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -68,6 +69,7 @@ func UploadMedia(c *gin.Context) {
 		ErrorInternal(c, "Failed to save file: "+err.Error())
 		return
 	}
+	syncLocalPreviewContentResource(runtime, info.RepoPath, false)
 	info.URL = addSiteQuery(info.URL, runtime.ID)
 
 	c.JSON(http.StatusOK, info)
@@ -102,7 +104,22 @@ func DeleteMedia(c *gin.Context) {
 		ErrorInternal(c, "Failed to delete: "+err.Error())
 		return
 	}
+	syncLocalPreviewContentResource(runtime, req.RepoPath, true)
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+func syncLocalPreviewContentResource(runtime config.SiteRuntime, repoPath string, deleted bool) {
+	workspaceManager, err := services.DefaultLocalPreviewWorkspaceManager()
+	if err != nil {
+		slog.Warn("Local preview workspace unavailable during media sync", "site", runtime.ID, "error", err)
+		return
+	}
+	if _, err := workspaceManager.SyncContentResource(runtime, repoPath, deleted); err != nil {
+		// The media operation already succeeded in the production workspace. Do
+		// not turn a preview-only synchronization failure into a misleading media
+		// retry; log it and let the next workspace rebuild recover the resource.
+		slog.Warn("Failed to synchronize media into Local Live Preview", "site", runtime.ID, "path", repoPath, "error", err)
+	}
 }
 
 func ServeMediaRaw(c *gin.Context) {
