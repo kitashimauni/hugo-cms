@@ -10,22 +10,28 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
+
+const DefaultLocalPreviewLeaseTTL = 2 * time.Minute
 
 var (
 	ErrLocalPreviewSessionConflict = errors.New("another local preview session is already active for this site")
 	ErrLocalPreviewSessionMismatch = errors.New("local preview session article does not match request")
+	ErrLocalPreviewSessionNotFound = errors.New("local preview session is not active")
+	ErrLocalPreviewSessionNotStale = errors.New("local preview session is still active")
 )
 
 // LocalPreviewWorkspace is the active unsaved-content workspace for one site.
-// Phase 3 intentionally limits each site to one active draft/session so two
-// browser tabs cannot silently mix unsaved content.
+// Each site is intentionally limited to one active browser-document session so
+// separate tabs cannot silently mix unsaved content.
 type LocalPreviewWorkspace struct {
 	SiteID      string
 	DraftID     string
 	ArticlePath string
 	ContentDir  string
 	Revision    uint64
+	LastSeenAt  time.Time
 }
 
 // LocalPreviewWorkspaceManager owns ephemeral shadow content directories. The
@@ -37,6 +43,8 @@ type LocalPreviewWorkspaceManager struct {
 	mu       sync.Mutex
 	sessions map[string]LocalPreviewWorkspace
 	closed   bool
+	leaseTTL time.Duration
+	now      func() time.Time
 }
 
 func NewLocalPreviewWorkspaceManager(root string) (*LocalPreviewWorkspaceManager, error) {
@@ -54,6 +62,8 @@ func NewLocalPreviewWorkspaceManager(root string) (*LocalPreviewWorkspaceManager
 	return &LocalPreviewWorkspaceManager{
 		root:     absRoot,
 		sessions: make(map[string]LocalPreviewWorkspace),
+		leaseTTL: DefaultLocalPreviewLeaseTTL,
+		now:      time.Now,
 	}, nil
 }
 
@@ -78,9 +88,30 @@ func DefaultLocalPreviewWorkspaceManager() (*LocalPreviewWorkspaceManager, error
 	return defaultLocalPreviewWorkspace, defaultLocalPreviewWorkspaceErr
 }
 
+func (m *LocalPreviewWorkspaceManager) LeaseTTL() time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.leaseTTL
+}
+
+func (m *LocalPreviewWorkspaceManager) currentTimeLocked() time.Time {
+	if m.now == nil {
+		return time.Now().UTC()
+	}
+	return m.now().UTC()
+}
+
+func (m *LocalPreviewWorkspaceManager) staleLocked(workspace LocalPreviewWorkspace, now time.Time) bool {
+	if workspace.LastSeenAt.IsZero() {
+		return true
+	}
+	return now.Sub(workspace.LastSeenAt) > m.leaseTTL
+}
+
 // Update creates the site's workspace on the first request and applies the
 // newest editor revision. Older in-flight HTTP requests become harmless no-ops
-// instead of overwriting newer editor state.
+// instead of overwriting newer editor state. Every request from the owner also
+// renews its lease, including a stale revision that arrives out of order.
 func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftID, articlePath string, revision uint64, content []byte) (LocalPreviewWorkspace, bool, bool, error) {
 	if err := validateDraftID(draftID); err != nil {
 		return LocalPreviewWorkspace{}, false, false, err
@@ -109,6 +140,7 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 	if m.closed {
 		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("local preview workspace manager is closed")
 	}
+	now := m.currentTimeLocked()
 
 	workspace, exists := m.sessions[runtime.ID]
 	created := false
@@ -119,7 +151,9 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 		if workspace.ArticlePath != filepath.ToSlash(articlePath) {
 			return LocalPreviewWorkspace{}, false, false, ErrLocalPreviewSessionMismatch
 		}
+		workspace.LastSeenAt = now
 		if revision <= workspace.Revision {
+			m.sessions[runtime.ID] = workspace
 			return workspace, false, false, nil
 		}
 	} else {
@@ -137,6 +171,7 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 			DraftID:     draftID,
 			ArticlePath: filepath.ToSlash(articlePath),
 			ContentDir:  contentDir,
+			LastSeenAt:  now,
 		}
 		created = true
 	}
@@ -152,8 +187,44 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 		return LocalPreviewWorkspace{}, false, false, err
 	}
 	workspace.Revision = revision
+	workspace.LastSeenAt = now
 	m.sessions[runtime.ID] = workspace
 	return workspace, created, true, nil
+}
+
+// Heartbeat renews the lease without changing content. A browser tab that was
+// temporarily throttled can renew its own expired lease as long as nobody has
+// reclaimed the workspace yet.
+func (m *LocalPreviewWorkspaceManager) Heartbeat(siteID, draftID string) (LocalPreviewWorkspace, error) {
+	if err := validateDraftID(draftID); err != nil {
+		return LocalPreviewWorkspace{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return LocalPreviewWorkspace{}, fmt.Errorf("local preview workspace manager is closed")
+	}
+	workspace, ok := m.sessions[siteID]
+	if !ok {
+		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionNotFound
+	}
+	if workspace.DraftID != draftID {
+		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionConflict
+	}
+	workspace.LastSeenAt = m.currentTimeLocked()
+	m.sessions[siteID] = workspace
+	return workspace, nil
+}
+
+// Status reports the active workspace and whether its lease has expired.
+func (m *LocalPreviewWorkspaceManager) Status(siteID string) (LocalPreviewWorkspace, bool, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	workspace, ok := m.sessions[siteID]
+	if !ok {
+		return LocalPreviewWorkspace{}, false, false
+	}
+	return workspace, true, m.staleLocked(workspace, m.currentTimeLocked())
 }
 
 // SyncContentResource mirrors a content-directory resource change made through
@@ -173,9 +244,6 @@ func (m *LocalPreviewWorkspaceManager) SyncContentResource(runtime config.SiteRu
 	}
 	relative, err := filepath.Rel(sourceContentDir, sourcePath)
 	if err != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
-		// The media file is outside contentDir (for example static/). Hugo still
-		// reads it directly from the original repository, so no shadow sync is
-		// required.
 		return false, nil
 	}
 
@@ -232,6 +300,26 @@ func (m *LocalPreviewWorkspaceManager) Release(siteID, draftID string) (bool, er
 	if workspace.DraftID != draftID {
 		return false, ErrLocalPreviewSessionConflict
 	}
+	return m.removeWorkspaceLocked(siteID, workspace)
+}
+
+// ReleaseStale removes an expired workspace without requiring its previous
+// document-scoped owner ID. The stale check is repeated under the manager lock
+// so a heartbeat racing with recovery prevents accidental reclamation.
+func (m *LocalPreviewWorkspaceManager) ReleaseStale(siteID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	workspace, ok := m.sessions[siteID]
+	if !ok {
+		return false, nil
+	}
+	if !m.staleLocked(workspace, m.currentTimeLocked()) {
+		return false, ErrLocalPreviewSessionNotStale
+	}
+	return m.removeWorkspaceLocked(siteID, workspace)
+}
+
+func (m *LocalPreviewWorkspaceManager) removeWorkspaceLocked(siteID string, workspace LocalPreviewWorkspace) (bool, error) {
 	workspaceRoot := filepath.Dir(workspace.ContentDir)
 	if err := os.RemoveAll(workspaceRoot); err != nil {
 		return false, fmt.Errorf("remove local preview workspace: %w", err)
@@ -241,10 +329,8 @@ func (m *LocalPreviewWorkspaceManager) Release(siteID, draftID string) (bool, er
 }
 
 func (m *LocalPreviewWorkspaceManager) Active(siteID string) (LocalPreviewWorkspace, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	workspace, ok := m.sessions[siteID]
-	return workspace, ok
+	workspace, active, _ := m.Status(siteID)
+	return workspace, active
 }
 
 func (m *LocalPreviewWorkspaceManager) Shutdown() error {
@@ -340,8 +426,6 @@ func writeLocalPreviewFileAtomic(path string, content []byte) error {
 		return err
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
-		// Windows cannot atomically replace an existing path. The fully-written
-		// temporary file is used for the fallback replacement.
 		if _, statErr := os.Stat(path); statErr != nil {
 			return fmt.Errorf("replace local preview content: %w", err)
 		}
