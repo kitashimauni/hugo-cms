@@ -254,7 +254,7 @@ CMSは設定読み込み時に、collection名・folder・path変数・`preview.
 2. **Local Live Preview**: 実際のgenerator/theme/layout/shortcode/CSS/JSを使う編集中確認
 3. **デプロイプレビュー**: 外部buildで特定commitを公開前に最終確認する
 
-Issue #32 Phase 1ではLocal Live Previewの設定model、derived URL、Host validation、process lifecycle/port reservation基盤まで実装済みです。generator serverの実起動、reverse proxy、LiveReload、editor連携はPhase 2以降で実装します。
+Issue #32ではPhase 1/2でLocal Live Previewの設定・hostname routing・Hugo process/proxy/LiveReload基盤まで実装済みです。Phase 3 (#35)では未保存editor入力をephemeral shadow content workspaceへ約250msで反映し、Hugo watcherへつなぎます。Local Preview update自体はproduction working tree/Git index/refを書き換えず、content配下のmedia upload/deleteもactive workspaceへ同期します。明示的なopen/stop UIと状態表示はPhase 4で追加します。
 
 Site Registryでサイトごとに設定します。
 
