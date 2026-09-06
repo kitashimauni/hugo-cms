@@ -2,7 +2,9 @@
 
 ## ステータス
 
-Issue #32 Phase 1で設計・設定契約を確定し、設定model、derived URL、Host validation、process lifecycle/port reservationの基盤まで実装済み。Phase 1ではgenerator processの実起動、reverse proxy、LiveReload中継、editorからshadow workspaceへの書き込みはまだ実装しない。
+Issue #32 Phase 1で設計・設定契約を確定し、設定model、derived URL、Host validation、process lifecycle/port reservationの基盤を実装した。
+
+Phase 2ではHugoを対象に、generator processのlazy start/stop、readiness、loopback port retry、hostname reverse proxy、redirect補正、WebSocket/LiveReload中継まで実装する。未保存editor stateをshadow workspaceへ反映する処理はPhase 3の責務として分離する。
 
 Local Live Previewは既存のMarkdown本文プレビュー、Deployment Previewを置き換えず、第3のpreview段階として追加する。
 
@@ -44,7 +46,7 @@ wildcard DNSやHost validationは閲覧者認可ではない。Local Live Previe
 
 CMSの既存session cookieを`*.preview.example.com`へ共有して認証に使わない。preview側で実行されるsite由来JavaScriptへCMS sessionを露出させないためである。
 
-hugo-cmsは外部ingressの認証方式そのものを実装・検出しないため、この要件はoperatorが満たすdeployment contractとする。Phase 2の実装でも「hostnameを知っているだけで閲覧可能」なpublic ingressを推奨構成として扱わない。
+hugo-cmsは外部ingressの認証方式そのものを実装・検出しないため、この要件はoperatorが満たすdeployment contractとする。preview hostnameのrequestはCMS session middlewareより前で処理し、preview contentへadmin sessionを渡さない。
 
 ## 設定契約
 
@@ -85,7 +87,7 @@ Site RegistryをAPIへ返す際、Local Live Previewが有効ならderived value
 
 ## Host routing
 
-Phase 2のpreview ingress routeはHTTP `Host`を`ResolveLocalPreviewHost`へ渡し、Site Registryに登録済みかつLocal Live Previewが有効なsiteだけへ解決する。
+HTTP `Host`を`ResolveLocalPreviewHost`へ渡し、Site Registryに登録済みかつLocal Live Previewが有効なsiteだけへ解決する。
 
 許可例:
 
@@ -104,11 +106,11 @@ unknown.preview.example.com
 tech.example.com
 ```
 
-Hostからrepository path、generator command、internal portを生成してはならない。Hostから得られる値はSite Registry lookup keyだけとする。
+preview namespaceに属するがinvalid/unknownなHostはCMS admin routeへfall throughさせず404相当で拒否する。Hostからrepository path、generator command、internal portを生成してはならない。Hostから得られる値はSite Registry lookup keyだけとする。
 
 ## Generator process lifecycle
 
-Phase 2ではLocal Live Preview専用managerを追加し、次のstate machineを使う。
+`LocalPreviewManager`がPhase 1のstate machineを実processへ接続する。
 
 ```text
 stopped
@@ -125,18 +127,38 @@ failed
   -> stopped
 ```
 
-Phase 1では`LocalPreviewLifecycle`がstateと内部port reservationだけを管理する。generator processの起動、終了待ち、readiness、proxyはPhase 2で実装する。
-
 ### 起動契約
 
 - Local Live Previewは設定だけでCMS起動時に全siteを起動しない
-- 最初のpreview requestまたは明示的なUI操作でlazy startする
+- 最初のpreview requestでlazy startする
 - Host validationとSite Registry lookupが成功する前にprocessを起動しない
+- Phase 2のruntime実装対象はHugoのみとする
 - generator processは`127.0.0.1`へだけbindする
 - generator portをhost/public interfaceへ直接公開しない
-- child processへ渡す環境変数はallowlistする
+- child processへ渡す環境変数は既存generator allowlistを使用する
 - CMSのOAuth/session/provider secretは継承させない
 - CMS shutdown時には起動済みprocessを停止し、終了を待つ
+- processが異常終了した場合は`failed`へ遷移し、次requestで再起動できる
+
+Hugoは概ね次相当で起動する。
+
+```text
+hugo server
+  --source .
+  --contentDir <content_dir>
+  --bind 127.0.0.1
+  --port <internal-port>
+  --baseURL https://<site-id>.<preview-domain>/
+  --appendPort=false
+  --liveReloadPort 443
+  --renderToMemory
+  --buildDrafts
+  --buildFuture
+  --watch
+  --noHTTPCache
+```
+
+HTTP previewでは`--liveReloadPort 80`を使用する。外部preview URLへinternal portを露出させない。
 
 ### port allocation
 
@@ -148,9 +170,26 @@ managerが内部rangeからsiteごとにportを予約する。
 14100-14999
 ```
 
-Phase 1のallocatorは同一siteに安定した予約を返し、別siteとの重複を防ぐ。Phase 2では予約候補についてloopback bind可能性を確認してからprocessを起動する。
+予約候補はloopback bind可能性をprobeしてからprocessを起動する。probeとchild process bindの間のraceで起動に失敗した場合はslotを解放し、別portで有限回retryする。port番号は外部URLへ現れないため、retryしてもbrowser側URLは変化しない。
 
-port availability確認とchild process bindの間には競合余地があるため、実際のbindに失敗した場合はそのslotを解放し、別portを予約して有限回retryする。port番号を外部URLへ露出させないため、retryしてもbrowser側URLは変化しない。
+## Reverse proxy / LiveReload
+
+preview requestはpath prefixを追加・除去せず、そのままHugoへproxyする。
+
+```text
+https://tech.preview.example.com/css/main.css
+  -> http://127.0.0.1:<internal-port>/css/main.css
+```
+
+これによりroot-relative CSS/JS/imageはsite自身のorigin root `/` のまま扱える。
+
+proxyは次を行う。
+
+- external Hostをupstream requestにも保持する
+- `X-Forwarded-Host` / `X-Forwarded-Proto`をCMS側で再構成する
+- internal `127.0.0.1:<port>` / `localhost:<port>`を指すabsolute `Location`だけをexternal preview originへ書き換える
+- unrelatedなexternal redirectは書き換えない
+- HTTP Upgradeを透過し、Hugo LiveReloadのWebSocketを通す
 
 ## 編集中state: shadow content workspace
 
@@ -171,7 +210,7 @@ Git worktreeをLocal Live Previewの基本方式にはしない。
 
 初期実装ではsiteの`content_dir`をshadow workspaceへmirrorし、editorの未保存変更はshadow側の記事だけへ適用する。generatorのsource、layout、theme、config、static/assets等は登録済みrepositoryを基準にする。
 
-Hugoはcontent directoryを別pathへ切り替えられるため、Phase 3でHugo adapterがshadow content directoryをpreview commandへ渡す。generatorごとに同じ方式が使えない場合はadapter内で別方式を実装し、CMS共通層へgenerator固有path処理を漏らさない。
+Phase 2時点のHugo processは保存済みrepository contentを使用する。Phase 3でshadow content directoryをpreview commandへ渡し、editor変更をdebounce反映する。
 
 shadow workspaceのrootはCMS管理領域に置き、site IDやarticle pathを直接filesystem pathとして連結せず既存のpath validationと同等の境界を設ける。
 
@@ -181,32 +220,26 @@ shadow workspaceのrootはCMS管理領域に置き、site IDやarticle pathを�
 
 将来、複数sessionを同一hostnameで安全にroutingする仕組みを導入する場合のみ、この制約を緩和する。
 
-## Phase 2への契約
-
-Phase 2は以下を実装する。
-
-- generator preview command生成
-- lazy start/stop/restart
-- lifecycle stateとprocess実体の接続
-- loopback port probe + bind failure retry
-- hostnameから内部processへのreverse proxy
-- redirect/`Location`処理
-- WebSocket / Hugo LiveReload中継
-- root-relative CSS/JS/imageの確認
-- UIへready/failed状態とLocal Preview URLを公開
-
-旧`/admin/preview/:site/*` path-prefix proxyは再導入しない。
-
 ## Phase 3への契約
 
 Phase 3は以下を実装する。
 
 - shadow content workspace作成/同期/cleanup
 - editor変更のdebounce反映
-- generator watcherによる再build
+- Hugo watcherによる再build
 - 保存操作とshadow stateの同期
 - 同一site concurrent preview sessionの競合拒否
 - abnormal shutdown後のstale workspace cleanup
+
+## Phase 4への契約
+
+Phase 4は以下を実装する。
+
+- Local Live Preview表示/新規tab導線
+- starting/ready/failed状態表示
+- private network/Tailscale運用例
+- wildcard DNS / TLS ingress構成例
+- Deployment Previewとの役割差のUI明記
 
 ## セキュリティ要点
 
@@ -217,6 +250,7 @@ Phase 3は以下を実装する。
 - Local Live Preview無効siteは起動しない
 - Host値をcommand/path/portへ直接変換しない
 - generatorは明示的に登録されたrepositoryだけで実行する
+- generator child environmentはallowlistし、CMS secretを渡さない
 - internal generator serverはloopback bindのみ
 - TLS/DNS credentialをCMSへ要求しない
 - Local Live Previewはrepository内generator codeを実行するため、Markdown本文プレビューより広いtrust boundaryである

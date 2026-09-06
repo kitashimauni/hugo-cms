@@ -94,6 +94,33 @@ func TestLocalPreviewURLRejectsOversizedCombinedHostname(t *testing.T) {
 	}
 }
 
+func TestIsLocalPreviewHostCandidate(t *testing.T) {
+	preserveLocalPreviewGlobals(t)
+	PreviewDomain = "preview.example.com"
+
+	tests := []struct {
+		host string
+		want bool
+	}{
+		{host: "tech.preview.example.com", want: true},
+		{host: "tech.preview.example.com:443", want: true},
+		{host: "tech.preview.example.com:evil", want: true},
+		{host: "preview.example.com", want: true},
+		{host: "foo.tech.preview.example.com", want: true},
+		{host: "cms.example.com", want: false},
+		{host: "tech.preview.example.com.evil.example", want: false},
+		{host: "preview.example.com.evil", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			if got := IsLocalPreviewHostCandidate(tt.host); got != tt.want {
+				t.Fatalf("IsLocalPreviewHostCandidate(%q) = %v, want %v", tt.host, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveLocalPreviewHost(t *testing.T) {
 	preserveLocalPreviewGlobals(t)
 	PreviewDomain = "preview.example.com"
@@ -116,6 +143,46 @@ func TestResolveLocalPreviewHost(t *testing.T) {
 			}
 			if site.ID != "tech" {
 				t.Fatalf("site.ID = %q, want tech", site.ID)
+			}
+		})
+	}
+}
+
+func TestResolveLocalPreviewHostAllowsHTTPDefaultPort(t *testing.T) {
+	preserveLocalPreviewGlobals(t)
+	PreviewDomain = "preview.example.com"
+	PreviewScheme = "http"
+	enabled := true
+	Sites = []SiteConfig{
+		{ID: "tech", Preview: SitePreviewConfig{LocalPreview: LocalPreviewConfig{Enabled: &enabled}}},
+	}
+
+	if _, err := ResolveLocalPreviewHost("tech.preview.example.com:80"); err != nil {
+		t.Fatalf("ResolveLocalPreviewHost() error = %v", err)
+	}
+}
+
+func TestResolveLocalPreviewHostRejectsNonStandardPort(t *testing.T) {
+	preserveLocalPreviewGlobals(t)
+	PreviewDomain = "preview.example.com"
+	enabled := true
+	Sites = []SiteConfig{
+		{ID: "tech", Preview: SitePreviewConfig{LocalPreview: LocalPreviewConfig{Enabled: &enabled}}},
+	}
+
+	for _, tt := range []struct {
+		scheme string
+		host   string
+	}{
+		{scheme: "https", host: "tech.preview.example.com:8443"},
+		{scheme: "https", host: "tech.preview.example.com:80"},
+		{scheme: "http", host: "tech.preview.example.com:8080"},
+		{scheme: "http", host: "tech.preview.example.com:443"},
+	} {
+		t.Run(tt.scheme+"/"+tt.host, func(t *testing.T) {
+			PreviewScheme = tt.scheme
+			if _, err := ResolveLocalPreviewHost(tt.host); err == nil {
+				t.Fatalf("ResolveLocalPreviewHost(%q) should reject non-standard port for %s", tt.host, tt.scheme)
 			}
 		})
 	}
