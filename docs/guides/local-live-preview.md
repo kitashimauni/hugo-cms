@@ -66,7 +66,7 @@ sites:
 
 `url`は`sites.yml`へ保存する値ではありません。
 
-## site ID制約
+## site ID / hostname制約
 
 Local Live Previewで有効にするsite IDは、そのままDNS labelになります。
 
@@ -90,6 +90,8 @@ tech_blog
 
 Local Live Previewを無効にしているsiteにはこのDNS label制約を追加しません。
 
+site ID単体だけでなく、`<site-id>.<preview-domain>`を連結したhostname全体も有効なDNS名で、253文字以内である必要があります。設定検証、URL生成、Host resolverは同じ制約を使用します。
+
 ## wildcard DNS / TLS
 
 想定DNSは1レコードです。
@@ -108,6 +110,19 @@ hugo-cms自身はTLS certificateやDNS provider credentialを管理しません�
 - 必要に応じてCloudflare等を利用する
 
 これらは外部ingressの責務です。
+
+## 閲覧者認可
+
+**wildcard DNSとHost validationは閲覧者認可ではありません。** Local Live Previewには未公開contentが含まれ、site repository由来のJavaScriptも実行され得るため、preview ingressは必ず独立したアクセス制御の内側に置いてください。
+
+次のいずれかを必須とします。
+
+- Tailscale等のprivate networkからのみ到達可能にする
+- Internet reachableにする場合はCloudflare Access等のpreview専用viewer authenticationで保護する
+
+CMSの既存session cookieを`*.preview.example.com`へ共有して認証に使わないでください。preview site由来のJavaScriptへCMS sessionを露出させないためです。
+
+hugo-cmsは外部ingressの認証方式を自動検出・設定しません。この閲覧制御はdeployment時にoperatorが満たす契約です。
 
 ## Host validation
 
@@ -164,7 +179,7 @@ Local Live Previewのgenerator processはPhase 2で`127.0.0.1`だけへbindし�
 
 ## 編集中データ
 
-Phase 3では未保存editor stateをproduction working treeへキー入力ごとに書かず、shadow content workspaceへ反映します。
+Phase 1で、未保存editor stateはproduction working treeやGit worktreeへ書かず、**shadow content workspace**へ反映する方針を確定しました。workspaceの作成・同期・cleanup自体はPhase 3で実装します。
 
 初期契約では同一siteのactive Local Live Preview sessionは1つに制限し、別tab/draftから同時更新された場合は混在させず競合として扱います。
 
