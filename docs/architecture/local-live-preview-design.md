@@ -2,14 +2,14 @@
 
 ## ステータス
 
-Issue #32のLocal Live Previewは段階的に実装している。
+Issue #32のLocal Live Previewは段階的に実装する。
 
 - Phase 1 (#33): 設定model、derived URL、Host validation、process lifecycle/port reservation
 - Phase 2 (#34): Hugo lazy start/stop、loopback port、hostname reverse proxy、redirect補正、WebSocket/LiveReload中継
-- Phase 3: **shadow content workspace + editor debounce連携**
+- Phase 3 (#35): shadow content workspace + editor debounce + content resource同期
 - Phase 4: UI/運用導線
 
-Local Live Previewは既存のMarkdown本文プレビュー、Deployment Previewを置き換えない。
+Local Live PreviewはMarkdown本文プレビューとDeployment Previewを置き換えず、両者の中間を担う。
 
 ```text
 Markdown本文プレビュー
@@ -22,9 +22,9 @@ Deployment Preview
   -> remote buildした特定commitを公開前に最終確認
 ```
 
-## URLとingress境界
+## URL / ingress / viewer authentication
 
-Local Live Previewはpath prefixではなくsiteごとのhostnameをorigin rootとして使用する。
+Local Live Previewはpath prefixではなくsiteごとのhostnameをorigin rootとして使う。
 
 ```text
 PREVIEW_DOMAIN=preview.example.com
@@ -34,26 +34,17 @@ tech  -> https://tech.preview.example.com/
 daily -> https://daily.preview.example.com/
 ```
 
-DNSは`*.preview.example.com`のwildcardを想定する。TLS、wildcard certificate、DNS-01、Cloudflare、Tailscale、Caddy/Traefik/Nginx等はpreview ingressの責務であり、hugo-cmsへ証明書秘密鍵やDNS provider credentialを持たせることを必須にしない。
+DNSは`*.preview.example.com`のwildcardを想定する。TLS、DNS-01、Cloudflare、Tailscale、Caddy/Traefik/Nginx等はpreview ingressの責務であり、hugo-cmsへ証明書秘密鍵やDNS provider credentialを持たせることを必須にしない。
 
-### 閲覧者認可
+wildcard DNSやHost validationは閲覧者認可ではない。preview ingressはTailscale等のprivate network内に置くか、Internet reachableならCloudflare Access等の独立viewer authenticationで保護する。CMS session cookieはpreview subdomainへ共有しない。
 
-wildcard DNSやHost validationは閲覧者認可ではない。Local Live Previewは未公開contentとrepository由来JavaScriptを配信し得るため、preview ingressは次のいずれかで保護する。
-
-- Tailscale等のprivate networkからのみ到達可能にする
-- Internet reachableの場合はCloudflare Access等のpreview専用viewer authenticationを使う
-
-CMS session cookieを`*.preview.example.com`へ共有しない。preview hostname requestはCMS session middlewareより前で処理する。
-
-## 設定契約
+## 設定 / Host routing
 
 ```env
 LOCAL_LIVE_PREVIEW_ENABLED=false
 PREVIEW_DOMAIN=preview.example.com
 PREVIEW_SCHEME=https
 ```
-
-Site Registryではsite単位でoverrideできる。
 
 ```yaml
 sites:
@@ -65,15 +56,9 @@ sites:
         enabled: true
 ```
 
-有効siteのIDはlowercase DNS labelでなければならない。`<site-id>.<preview-domain>`全体も253文字以内の有効なDNS名である必要がある。
+有効site IDはlowercase DNS labelで、`<site-id>.<preview-domain>`全体も253文字以内の有効DNS名でなければならない。
 
-HTTPSではport省略または`:443`、HTTPではport省略または`:80`だけを受け付ける。non-standard external portは初期契約ではサポートしない。
-
-## Host routing
-
-HTTP `Host`を`ResolveLocalPreviewHost`へ渡し、Site Registryに登録済みかつLocal Live Previewが有効なsiteだけへ解決する。
-
-preview namespaceに属するinvalid/unknown HostはCMS admin routeへfall throughさせず拒否する。Hostからrepository path、generator command、internal portを生成しない。
+HTTPSではport省略または`:443`、HTTPではport省略または`:80`だけを許可する。preview namespace内のinvalid/unknown HostはCMS admin routeへfall throughさせない。HostはSite Registry lookupにだけ使い、repository path、command、internal portへ変換しない。
 
 ## Hugo process lifecycle
 
@@ -84,10 +69,10 @@ stopped -> starting -> ready -> stopping -> stopped
                  \-> failed <-/
 ```
 
-- 最初のpreview requestでlazy start
+- preview hostnameへの最初のrequestでlazy start
 - `127.0.0.1`だけへbind
 - internal port rangeは`14100-14999`
-- OS上のport availabilityをprobeし、bind/start raceでは有限回retry
+- port probe後のbind raceでは有限回retry
 - child environmentはgenerator allowlistのみ
 - CMS shutdown開始後は新規lazy startを拒否
 - HTTP server drain後にchild processを停止
@@ -121,13 +106,13 @@ https://tech.preview.example.com/css/main.css
   -> http://127.0.0.1:<internal-port>/css/main.css
 ```
 
-proxyはexternal Hostを保持し、`X-Forwarded-Host` / `X-Forwarded-Proto`を再構成する。内部`127.0.0.1:<port>` / `localhost:<port>`を指すabsolute `Location`だけをexternal preview originへ書き換える。HTTP Upgradeを透過してLiveReload WebSocketを通す。
+external Hostを保持し、`X-Forwarded-Host` / `X-Forwarded-Proto`を再構成する。内部loopbackを指すabsolute `Location`だけをexternal preview originへ書き換え、HTTP Upgradeを透過してLiveReload WebSocketを通す。
 
 ## Phase 3: shadow content workspace
 
 ### 目的
 
-editorの250ms debounce更新をproduction working treeへ直接書かず、CMS管理の一時content directoryへ反映する。
+editorの約250ms debounce更新をproduction working treeへ直接書かず、CMS管理の一時content directoryへ反映する。
 
 ```text
 Editor input
@@ -138,11 +123,11 @@ Editor input
   -> rebuild / LiveReload
 ```
 
-既存の3秒autosaveは保存機能として残るが、Local Live Previewの更新経路自体はGit working treeへ書かない。
+既存の3秒autosaveは保存機能として残るが、Local Live Previewのupdate経路自体はGit working tree/index/refへ書かない。
 
-### workspace構成
+### workspace
 
-初回update時にsiteの`content_dir`全体を一時directoryへmirrorする。
+初回update時にsiteの`content_dir`全体をOS temporary directoryへmirrorする。
 
 ```text
 OS temporary directory/
@@ -152,51 +137,49 @@ OS temporary directory/
         ... mirrored site content ...
 ```
 
-Hugoのworking directory/source rootは元repositoryのまま維持するため、次は元repoから使用する。
+Hugoのworking directory/source rootは元repositoryのまま維持する。Hugo config、theme/layout、static、assets、modulesは元repoから読み、`--contentDir`だけをshadow directoryのabsolute pathへ差し替える。
 
-- Hugo config
-- theme / layout
-- static
-- assets
-- modules
+workspaceは`PREVIEW_STATE_DIR`へ永続化しない。session releaseまたはCMS shutdown時に削除する。
 
-`--contentDir`だけをshadow directoryのabsolute pathへ差し替える。これにより未保存contentとrepositoryのsite構造を分離する。
-
-workspaceは`PREVIEW_STATE_DIR`へ永続化しない。CMS processごとのephemeral stateであり、session releaseまたはCMS shutdown時に削除する。
-
-### update ordering
+### editor update ordering
 
 browserはLocal Preview専用session IDと単調増加`revision`を送る。
 
 - `revision == 0`は拒否
-- server側の現在revision以下のupdateはno-op
-- HTTP response順が逆転しても古いrequestは新しい内容を上書きしない
-- 対象記事はatomic replacementする
+- serverの現在revision以下のupdateはno-op
+- response順が逆転しても古いrequestは新しい内容を上書きしない
+- 対象記事はtemporary fileからreplaceする
+
+### content resource同期
+
+初回mirrorにはarticle bundle内のpage resourceも含まれる。workspace作成後にCMS media APIでcontent directory配下へupload/deleteしたresourceは、active shadow workspaceへ同じ変更を同期する。
+
+static配下はHugoが元repositoryを直接参照するためshadow同期しない。media本体の保存が成功した後にpreview-only同期が失敗した場合、media APIを失敗扱いにはせずserver logへ残す。
 
 ### session競合
 
 初期実装では**同一siteにつきactive Local Live Preview sessionは1つ**とする。
 
-- 同じsiteを別tab/sessionからupdate -> `409 Conflict`
+- 同一siteへの別tab/session update -> `409 Conflict`
 - active sessionと異なるarticle path -> conflict
-- 別siteは独立workspaceを持てる
+- 別siteは独立workspaceを利用可能
 - stale tabは別tabのworkspaceをreleaseできない
 
-site/article切替では、browserがin-flight update完了を待ってからreleaseする。serverはHugo processを先に停止し、その後shadow directoryを削除する。
+article/site切替ではbrowserがin-flight update完了を待ってreleaseする。serverはHugo processを先に停止し、その後shadow directoryを削除する。
+
+ブラウザtabを切替操作なしで閉じた場合の確実なlease解放はPhase 4の停止UI/lease運用で扱う。それまではCMS shutdownで全workspaceをcleanupする。
 
 ### filesystem境界
 
-- article pathは既存`SafeJoin`境界で検証
-- shadow content copyではsymlinkを拒否
+- article/resource pathは既存`SafeJoin`境界で検証
+- shadow initial copyではsymlinkを拒否
 - regular fileだけをmirror
-- target articleはtemporary fileからreplace
 - production contentはLocal Preview updateによって変更しない
+- site IDとsession IDは事前validation済みの値だけをworkspace pathに使用する
 
-### 現時点の制約
+### Hugo Modules
 
-初回mirror後に**content directory内へ新規作成されたpage resource**（例: article bundleへ後からuploadした画像）は自動mirrorしない。既存resourceは初回mirrorに含まれる。Phase 3はまずeditor本文/front matterの未保存反映を対象とし、必要ならmedia upload/delete連携を後続で追加する。
-
-また、Hugo Modulesで`content`をcustom mountしているsiteはlegacy `contentDir`とは異なる解決経路を使う場合がある。実blog repositoryでのsmoke test後、必要ならmount-awareな方式を追加する。
+Hugo Modulesで`content`をcustom mountしているsiteはlegacy `contentDir`とは異なる解決経路を使う場合がある。実blog repositoryでのsmoke test後、必要ならmount-aware方式を追加する。
 
 ## API
 
@@ -205,8 +188,6 @@ site/article切替では、browserがin-flight update完了を待ってからrel
 ```text
 POST /admin/api/preview/local
 ```
-
-主なrequest fields:
 
 ```json
 {
@@ -219,7 +200,7 @@ POST /admin/api/preview/local
 }
 ```
 
-初回updateでworkspaceを作成した場合、保存済みcontentを使っていた既存Hugo processを一度停止する。次のpreview hostname requestがshadow `contentDir`でHugoをlazy startする。その後のupdateは同じdirectoryを書き換えるためHugo watcherが再buildする。
+初回updateでworkspaceを作った場合、保存済みcontentを使っていた既存Hugo processを一度停止する。次のpreview hostname requestでshadow `contentDir`を使ってlazy startし、その後はHugo watcherが変更を拾う。
 
 ### release
 
@@ -227,14 +208,13 @@ POST /admin/api/preview/local
 POST /admin/api/preview/local/release
 ```
 
-release時はHugo process停止後にworkspaceを削除する。次のpreview requestはactive shadow sessionがなければ保存済みrepository contentを使用する。
+release時はHugo process停止後にworkspaceを削除する。active shadow sessionがなければ次のpreview requestは保存済みrepository contentを使う。
 
 ## Phase 4への契約
 
-Phase 4は以下を実装する。
-
-- Local Live Preview表示/新規tab導線
-- starting/ready/failed状態表示
+- Local Live Previewを開く/新規tab導線
+- starting / ready / failed状態表示
+- Local Previewの明示停止とstale session recovery/lease方針
 - private network/Tailscale運用例
 - wildcard DNS / TLS ingress構成例
 - Deployment Previewとの役割差のUI明記
