@@ -16,10 +16,12 @@ import (
 const DefaultLocalPreviewLeaseTTL = 2 * time.Minute
 
 var (
-	ErrLocalPreviewSessionConflict = errors.New("another local preview session is already active for this site")
-	ErrLocalPreviewSessionMismatch = errors.New("local preview session article does not match request")
-	ErrLocalPreviewSessionNotFound = errors.New("local preview session is not active")
-	ErrLocalPreviewSessionNotStale = errors.New("local preview session is still active")
+	ErrLocalPreviewSessionConflict   = errors.New("another local preview session is already active for this site")
+	ErrLocalPreviewSessionMismatch   = errors.New("local preview session article does not match request")
+	ErrLocalPreviewSessionNotFound   = errors.New("local preview session is not active")
+	ErrLocalPreviewSessionNotStale   = errors.New("local preview session is still active")
+	ErrLocalPreviewSessionExpired    = errors.New("local preview session lease has expired")
+	ErrLocalPreviewSessionReclaiming = errors.New("local preview session is being reclaimed")
 )
 
 // LocalPreviewWorkspace is the active unsaved-content workspace for one site.
@@ -34,17 +36,33 @@ type LocalPreviewWorkspace struct {
 	LastSeenAt  time.Time
 }
 
+// LocalPreviewReclaim is an opaque ownership token for reclaiming one stale
+// workspace. Callers must either finish or cancel the claim before another
+// session for the same site can be created.
+type LocalPreviewReclaim struct {
+	siteID  string
+	draftID string
+	token   uint64
+}
+
+type localPreviewReclaimState struct {
+	draftID string
+	token   uint64
+}
+
 // LocalPreviewWorkspaceManager owns ephemeral shadow content directories. The
 // original repository remains the Hugo source root for configuration, theme,
 // layouts, static files and assets; only contentDir is redirected to this
 // workspace.
 type LocalPreviewWorkspaceManager struct {
-	root     string
-	mu       sync.Mutex
-	sessions map[string]LocalPreviewWorkspace
-	closed   bool
-	leaseTTL time.Duration
-	now      func() time.Time
+	root             string
+	mu               sync.Mutex
+	sessions         map[string]LocalPreviewWorkspace
+	reclaiming       map[string]localPreviewReclaimState
+	nextReclaimToken uint64
+	closed           bool
+	leaseTTL         time.Duration
+	now              func() time.Time
 }
 
 func NewLocalPreviewWorkspaceManager(root string) (*LocalPreviewWorkspaceManager, error) {
@@ -60,10 +78,11 @@ func NewLocalPreviewWorkspaceManager(root string) (*LocalPreviewWorkspaceManager
 		return nil, fmt.Errorf("create local preview workspace root: %w", err)
 	}
 	return &LocalPreviewWorkspaceManager{
-		root:     absRoot,
-		sessions: make(map[string]LocalPreviewWorkspace),
-		leaseTTL: DefaultLocalPreviewLeaseTTL,
-		now:      time.Now,
+		root:       absRoot,
+		sessions:   make(map[string]LocalPreviewWorkspace),
+		reclaiming: make(map[string]localPreviewReclaimState),
+		leaseTTL:   DefaultLocalPreviewLeaseTTL,
+		now:        time.Now,
 	}, nil
 }
 
@@ -108,10 +127,15 @@ func (m *LocalPreviewWorkspaceManager) staleLocked(workspace LocalPreviewWorkspa
 	return now.Sub(workspace.LastSeenAt) > m.leaseTTL
 }
 
+func (m *LocalPreviewWorkspaceManager) reclaimingLocked(siteID string) bool {
+	_, ok := m.reclaiming[siteID]
+	return ok
+}
+
 // Update creates the site's workspace on the first request and applies the
 // newest editor revision. Older in-flight HTTP requests become harmless no-ops
-// instead of overwriting newer editor state. Every request from the owner also
-// renews its lease, including a stale revision that arrives out of order.
+// instead of overwriting newer editor state. Requests renew a lease only while
+// it is still valid; an expired session must be reclaimed before it can restart.
 func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftID, articlePath string, revision uint64, content []byte) (LocalPreviewWorkspace, bool, bool, error) {
 	if err := validateDraftID(draftID); err != nil {
 		return LocalPreviewWorkspace{}, false, false, err
@@ -140,11 +164,17 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 	if m.closed {
 		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("local preview workspace manager is closed")
 	}
+	if m.reclaimingLocked(runtime.ID) {
+		return LocalPreviewWorkspace{}, false, false, ErrLocalPreviewSessionReclaiming
+	}
 	now := m.currentTimeLocked()
 
 	workspace, exists := m.sessions[runtime.ID]
 	created := false
 	if exists {
+		if m.staleLocked(workspace, now) {
+			return LocalPreviewWorkspace{}, false, false, ErrLocalPreviewSessionExpired
+		}
 		if workspace.DraftID != draftID {
 			return LocalPreviewWorkspace{}, false, false, ErrLocalPreviewSessionConflict
 		}
@@ -192,9 +222,9 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 	return workspace, created, true, nil
 }
 
-// Heartbeat renews the lease without changing content. A browser tab that was
-// temporarily throttled can renew its own expired lease as long as nobody has
-// reclaimed the workspace yet.
+// Heartbeat renews a live lease without changing content. Once the lease has
+// expired, the browser must reclaim/restart instead of reviving a session whose
+// Hugo process may already be stopping.
 func (m *LocalPreviewWorkspaceManager) Heartbeat(siteID, draftID string) (LocalPreviewWorkspace, error) {
 	if err := validateDraftID(draftID); err != nil {
 		return LocalPreviewWorkspace{}, err
@@ -204,6 +234,9 @@ func (m *LocalPreviewWorkspaceManager) Heartbeat(siteID, draftID string) (LocalP
 	if m.closed {
 		return LocalPreviewWorkspace{}, fmt.Errorf("local preview workspace manager is closed")
 	}
+	if m.reclaimingLocked(siteID) {
+		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionReclaiming
+	}
 	workspace, ok := m.sessions[siteID]
 	if !ok {
 		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionNotFound
@@ -211,7 +244,11 @@ func (m *LocalPreviewWorkspaceManager) Heartbeat(siteID, draftID string) (LocalP
 	if workspace.DraftID != draftID {
 		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionConflict
 	}
-	workspace.LastSeenAt = m.currentTimeLocked()
+	now := m.currentTimeLocked()
+	if m.staleLocked(workspace, now) {
+		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionExpired
+	}
+	workspace.LastSeenAt = now
 	m.sessions[siteID] = workspace
 	return workspace, nil
 }
@@ -252,8 +289,11 @@ func (m *LocalPreviewWorkspaceManager) SyncContentResource(runtime config.SiteRu
 	if m.closed {
 		return false, fmt.Errorf("local preview workspace manager is closed")
 	}
+	if m.reclaimingLocked(runtime.ID) {
+		return false, nil
+	}
 	workspace, active := m.sessions[runtime.ID]
-	if !active {
+	if !active || m.staleLocked(workspace, m.currentTimeLocked()) {
 		return false, nil
 	}
 	target := SafeJoin(workspace.ContentDir, "", relative)
@@ -292,6 +332,9 @@ func (m *LocalPreviewWorkspaceManager) Release(siteID, draftID string) (bool, er
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.reclaimingLocked(siteID) {
+		return false, ErrLocalPreviewSessionReclaiming
+	}
 
 	workspace, ok := m.sessions[siteID]
 	if !ok {
@@ -303,20 +346,75 @@ func (m *LocalPreviewWorkspaceManager) Release(siteID, draftID string) (bool, er
 	return m.removeWorkspaceLocked(siteID, workspace)
 }
 
-// ReleaseStale removes an expired workspace without requiring its previous
-// document-scoped owner ID. The stale check is repeated under the manager lock
-// so a heartbeat racing with recovery prevents accidental reclamation.
-func (m *LocalPreviewWorkspaceManager) ReleaseStale(siteID string) (bool, error) {
+// ClaimStale atomically marks an expired workspace as reclaiming. While the
+// claim is held, heartbeat/update/release/resource-sync operations for the same
+// site cannot mutate or revive the session. This claim must be acquired before
+// stopping Hugo so a racing heartbeat cannot leave a fresh session with a
+// stopped process.
+func (m *LocalPreviewWorkspaceManager) ClaimStale(siteID string) (LocalPreviewReclaim, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.closed {
+		return LocalPreviewReclaim{}, false, fmt.Errorf("local preview workspace manager is closed")
+	}
+	if m.reclaimingLocked(siteID) {
+		return LocalPreviewReclaim{}, false, ErrLocalPreviewSessionReclaiming
+	}
 	workspace, ok := m.sessions[siteID]
+	if !ok {
+		return LocalPreviewReclaim{}, false, nil
+	}
+	if !m.staleLocked(workspace, m.currentTimeLocked()) {
+		return LocalPreviewReclaim{}, false, ErrLocalPreviewSessionNotStale
+	}
+	m.nextReclaimToken++
+	state := localPreviewReclaimState{draftID: workspace.DraftID, token: m.nextReclaimToken}
+	m.reclaiming[siteID] = state
+	return LocalPreviewReclaim{siteID: siteID, draftID: workspace.DraftID, token: state.token}, true, nil
+}
+
+// FinishReclaim removes the workspace owned by a previously acquired stale
+// claim. The token and draft ID prevent an old cleanup attempt from deleting a
+// different session if the lifecycle changes in the future.
+func (m *LocalPreviewWorkspaceManager) FinishReclaim(claim LocalPreviewReclaim) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state, ok := m.reclaiming[claim.siteID]
+	if !ok || state.token != claim.token || state.draftID != claim.draftID {
+		return false, ErrLocalPreviewSessionReclaiming
+	}
+	defer delete(m.reclaiming, claim.siteID)
+	workspace, ok := m.sessions[claim.siteID]
 	if !ok {
 		return false, nil
 	}
-	if !m.staleLocked(workspace, m.currentTimeLocked()) {
-		return false, ErrLocalPreviewSessionNotStale
+	if workspace.DraftID != claim.draftID {
+		return false, ErrLocalPreviewSessionConflict
 	}
-	return m.removeWorkspaceLocked(siteID, workspace)
+	return m.removeWorkspaceLocked(claim.siteID, workspace)
+}
+
+// CancelReclaim releases a stale claim without removing the workspace. It is
+// used when Hugo cannot be stopped; the expired session remains stale and can
+// be reclaimed again, but it still cannot be revived by heartbeat/update.
+func (m *LocalPreviewWorkspaceManager) CancelReclaim(claim LocalPreviewReclaim) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state, ok := m.reclaiming[claim.siteID]
+	if ok && state.token == claim.token && state.draftID == claim.draftID {
+		delete(m.reclaiming, claim.siteID)
+	}
+}
+
+// ReleaseStale atomically claims and removes an expired workspace. Callers that
+// must stop the Hugo process before deleting the workspace should use
+// ClaimStale followed by FinishReclaim instead.
+func (m *LocalPreviewWorkspaceManager) ReleaseStale(siteID string) (bool, error) {
+	claim, claimed, err := m.ClaimStale(siteID)
+	if err != nil || !claimed {
+		return false, err
+	}
+	return m.FinishReclaim(claim)
 }
 
 func (m *LocalPreviewWorkspaceManager) removeWorkspaceLocked(siteID string, workspace LocalPreviewWorkspace) (bool, error) {
@@ -341,6 +439,7 @@ func (m *LocalPreviewWorkspaceManager) Shutdown() error {
 	}
 	m.closed = true
 	m.sessions = make(map[string]LocalPreviewWorkspace)
+	m.reclaiming = make(map[string]localPreviewReclaimState)
 	root := m.root
 	m.mu.Unlock()
 	if err := os.RemoveAll(root); err != nil {
