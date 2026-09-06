@@ -98,7 +98,7 @@ describe("draft IDs", () => {
 });
 
 describe("preview API contracts", () => {
-    it("scopes Markdown and deployment operations to the selected site", async () => {
+    it("scopes Markdown, local, and deployment operations to the selected site", async () => {
         const calls = [];
         globalThis.fetch = async (url, options = {}) => {
             calls.push({ url, options });
@@ -111,6 +111,8 @@ describe("preview API contracts", () => {
         API.setCurrentSite("docs site");
         const article = { path: "posts/one.md", body: "# Draft", frontmatter: { title: "Draft" } };
         await API.renderMarkdownPreview(article);
+        await API.updateLocalPreviewContent(article, "local-session", 7);
+        await API.releaseLocalPreviewContent("local-session");
         await API.triggerPreviewDeployment(article.path, "draft/id");
         await API.fetchPreviewDeployment("draft/id");
         await API.retryPreviewDeployment("draft/id");
@@ -119,14 +121,36 @@ describe("preview API contracts", () => {
 
         assert.equal(calls[1].url, "/admin/api/preview/markdown?site=docs+site");
         assert.deepEqual(JSON.parse(calls[1].options.body), article);
-        assert.equal(calls[2].url, "/admin/api/preview/deployments?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[2].options.body), { path: article.path, draft_id: "draft/id" });
-        assert.equal(calls[3].url, "/admin/api/preview/deployments/draft%2Fid?site=docs+site");
-        assert.equal(calls[4].url, "/admin/api/preview/deployments/draft%2Fid/retry?site=docs+site");
-        assert.equal(calls[5].url, "/admin/api/preview/deployments/draft%2Fid/discard?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[6].options.body), { path: article.path, draft_id: "draft/id" });
+        assert.equal(calls[2].url, "/admin/api/preview/local?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[2].options.body), { ...article, draft_id: "local-session", revision: 7 });
+        assert.equal(calls[3].url, "/admin/api/preview/local/release?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[3].options.body), { draft_id: "local-session" });
+        assert.equal(calls[4].url, "/admin/api/preview/deployments?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[4].options.body), { path: article.path, draft_id: "draft/id" });
+        assert.equal(calls[5].url, "/admin/api/preview/deployments/draft%2Fid?site=docs+site");
+        assert.equal(calls[6].url, "/admin/api/preview/deployments/draft%2Fid/retry?site=docs+site");
+        assert.equal(calls[7].url, "/admin/api/preview/deployments/draft%2Fid/discard?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[8].options.body), { path: article.path, draft_id: "draft/id" });
         calls.slice(1).forEach(call => {
             assert.equal(call.options.headers["X-CMS-Site"], "docs site");
         });
+    });
+
+    it("preserves conflict status from local preview API errors", async () => {
+        globalThis.fetch = async (url) => {
+            if (url === "/admin/api/csrf-token") {
+                return { ok: true, status: 200, json: async () => ({ csrf_token: "csrf" }) };
+            }
+            return {
+                ok: false,
+                status: 409,
+                json: async () => ({ message: "another local preview session is already active for this site" }),
+            };
+        };
+
+        await assert.rejects(
+            () => API.updateLocalPreviewContent({ path: "one.md", content: "draft" }, "local-session", 1),
+            error => error.status === 409 && /another local preview session/.test(error.message),
+        );
     });
 });
