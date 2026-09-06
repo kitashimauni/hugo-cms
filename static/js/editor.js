@@ -30,10 +30,6 @@ function draftStorageKey(siteID, path) {
     return `hugo-cms:draft:${siteID}:${path}`;
 }
 
-function localPreviewStorageKey(siteID, path) {
-    return `hugo-cms:local-preview:${siteID}:${path}`;
-}
-
 export function createDraftUUID(cryptoProvider = window.crypto) {
     if (typeof cryptoProvider?.randomUUID === 'function') {
         return cryptoProvider.randomUUID();
@@ -62,15 +58,11 @@ export function getOrCreateDraftID(siteID, path, storage = window.sessionStorage
     return draftID;
 }
 
-function getOrCreateLocalPreviewSessionID(siteID, path, storage = window.sessionStorage, createUUID = createDraftUUID) {
-    if (!siteID || !path) return "";
-    const key = localPreviewStorageKey(siteID, path);
-    let sessionID = storage.getItem(key);
-    if (!sessionID) {
-        sessionID = createUUID();
-        storage.setItem(key, sessionID);
-    }
-    return sessionID;
+// Local Preview ownership is scoped to this browser document/tab. Do not use
+// sessionStorage here: duplicated tabs can inherit the same sessionStorage and
+// would then bypass the server's same-site session conflict boundary.
+export function createLocalPreviewSessionID(createUUID = createDraftUUID) {
+    return createUUID();
 }
 
 export function getDraftID() {
@@ -256,8 +248,7 @@ export async function refreshLocalLivePreview() {
     cancelLocalPreviewTimer();
 
     const requestPath = currentPath;
-    const siteID = API.getCurrentSite();
-    const sessionID = localPreviewSessionID || getOrCreateLocalPreviewSessionID(siteID, requestPath);
+    const sessionID = localPreviewSessionID || createLocalPreviewSessionID();
     if (!sessionID) return null;
 
     if (localPreviewSessionPath && localPreviewSessionPath !== requestPath) {
@@ -300,14 +291,17 @@ export async function releaseLocalLivePreview() {
     await Promise.allSettled(Array.from(localPreviewInflight));
     try {
         const result = await API.releaseLocalPreviewContent(sessionID);
+        resetLocalPreviewClientState();
         return result?.released === true;
     } catch (e) {
-        // A different tab may own the site's active session. Our stale tab must
-        // not release that workspace, but it can safely forget its local state.
-        if (e?.status !== 409) throw e;
-        return false;
-    } finally {
-        resetLocalPreviewClientState();
+        // 409 proves this document no longer owns the site's active workspace.
+        // Network/5xx failures are ambiguous, so retain the session ID and
+        // revision to allow a later release/update to continue safely.
+        if (e?.status === 409) {
+            resetLocalPreviewClientState();
+            return false;
+        }
+        throw e;
     }
 }
 
@@ -456,9 +450,24 @@ export async function deleteFile(refreshListCb) {
         // queued saves for this path from starting before DELETE.
         await saveQueue;
         await API.deleteArticle(pathToDelete);
-        await releaseLocalLivePreview();
+        // Production deletion is committed at this point. Preview cleanup is a
+        // separate best-effort operation and must never re-enable autosave for
+        // the deleted article.
         deleted = true;
-        UI.showToast("Article deleted", "success");
+
+        let previewCleanupError = null;
+        try {
+            await releaseLocalLivePreview();
+        } catch (e) {
+            previewCleanupError = e;
+            console.error("[LocalPreview] Cleanup after article deletion failed:", e);
+        }
+
+        if (previewCleanupError) {
+            UI.showToast("Article deleted, but Local Live Preview cleanup failed: " + previewCleanupError.message, "warning");
+        } else {
+            UI.showToast("Article deleted", "success");
+        }
 
         if (currentPath === pathToDelete) {
             cancelMarkdownPreview();
@@ -474,7 +483,11 @@ export async function deleteFile(refreshListCb) {
 
         if (refreshListCb) await refreshListCb();
     } catch (e) {
-        UI.showToast("Delete failed: " + e.message, "error");
+        if (deleted) {
+            UI.showToast("Article deleted, but refreshing the editor failed: " + e.message, "warning");
+        } else {
+            UI.showToast("Delete failed: " + e.message, "error");
+        }
     } finally {
         if (deletingPath === pathToDelete) {
             deletingPath = "";
