@@ -91,6 +91,9 @@ func TestResolveLocalPreviewHostRejectsUntrustedHosts(t *testing.T) {
 		"tech.example.com",
 		"tech.preview.example.com/path",
 		"tech.preview.example.com@evil.example",
+		"tech.preview.example.com:evil",
+		"tech.preview.example.com:0",
+		"tech.preview.example.com:65536",
 	} {
 		t.Run(host, func(t *testing.T) {
 			if _, err := ResolveLocalPreviewHost(host); err == nil {
