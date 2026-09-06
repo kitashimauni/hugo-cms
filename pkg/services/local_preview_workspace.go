@@ -156,6 +156,66 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 	return workspace, created, true, nil
 }
 
+// SyncContentResource mirrors a content-directory resource change made through
+// the normal CMS media API into an already-active shadow workspace. Static
+// resources do not need this because Hugo still uses the original source root.
+func (m *LocalPreviewWorkspaceManager) SyncContentResource(runtime config.SiteRuntime, repoPath string, deleted bool) (bool, error) {
+	if runtime.ID == "" {
+		return false, fmt.Errorf("local preview site ID is required")
+	}
+	sourceContentDir := SafeJoin(runtime.RepoPath, "", runtime.ContentDir)
+	if sourceContentDir == "" {
+		return false, fmt.Errorf("invalid local preview content directory")
+	}
+	sourcePath := SafeJoin(runtime.RepoPath, "", filepath.Clean(strings.TrimSpace(repoPath)))
+	if sourcePath == "" {
+		return false, fmt.Errorf("invalid local preview resource path")
+	}
+	relative, err := filepath.Rel(sourceContentDir, sourcePath)
+	if err != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		// The media file is outside contentDir (for example static/). Hugo still
+		// reads it directly from the original repository, so no shadow sync is
+		// required.
+		return false, nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return false, fmt.Errorf("local preview workspace manager is closed")
+	}
+	workspace, active := m.sessions[runtime.ID]
+	if !active {
+		return false, nil
+	}
+	target := SafeJoin(workspace.ContentDir, "", relative)
+	if target == "" {
+		return false, fmt.Errorf("invalid local preview resource target")
+	}
+	if deleted {
+		if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+			return false, fmt.Errorf("remove local preview content resource: %w", err)
+		}
+		return true, nil
+	}
+
+	info, err := os.Lstat(sourcePath)
+	if err != nil {
+		return false, fmt.Errorf("stat local preview content resource: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false, fmt.Errorf("local preview content resource must be a regular file")
+	}
+	content, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return false, fmt.Errorf("read local preview content resource: %w", err)
+	}
+	if err := writeLocalPreviewFileAtomic(target, content); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // Release is idempotent for a site without an active workspace. A stale tab is
 // never allowed to release another tab's active session.
 func (m *LocalPreviewWorkspaceManager) Release(siteID, draftID string) (bool, error) {
@@ -172,10 +232,11 @@ func (m *LocalPreviewWorkspaceManager) Release(siteID, draftID string) (bool, er
 	if workspace.DraftID != draftID {
 		return false, ErrLocalPreviewSessionConflict
 	}
-	delete(m.sessions, siteID)
-	if err := os.RemoveAll(filepath.Dir(workspace.ContentDir)); err != nil {
-		return true, fmt.Errorf("remove local preview workspace: %w", err)
+	workspaceRoot := filepath.Dir(workspace.ContentDir)
+	if err := os.RemoveAll(workspaceRoot); err != nil {
+		return false, fmt.Errorf("remove local preview workspace: %w", err)
 	}
+	delete(m.sessions, siteID)
 	return true, nil
 }
 
