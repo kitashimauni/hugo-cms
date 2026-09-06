@@ -92,9 +92,9 @@ func UpdateLocalPreviewContent(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":    "updated",
-		"applied":   applied,
-		"revision":  workspace.Revision,
+		"status":      "updated",
+		"applied":     applied,
+		"revision":    workspace.Revision,
 		"preview_url": runtime.LocalPreview.URL,
 	})
 }
@@ -116,6 +116,26 @@ func ReleaseLocalPreviewContent(c *gin.Context) {
 		ErrorInternal(c, "Local preview workspace is unavailable")
 		return
 	}
+	workspace, active := workspaceManager.Active(runtime.ID)
+	if !active {
+		c.JSON(http.StatusOK, gin.H{"status": "released", "released": false})
+		return
+	}
+	if workspace.DraftID != req.DraftID {
+		ErrorConflict(c, services.ErrLocalPreviewSessionConflict.Error())
+		return
+	}
+
+	// Hugo may be watching files inside the shadow directory. Stop it before
+	// removing contentDir so shutdown cannot race filesystem cleanup.
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
+	cancel()
+	if stopErr != nil {
+		ErrorInternal(c, "Failed to stop Local Live Preview process")
+		return
+	}
+
 	released, err := workspaceManager.Release(runtime.ID, req.DraftID)
 	if err != nil {
 		if errors.Is(err, services.ErrLocalPreviewSessionConflict) {
@@ -125,15 +145,5 @@ func ReleaseLocalPreviewContent(c *gin.Context) {
 		ErrorBadRequest(c, err.Error())
 		return
 	}
-	if released {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
-		stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
-		cancel()
-		if stopErr != nil {
-			ErrorInternal(c, "Failed to stop Local Live Preview process")
-			return
-		}
-	}
-
 	c.JSON(http.StatusOK, gin.H{"status": "released", "released": released})
 }
