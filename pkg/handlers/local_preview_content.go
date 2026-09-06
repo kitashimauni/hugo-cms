@@ -70,7 +70,10 @@ func UpdateLocalPreviewContent(c *gin.Context) {
 	workspace, created, applied, err := workspaceManager.Update(runtime, req.DraftID, req.Path, req.Revision, finalContent)
 	if err != nil {
 		switch {
-		case errors.Is(err, services.ErrLocalPreviewSessionConflict), errors.Is(err, services.ErrLocalPreviewSessionMismatch):
+		case errors.Is(err, services.ErrLocalPreviewSessionConflict),
+			errors.Is(err, services.ErrLocalPreviewSessionMismatch),
+			errors.Is(err, services.ErrLocalPreviewSessionExpired),
+			errors.Is(err, services.ErrLocalPreviewSessionReclaiming):
 			ErrorConflict(c, err.Error())
 		default:
 			ErrorBadRequest(c, err.Error())
@@ -137,7 +140,7 @@ func ReleaseLocalPreviewContent(c *gin.Context) {
 
 	released, err := workspaceManager.Release(runtime.ID, req.DraftID)
 	if err != nil {
-		if errors.Is(err, services.ErrLocalPreviewSessionConflict) {
+		if errors.Is(err, services.ErrLocalPreviewSessionConflict) || errors.Is(err, services.ErrLocalPreviewSessionReclaiming) {
 			ErrorConflict(c, err.Error())
 			return
 		}
