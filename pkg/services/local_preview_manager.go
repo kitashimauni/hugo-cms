@@ -24,6 +24,8 @@ const (
 	localPreviewStderrLimit           = 64 << 10
 )
 
+var errLocalPreviewShuttingDown = errors.New("local preview manager is shutting down")
+
 type localPreviewCommandFactory func(context.Context, config.SiteRuntime, int, string) (*exec.Cmd, error)
 
 type managedLocalPreviewProcess struct {
@@ -111,9 +113,10 @@ func (b *cappedBuffer) String() string {
 type LocalPreviewManager struct {
 	lifecycle *LocalPreviewLifecycle
 
-	mu        sync.Mutex
-	processes map[string]*managedLocalPreviewProcess
-	siteLocks map[string]*sync.Mutex
+	mu           sync.Mutex
+	processes    map[string]*managedLocalPreviewProcess
+	siteLocks    map[string]*sync.Mutex
+	shuttingDown bool
 
 	commandFactory localPreviewCommandFactory
 	startupTimeout time.Duration
@@ -140,6 +143,18 @@ var defaultLocalPreviewManager = NewLocalPreviewManager(nil)
 
 func DefaultLocalPreviewManager() *LocalPreviewManager {
 	return defaultLocalPreviewManager
+}
+
+func (m *LocalPreviewManager) BeginShutdown() {
+	m.mu.Lock()
+	m.shuttingDown = true
+	m.mu.Unlock()
+}
+
+func (m *LocalPreviewManager) isShuttingDown() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.shuttingDown
 }
 
 func (m *LocalPreviewManager) siteLock(siteID string) *sync.Mutex {
@@ -182,6 +197,9 @@ func (m *LocalPreviewManager) Status(siteID string) (LocalPreviewProcessSlot, bo
 }
 
 func (m *LocalPreviewManager) EnsureReady(site config.SiteConfig) (LocalPreviewProcessSlot, error) {
+	if m.isShuttingDown() {
+		return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
+	}
 	if site.Preview.LocalPreview.Enabled == nil || !*site.Preview.LocalPreview.Enabled {
 		return LocalPreviewProcessSlot{}, fmt.Errorf("local preview is disabled for site %q", site.ID)
 	}
@@ -204,6 +222,10 @@ func (m *LocalPreviewManager) EnsureReady(site config.SiteConfig) (LocalPreviewP
 	lock.Lock()
 	defer lock.Unlock()
 
+	if m.isShuttingDown() {
+		return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
+	}
+
 	if slot, ok := m.lifecycle.Get(site.ID); ok {
 		process := m.process(site.ID)
 		switch slot.State {
@@ -224,6 +246,10 @@ func (m *LocalPreviewManager) EnsureReady(site config.SiteConfig) (LocalPreviewP
 
 	var lastErr error
 	for attempt := 1; attempt <= m.startAttempts; attempt++ {
+		if m.isShuttingDown() {
+			return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
+		}
+
 		slot, err := m.lifecycle.Reserve(site.ID, localPreviewPortAvailable)
 		if err != nil {
 			return LocalPreviewProcessSlot{}, err
@@ -238,6 +264,10 @@ func (m *LocalPreviewManager) EnsureReady(site config.SiteConfig) (LocalPreviewP
 			m.cleanupFailedSlotLocked(site.ID, process, err)
 			continue
 		}
+		if m.isShuttingDown() {
+			m.cleanupFailedSlotLocked(site.ID, process, errLocalPreviewShuttingDown)
+			return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
+		}
 
 		if err := m.waitUntilReady(process, slot.Port); err != nil {
 			lastErr = err
@@ -249,6 +279,10 @@ func (m *LocalPreviewManager) EnsureReady(site config.SiteConfig) (LocalPreviewP
 		if err != nil {
 			m.cleanupFailedSlotLocked(site.ID, process, err)
 			return LocalPreviewProcessSlot{}, err
+		}
+		if m.isShuttingDown() {
+			m.cleanupFailedSlotLocked(site.ID, process, errLocalPreviewShuttingDown)
+			return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
 		}
 		if process.exited() {
 			lastErr = process.processError()
@@ -433,6 +467,7 @@ func (m *LocalPreviewManager) Stop(ctx context.Context, siteID string) error {
 
 func (m *LocalPreviewManager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
+	m.shuttingDown = true
 	siteIDs := make([]string, 0, len(m.processes))
 	for siteID := range m.processes {
 		siteIDs = append(siteIDs, siteID)
@@ -565,6 +600,7 @@ func hugoLocalPreviewArgs(runtime config.SiteRuntime, port int, previewURL strin
 		"--renderToMemory",
 		"--buildDrafts",
 		"--buildFuture",
+		"--buildExpired",
 		"--watch",
 		"--noHTTPCache",
 	}, nil
