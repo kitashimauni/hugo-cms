@@ -186,7 +186,9 @@ sites:
     content_dir: content
     static_dir: static
     public_dir: public
-    hugo_server_port: "1314"
+    preview:
+      local_preview:
+        enabled: true
     snippet_paths:
       - .vscode/md.code-snippets
 
@@ -198,7 +200,9 @@ sites:
     content_dir: src
     static_dir: public-assets
     public_dir: _site
-    hugo_server_port: "1315"
+    preview:
+      local_preview:
+        enabled: false
     snippet_paths:
       - .vscode/md.code-snippets
 ```
@@ -244,7 +248,13 @@ CMSは設定読み込み時に、collection名・folder・path変数・`preview.
 
 ### Preview
 
-プレビューは、保存前の編集内容を安全に表示する「本文プレビュー」と、外部buildでテーマを含めて確認する「デプロイプレビュー」に分かれます。CMSはHugo/Eleventyのpreview processやreverse proxyを起動しません。
+プレビューは次の3段階で扱います。
+
+1. **本文プレビュー**: generatorを実行せず、保存前のMarkdownをsanitizeして即時表示する
+2. **Local Live Preview**: 実際のgenerator/theme/layout/shortcode/CSS/JSを使う編集中確認
+3. **デプロイプレビュー**: 外部buildで特定commitを公開前に最終確認する
+
+Issue #32 Phase 1ではLocal Live Previewの設定model、derived URL、Host validation、process lifecycle/port reservation基盤まで実装済みです。generator serverの実起動、reverse proxy、LiveReload、editor連携はPhase 2以降で実装します。
 
 Site Registryでサイトごとに設定します。
 
@@ -254,6 +264,8 @@ sites:
     repo_path: D:/sites/techblog
     preview:
       markdown:
+        enabled: true
+      local_preview:
         enabled: true
       deployment:
         provider: cloudflare_pages
@@ -266,14 +278,24 @@ sites:
 
 `markdown.enabled`は既定で`true`です。本文プレビューはGFMをsanitizeして表示し、Hugo shortcode、layout、サイト固有CSS/JavaScriptは再現しません。relative imageは記事bundle、root-relative imageは`static_dir`から解決し、既存の許可済みmediaだけを認証付きrouteで表示します。
 
+`local_preview.enabled`を省略した場合は`LOCAL_LIVE_PREVIEW_ENABLED`を継承します。有効なsiteには`PREVIEW_SCHEME`、site ID、`PREVIEW_DOMAIN`から`preview.local_preview.url`をderived valueとして生成します。Local Live Previewを有効にするsite IDはlowercase DNS labelである必要があり、生成後の`<site-id>.<preview-domain>`全体も253文字以内の有効なDNS名でなければなりません。
+
+Local Live Previewのwildcard DNS、TLS、DNS-01、Tailscale、外部reverse proxyはpreview ingress側の責務です。**wildcard DNSやHost validationは閲覧者認可ではありません。** Local Live Preview ingressは必ず、Tailscale等のprivate network内に置くか、Internet reachableな場合はCloudflare Access等の独立viewer authenticationで保護してください。CMSのsession cookieをpreview subdomainへ共有して認証に使う設計にはしません。
+
+詳細は[Local Live Preview設定ガイド](local-live-preview.md)と[Local Live Preview設計](../architecture/local-live-preview-design.md)を参照してください。
+
 `deployment.provider`を省略したサイトでも編集と本文プレビューは利用できます。`cloudflare_pages`を使う場合、`account_id`、`project_name`、`token_env`が必須です。`token_env`はtoken値ではなく、tokenを格納した環境変数名です。token値はYAMLへ書かず、browserにも返りません。
 
-`access_protected: true`は、Cloudflare Accessを運用側で設定済みであることをCMSへ申告する値です。CMSがAccess policyを作成するわけではありません。`false`では未公開contentがpublic previewに出る可能性をUIで警告します。
+`deployment.access_protected: true`は、Cloudflare Accessを運用側で設定済みであることをCMSへ申告する値です。CMSがAccess policyを作成するわけではありません。`false`では未公開contentがpublic deployment previewに出る可能性をUIで警告します。
 
 単一サイトを環境変数だけで設定する場合は次を使用できます。
 
 ```env
 MARKDOWN_PREVIEW_ENABLED=true
+LOCAL_LIVE_PREVIEW_ENABLED=true
+PREVIEW_DOMAIN=preview.example.com
+PREVIEW_SCHEME=https
+
 PREVIEW_DEPLOYMENT_PROVIDER=cloudflare_pages
 CLOUDFLARE_PAGES_ACCOUNT_ID=0123456789abcdef0123456789abcdef
 CLOUDFLARE_PAGES_PROJECT_NAME=techblog
@@ -289,7 +311,7 @@ PREVIEW_STATE_DIR=./data/preview-deployments
 
 | 項目 | 必須 | 説明 |
 |---|---:|---|
-| `id` | はい | サイトID。UI、API、draft state分離で使用 |
+| `id` | はい | サイトID。UI、API、draft state分離で使用。Local Live Preview有効時はlowercase DNS label制約も適用 |
 | `name` | いいえ | UI表示名。未指定時は`id` |
 | `repo_path` | はい | 対象リポジトリ |
 | `generator` | いいえ | `hugo`または`eleventy` |
@@ -298,8 +320,9 @@ PREVIEW_STATE_DIR=./data/preview-deployments
 | `static_dir` | いいえ | 静的ファイルのルート。デフォルト`static` |
 | `public_dir` | いいえ | build出力先。デフォルト`public` |
 | `preview.markdown.enabled` | いいえ | 安全な本文プレビュー。デフォルト`true` |
+| `preview.local_preview.enabled` | いいえ | Local Live Preview。省略時は`LOCAL_LIVE_PREVIEW_ENABLED` |
 | `preview.deployment.provider` | いいえ | 空または`cloudflare_pages` |
-| `preview.deployment.access_protected` | いいえ | Access設定済みの申告。デフォルト`false` |
+| `preview.deployment.access_protected` | いいえ | Deployment PreviewのAccess設定済み申告。デフォルト`false` |
 | `preview.deployment.cloudflare_pages.*` | provider使用時 | `account_id`、`project_name`、`token_env` |
 | `snippet_paths` | いいえ | スニペットファイル。相対パスは`repo_path`基準 |
 
@@ -335,7 +358,7 @@ sites:
 
 #### `MAX_UPLOAD_SIZE_MB`
 
-アップロード可能な最大ファイルサイズ (MB単位)。デフォルト: `10`
+アップロード可能なファイルサイズ (MB単位)。デフォルト: `10`
 
 ```env
 # 50MBまで許可
@@ -368,7 +391,7 @@ STATIC_MEDIA_DIR=
 
 ### 廃止したローカルpreview設定
 
-`PREVIEW_URL`、`HUGO_SERVER_PORT`、`HUGO_SERVER_BIND`およびSite Registryの同名項目は旧ローカルpreview用です。移行期間中に読み込める場合があっても本文/デプロイプpreviewでは使用されず、新規設定には追加しないでください。
+`PREVIEW_URL`、`HUGO_SERVER_PORT`、`HUGO_SERVER_BIND`およびSite Registryの同名項目はIssue #30以前のpath-prefix型ローカルpreview用です。新しいLocal Live Previewの公開URLやport管理には使用しません。新規設定では`LOCAL_LIVE_PREVIEW_ENABLED`、`PREVIEW_DOMAIN`、`PREVIEW_SCHEME`、`preview.local_preview.enabled`を使用してください。
 
 ### Git設定
 
