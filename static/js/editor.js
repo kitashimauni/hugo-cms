@@ -12,8 +12,15 @@ let deletingPath = "";
 let previewTimer = null;
 let previewController = null;
 let previewRevision = 0;
+let localPreviewTimer = null;
+let localPreviewRevision = 0;
+let localPreviewSessionID = "";
+let localPreviewSessionPath = "";
+let localPreviewConflictNotified = false;
+const localPreviewInflight = new Set();
 
 const PREVIEW_DEBOUNCE_MS = 180;
+const LOCAL_PREVIEW_DEBOUNCE_MS = 250;
 
 export function getCurrentPath() {
     return currentPath;
@@ -51,6 +58,13 @@ export function getOrCreateDraftID(siteID, path, storage = window.sessionStorage
     return draftID;
 }
 
+// Local Preview ownership is scoped to this browser document/tab. Do not use
+// sessionStorage here: duplicated tabs can inherit the same sessionStorage and
+// would then bypass the server's same-site session conflict boundary.
+export function createLocalPreviewSessionID(createUUID = createDraftUUID) {
+    return createUUID();
+}
+
 export function getDraftID() {
     return getOrCreateDraftID(API.getCurrentSite(), currentPath);
 }
@@ -63,9 +77,15 @@ export function setConfig(cfg) {
     cmsConfig = cfg;
 }
 
+function localPreviewEnabled() {
+    return cmsConfig?._cms?.local_preview?.enabled === true;
+}
+
 export function clearEditor() {
     clearAutoSaveTimer();
     cancelMarkdownPreview();
+    cancelLocalPreviewTimer();
+    resetLocalPreviewClientState();
     currentPath = "";
     currentData = null;
     lastSavedPayload = "";
@@ -105,6 +125,7 @@ export function initAutoSave() {
 function handleEditorChange() {
     triggerAutoSave();
     scheduleMarkdownPreview();
+    scheduleLocalLivePreview();
     if (window.markDeploymentPreviewStale) window.markDeploymentPreviewStale();
 }
 
@@ -199,6 +220,91 @@ export async function refreshMarkdownPreview() {
     }
 }
 
+function cancelLocalPreviewTimer() {
+    if (localPreviewTimer) {
+        clearTimeout(localPreviewTimer);
+        localPreviewTimer = null;
+    }
+}
+
+function resetLocalPreviewClientState() {
+    localPreviewRevision = 0;
+    localPreviewSessionID = "";
+    localPreviewSessionPath = "";
+    localPreviewConflictNotified = false;
+}
+
+function scheduleLocalLivePreview() {
+    if (!localPreviewEnabled() || !currentPath || currentPath === deletingPath) return;
+    if (localPreviewTimer) clearTimeout(localPreviewTimer);
+    localPreviewTimer = setTimeout(() => {
+        localPreviewTimer = null;
+        refreshLocalLivePreview().catch(() => undefined);
+    }, LOCAL_PREVIEW_DEBOUNCE_MS);
+}
+
+export async function refreshLocalLivePreview() {
+    if (!localPreviewEnabled() || !currentPath || currentPath === deletingPath) return null;
+    cancelLocalPreviewTimer();
+
+    const requestPath = currentPath;
+    const sessionID = localPreviewSessionID || createLocalPreviewSessionID();
+    if (!sessionID) return null;
+
+    if (localPreviewSessionPath && localPreviewSessionPath !== requestPath) {
+        throw new Error("Local Live Preview session path changed without release");
+    }
+    localPreviewSessionID = sessionID;
+    localPreviewSessionPath = requestPath;
+    const revision = ++localPreviewRevision;
+    const payload = getPayload();
+
+    const request = API.updateLocalPreviewContent(payload, sessionID, revision);
+    localPreviewInflight.add(request);
+    try {
+        return await request;
+    } catch (e) {
+        if (e?.status === 409) {
+            if (!localPreviewConflictNotified) {
+                localPreviewConflictNotified = true;
+                UI.showToast("Local Live Preview is active in another tab for this site", "warning");
+            }
+        } else {
+            console.error("[LocalPreview] Update failed:", e);
+        }
+        throw e;
+    } finally {
+        localPreviewInflight.delete(request);
+    }
+}
+
+export async function releaseLocalLivePreview() {
+    cancelLocalPreviewTimer();
+    const sessionID = localPreviewSessionID;
+    if (!sessionID) {
+        resetLocalPreviewClientState();
+        return false;
+    }
+
+    // Do not race release against an update that the server may still be
+    // applying even when the UI has moved on to another article/site.
+    await Promise.allSettled(Array.from(localPreviewInflight));
+    try {
+        const result = await API.releaseLocalPreviewContent(sessionID);
+        resetLocalPreviewClientState();
+        return result?.released === true;
+    } catch (e) {
+        // 409 proves this document no longer owns the site's active workspace.
+        // Network/5xx failures are ambiguous, so retain the session ID and
+        // revision to allow a later release/update to continue safely.
+        if (e?.status === 409) {
+            resetLocalPreviewClientState();
+            return false;
+        }
+        throw e;
+    }
+}
+
 export async function execAutoSave() {
     return queueCurrentSave("Auto Saving...");
 }
@@ -260,9 +366,22 @@ export async function flushPendingSave() {
 export async function loadFile(path) {
     clearAutoSaveTimer();
     cancelMarkdownPreview();
+    cancelLocalPreviewTimer();
     await saveQueue.catch(() => {
         // Loading another file remains possible after a failed save.
     });
+
+    // A failed cleanup can leave preview ownership alive even after the
+    // production article was deleted and currentPath was cleared. Base the
+    // retry decision on Local Preview ownership rather than editor selection.
+    if (localPreviewSessionID && localPreviewSessionPath && localPreviewSessionPath !== path) {
+        try {
+            await releaseLocalLivePreview();
+        } catch (e) {
+            UI.showToast("Failed to release Local Live Preview: " + e.message, "error");
+            return;
+        }
+    }
 
     currentPath = path;
     const display = document.getElementById('filename-display');
@@ -278,6 +397,7 @@ export async function loadFile(path) {
         lastSavedPayload = JSON.stringify(getPayload());
         lastQueuedPayload = "";
         await refreshMarkdownPreview();
+        refreshLocalLivePreview().catch(() => undefined);
 
     } catch (e) {
         UI.showEditorError(e);
@@ -325,6 +445,7 @@ export async function deleteFile(refreshListCb) {
     const pathToDelete = currentPath;
     let deleted = false;
     clearAutoSaveTimer();
+    cancelLocalPreviewTimer();
     deletingPath = pathToDelete;
 
     try {
@@ -332,8 +453,24 @@ export async function deleteFile(refreshListCb) {
         // queued saves for this path from starting before DELETE.
         await saveQueue;
         await API.deleteArticle(pathToDelete);
+        // Production deletion is committed at this point. Preview cleanup is a
+        // separate best-effort operation and must never re-enable autosave for
+        // the deleted article.
         deleted = true;
-        UI.showToast("Article deleted", "success");
+
+        let previewCleanupError = null;
+        try {
+            await releaseLocalLivePreview();
+        } catch (e) {
+            previewCleanupError = e;
+            console.error("[LocalPreview] Cleanup after article deletion failed:", e);
+        }
+
+        if (previewCleanupError) {
+            UI.showToast("Article deleted, but Local Live Preview cleanup failed: " + previewCleanupError.message, "warning");
+        } else {
+            UI.showToast("Article deleted", "success");
+        }
 
         if (currentPath === pathToDelete) {
             cancelMarkdownPreview();
@@ -349,7 +486,11 @@ export async function deleteFile(refreshListCb) {
 
         if (refreshListCb) await refreshListCb();
     } catch (e) {
-        UI.showToast("Delete failed: " + e.message, "error");
+        if (deleted) {
+            UI.showToast("Article deleted, but refreshing the editor failed: " + e.message, "warning");
+        } else {
+            UI.showToast("Delete failed: " + e.message, "error");
+        }
     } finally {
         if (deletingPath === pathToDelete) {
             deletingPath = "";

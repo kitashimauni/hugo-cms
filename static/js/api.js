@@ -67,6 +67,19 @@ async function fetchWithCSRF(url, options) {
     return res;
 }
 
+async function responseError(res, fallback) {
+    let message = fallback;
+    try {
+        const data = await res.json();
+        message = data?.message || data?.error || fallback;
+    } catch (_) {
+        // Keep the stable fallback when the server did not return JSON.
+    }
+    const error = new Error(message);
+    error.status = res.status;
+    return error;
+}
+
 export async function fetchConfig() {
     const res = await fetch(withSite('/admin/api/config'), { headers: siteHeaders() });
     if (!res.ok) throw new Error("Config fetch failed");
@@ -219,6 +232,33 @@ export async function renderMarkdownPreview(payload, signal) {
         signal
     });
     if (!res.ok) throw new Error("Markdown preview failed");
+    return await res.json();
+}
+
+export async function updateLocalPreviewContent(payload, draftID, revision, signal) {
+    const res = await fetchWithCSRF(withSite('/admin/api/preview/local'), {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            ...siteHeaders()
+        },
+        body: JSON.stringify({ ...payload, draft_id: draftID, revision }),
+        signal
+    });
+    if (!res.ok) throw await responseError(res, "Local Live Preview update failed");
+    return await res.json();
+}
+
+export async function releaseLocalPreviewContent(draftID) {
+    const res = await fetchWithCSRF(withSite('/admin/api/preview/local/release'), {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            ...siteHeaders()
+        },
+        body: JSON.stringify({ draft_id: draftID })
+    });
+    if (!res.ok) throw await responseError(res, "Local Live Preview release failed");
     return await res.json();
 }
 

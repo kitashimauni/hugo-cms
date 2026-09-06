@@ -120,6 +120,8 @@ func SetupRouter() (*gin.Engine, error) {
 			{
 				api.GET("/csrf-token", handlers.GetCSRFToken) // Endpoint to get CSRF token
 				api.POST("/preview/markdown", handlers.RenderMarkdownPreview)
+				api.POST("/preview/local", handlers.UpdateLocalPreviewContent)
+				api.POST("/preview/local/release", handlers.ReleaseLocalPreviewContent)
 				api.POST("/preview/deployments", handlers.UpdateDeploymentPreview)
 				api.GET("/preview/deployments/:draft_id", handlers.GetDeploymentPreview)
 				api.POST("/preview/deployments/:draft_id/retry", handlers.RetryDeploymentPreview)
@@ -173,6 +175,11 @@ func main() {
 		slog.Error("Invalid generator configuration", "error", err)
 		os.Exit(1)
 	}
+	workspaceManager, err := services.DefaultLocalPreviewWorkspaceManager()
+	if err != nil {
+		slog.Error("Failed to initialize local preview workspace", "error", err)
+		os.Exit(1)
+	}
 
 	appURL := config.GetAppURL()
 	slog.Info("Starting server",
@@ -217,6 +224,11 @@ func main() {
 		slog.Error("Failed to stop local preview processes cleanly", "error", err)
 	}
 	cancelPreview()
+
+	// Child Hugo processes are stopped before removing their contentDir.
+	if err := workspaceManager.Shutdown(); err != nil {
+		slog.Error("Failed to remove local preview shadow workspace", "error", err)
+	}
 
 	slog.Info("Server exiting")
 }
