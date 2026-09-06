@@ -46,6 +46,11 @@ func SetupRouter() (*gin.Engine, error) {
 	appURL := config.GetAppURL()
 	r := gin.Default()
 
+	// Preview hostname traffic must be handled before the CMS session middleware.
+	// Viewer authentication is enforced by the external preview ingress rather
+	// than by sharing the CMS admin cookie with repository-generated JavaScript.
+	r.Use(handlers.LocalPreviewIngress(services.DefaultLocalPreviewManager()))
+
 	// Determine if we are running on HTTPS
 	isSecure := strings.HasPrefix(appURL, "https://")
 
@@ -194,6 +199,12 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	slog.Info("Shutting down server...")
+
+	previewCtx, cancelPreview := context.WithTimeout(context.Background(), 3*time.Second)
+	if err := services.DefaultLocalPreviewManager().Shutdown(previewCtx); err != nil {
+		slog.Error("Failed to stop local preview processes cleanly", "error", err)
+	}
+	cancelPreview()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
