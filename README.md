@@ -6,13 +6,14 @@ Hugoサイト用のセルフホスト型ヘッドレスCMSです。GitHub OAuth�
 
 - 🔐 **GitHub OAuth認証** - 安全なログインとユーザー制限
 - 📝 **本文プレビュー** - 編集中のMarkdownをsanitizeして即座に確認
+- 🌐 **Local Live Preview** - site別hostnameでHugo theme/layout/shortcode/CSS/JS/LiveReloadを確認
 - 🚀 **デプロイプレビュー** - draft branchを外部providerでbuildし、公開前に特定commitを確認
 - 🖼️ **メディア管理** - ドラッグ&ドロップでの画像アップロード
 - 🔄 **Gitワークフロー** - 変更の同期・公開をワンクリックで
 - ⚡ **高速キャッシュ** - 並列処理による記事一覧の高速表示
 - 🛡️ **セキュリティ** - CSRF保護、パストラバーサル対策、入力検証
 
-> Issue #32 Phase 1で、`https://<site-id>.<preview-domain>/`形式のLocal Live Preview向け設定、URL生成、Host validation、process lifecycle/port reservation基盤を追加しています。Hugo/Eleventy preview serverの実起動、proxy、LiveReload、editor連携はPhase 2以降です。旧`/admin/preview/:site/*` path-prefix proxyは復活させません。
+> Issue #32 Phase 2で、Hugo Local Live Previewのlazy process起動、loopback port管理、`https://<site-id>.<preview-domain>/`からのreverse proxy、redirect補正、LiveReload/WebSocket中継まで追加しています。Phase 2では保存済みrepository contentを表示し、未保存editor入力のshadow workspace反映はPhase 3で追加します。旧`/admin/preview/:site/*` path-prefix proxyは復活させません。
 
 ## クイックスタート
 
@@ -148,7 +149,7 @@ appは非rootで動作し、bind mountしたrepoを`chown`しません。mise to
 
 - [ドキュメント一覧](docs/README.md) - 目的別の索引
 - [設定ガイド](docs/guides/configuration.md) - 詳細な設定オプション
-- [Local Live Preview設定ガイド](docs/guides/local-live-preview.md) - wildcard subdomain、閲覧制御、Host validation
+- [Local Live Preview設定ガイド](docs/guides/local-live-preview.md) - wildcard subdomain、閲覧制御、Host validation、Hugo runtime/proxy
 - [Docker + mise デプロイガイド](docs/guides/docker-mise-deployment.md) - secret-free bootstrapと非root appによる推奨デプロイ
 - [CMS設定](docs/reference/cms-config.md) - コレクションとフィールドの設定
 - [現行アーキテクチャ](docs/architecture/current-architecture.md) - 現在のシステム構成
@@ -170,6 +171,7 @@ hugo-cms/
 │   ├── handlers/        # HTTPハンドラー
 │   │   ├── api.go       # 記事API
 │   │   ├── auth.go      # 認証・CSRF
+│   │   ├── local_preview.go # preview hostname ingress
 │   │   ├── media.go     # メディアAPI
 │   │   ├── health.go    # ヘルスチェック
 │   │   └── errors.go    # エラーレスポンス
@@ -181,7 +183,8 @@ hugo-cms/
 │       ├── git.go       # Git操作
 │       ├── generator.go # ジェネレーター共通インターフェース
 │       ├── hugo_adapter.go # Hugoアダプター
-│       ├── process_manager.go # プレビュープロセス管理
+│       ├── local_preview_lifecycle.go # preview state/port reservation
+│       ├── local_preview_manager.go # Hugo preview process/proxy管理
 │       └── media.go     # メディアファイル管理
 ├── docs/
 │   ├── guides/          # 設定・デプロイ手順
