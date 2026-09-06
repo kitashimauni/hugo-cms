@@ -28,7 +28,7 @@ var (
 	SitesConfigPath  = ""
 	Sites            = []SiteConfig{}
 
-	// Hugo Server settings
+	// Hugo Server settings (legacy path-prefix preview settings; retained for compatibility)
 	HugoServerPort = "1314"
 	HugoServerBind = "127.0.0.1"
 
@@ -51,6 +51,9 @@ var (
 
 	// Preview settings
 	MarkdownPreviewEnabled           = true
+	LocalLivePreviewEnabled          = false
+	PreviewDomain                    = ""
+	PreviewScheme                    = "https"
 	PreviewDeploymentProvider        = ""
 	CloudflarePagesAccountID         = ""
 	CloudflarePagesProjectName       = ""
@@ -91,14 +94,23 @@ type SiteConfig struct {
 }
 
 type SitePreviewConfig struct {
-	Markdown   MarkdownPreviewConfig   `yaml:"markdown" json:"markdown"`
-	Deployment DeploymentPreviewConfig `yaml:"deployment" json:"deployment"`
+	Markdown     MarkdownPreviewConfig   `yaml:"markdown" json:"markdown"`
+	LocalPreview LocalPreviewConfig      `yaml:"local_preview" json:"local_preview"`
+	Deployment   DeploymentPreviewConfig `yaml:"deployment" json:"deployment"`
 }
 
 type MarkdownPreviewConfig struct {
 	// A pointer preserves the distinction between an omitted value (enabled by
 	// default) and an explicit false value in the site registry.
 	Enabled *bool `yaml:"enabled" json:"enabled,omitempty"`
+}
+
+type LocalPreviewConfig struct {
+	// Enabled inherits LOCAL_LIVE_PREVIEW_ENABLED when omitted from a registry
+	// entry. URL is derived from site ID, PREVIEW_SCHEME and PREVIEW_DOMAIN and
+	// is never persisted in sites.yml.
+	Enabled *bool  `yaml:"enabled" json:"enabled,omitempty"`
+	URL     string `yaml:"-" json:"url,omitempty"`
 }
 
 type DeploymentPreviewConfig struct {
@@ -169,6 +181,7 @@ func Init() error {
 	GitUserName = getEnv("GIT_USER_NAME", "Hugo CMS Bot")
 	GitBranch = getEnv("GIT_BRANCH", "main")
 	GitRemote = getEnv("GIT_REMOTE", "origin")
+
 	MarkdownPreviewEnabled = true
 	if markdownEnabled := os.Getenv("MARKDOWN_PREVIEW_ENABLED"); markdownEnabled != "" {
 		value, err := strconv.ParseBool(markdownEnabled)
@@ -178,6 +191,22 @@ func Init() error {
 			MarkdownPreviewEnabled = value
 		}
 	}
+
+	LocalLivePreviewEnabled = false
+	if localEnabled := os.Getenv("LOCAL_LIVE_PREVIEW_ENABLED"); localEnabled != "" {
+		value, err := strconv.ParseBool(localEnabled)
+		if err != nil {
+			slog.Warn("Invalid LOCAL_LIVE_PREVIEW_ENABLED value; defaulting to false", "value", localEnabled)
+		} else {
+			LocalLivePreviewEnabled = value
+		}
+	}
+	PreviewDomain = normalizePreviewDomain(getEnv("PREVIEW_DOMAIN", ""))
+	PreviewScheme = normalizePreviewScheme(getEnv("PREVIEW_SCHEME", "https"))
+	if err := validateLocalPreviewBaseSettings(LocalLivePreviewEnabled); err != nil {
+		return err
+	}
+
 	PreviewDeploymentProvider = strings.ToLower(strings.TrimSpace(getEnv("PREVIEW_DEPLOYMENT_PROVIDER", "")))
 	CloudflarePagesAccountID = strings.TrimSpace(getEnv("CLOUDFLARE_PAGES_ACCOUNT_ID", ""))
 	CloudflarePagesProjectName = strings.TrimSpace(getEnv("CLOUDFLARE_PAGES_PROJECT_NAME", ""))
@@ -305,7 +334,8 @@ func defaultSiteFromGlobals() SiteConfig {
 		StaticMediaDir:  StaticMediaDir,
 		SnippetPaths:    SnippetPaths,
 		Preview: SitePreviewConfig{
-			Markdown: MarkdownPreviewConfig{Enabled: boolPointer(MarkdownPreviewEnabled)},
+			Markdown:     MarkdownPreviewConfig{Enabled: boolPointer(MarkdownPreviewEnabled)},
+			LocalPreview: LocalPreviewConfig{Enabled: boolPointer(LocalLivePreviewEnabled)},
 			Deployment: DeploymentPreviewConfig{
 				Provider: PreviewDeploymentProvider,
 				CloudflarePages: CloudflarePagesConfig{
@@ -362,6 +392,15 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 	if site.Preview.Markdown.Enabled == nil {
 		site.Preview.Markdown.Enabled = boolPointer(true)
 	}
+	if site.Preview.LocalPreview.Enabled == nil {
+		site.Preview.LocalPreview.Enabled = boolPointer(LocalLivePreviewEnabled)
+	}
+	site.Preview.LocalPreview.URL = ""
+	if site.Preview.LocalPreview.Enabled != nil && *site.Preview.LocalPreview.Enabled {
+		if previewURL, err := LocalPreviewURL(site.ID); err == nil {
+			site.Preview.LocalPreview.URL = previewURL
+		}
+	}
 	if site.Preview.Deployment.Provider == "cloudflare_pages" && site.Preview.Deployment.CloudflarePages.APITokenEnv == "" {
 		site.Preview.Deployment.CloudflarePages.APITokenEnv = "CLOUDFLARE_API_TOKEN"
 	}
@@ -370,6 +409,12 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 }
 
 func validateSitePreviewConfig(site SiteConfig) error {
+	if site.Preview.LocalPreview.Enabled != nil && *site.Preview.LocalPreview.Enabled {
+		if err := validateLocalPreviewSite(site); err != nil {
+			return err
+		}
+	}
+
 	deployment := site.Preview.Deployment
 	switch deployment.Provider {
 	case "":
@@ -507,6 +552,7 @@ func ApplyRuntime(runtime SiteRuntime) {
 	StaticMediaDir = runtime.StaticMediaDir
 	SnippetPaths = append([]string(nil), runtime.SnippetPaths...)
 	MarkdownPreviewEnabled = runtime.MarkdownPreviewEnabled
+	LocalLivePreviewEnabled = runtime.LocalPreview.Enabled != nil && *runtime.LocalPreview.Enabled
 	PreviewDeploymentProvider = runtime.PreviewDeployment.Provider
 	CloudflarePagesAccountID = runtime.PreviewDeployment.CloudflarePages.AccountID
 	CloudflarePagesProjectName = runtime.PreviewDeployment.CloudflarePages.ProjectName
