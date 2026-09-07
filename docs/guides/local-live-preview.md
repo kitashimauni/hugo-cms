@@ -1,6 +1,6 @@
 # Local Live Preview設定ガイド
 
-> Issue #32ではPhase 1/2がmainへmerge済みです。Phase 3 (#35)では、editorの未保存内容をproduction working treeとは別のshadow content workspaceへdebounce反映し、Hugo watcher/LiveReloadへつなぎます。
+> Issue #32ではPhase 1/2/3がmainへmerge済みです。Phase 4では、session lease/recovery、status/stop API、UIからのopen/stopとoptional iframe埋め込みを追加します。
 
 ## 基本設定
 
@@ -104,7 +104,7 @@ https://tech.preview.example.com/css/main.css
 
 内部upstreamを指すabsolute `Location`だけを外部preview originへ補正し、HTTP Upgradeを透過してLiveReload WebSocketを通します。
 
-## Phase 3: 未保存editor内容
+## 未保存editor内容
 
 Local Live Previewが有効なsiteでは、editor変更を約250ms debounceして次へ送ります。
 
@@ -136,11 +136,48 @@ workspace作成時点のcontent resourceは初回mirrorに含まれます。そ�
 
 static配下は元repositoryをHugoが直接参照するためshadow同期しません。media本体の保存成功後にpreview同期だけ失敗した場合は、media操作を失敗扱いにせずserver logへ記録します。
 
-### tab / draft競合
+## session lease / recovery
 
-初期実装では同一siteにつきactive Local Live Preview sessionは1つです。別tab/sessionから同siteを更新すると`409 Conflict`となり、既存workspaceを上書きしません。別siteは独立して利用できます。
+Local Preview ownership IDはbrowser document/tabのmemory上だけに保持します。複製tabが同じIDを引き継がないため、同一siteの別tab/sessionは`409 Conflict`になります。
 
-### article/site切替とcleanup
+一方、tab reload、browser crash、network断ではrelease requestを確実に送れません。そのためactive workspaceにはlast-seen leaseを持たせます。
+
+- lease TTL: 2分
+- CMS editorは30秒ごとにheartbeat
+- editor update自体もleaseを更新
+- lease切れworkspaceは`stale`としてstatus APIへ表示
+- stale workspaceは明示的なreclaim APIでCMS再起動なしに回収可能
+- liveなsessionはreclaimできない
+
+recovery時もHugo processを先にstopしてからshadow workspaceを削除します。
+
+## UI
+
+Local Live Preview panelでは次を利用できます。
+
+- `新規タブで開く`: 常に利用できる主導線
+- `埋め込み表示`: CMS内のsandbox付きiframeへ表示
+- `停止`: 自分が所有するsession、またはworkspaceを伴わないsaved-content preview processを停止
+- `期限切れsessionを回収`: stale leaseだけを安全にreclaim
+- stopped / starting / ready / failed / conflict / staleの状態表示
+
+### iframe埋め込み
+
+preview hostnameはCMSとは別originなので、iframe埋め込み自体は可能です。CMSはpreview subdomainへsession cookieを共有しません。
+
+ただし、外部preview ingressが次のheaderでframeを禁止している場合は埋め込めません。
+
+```text
+X-Frame-Options: DENY
+X-Frame-Options: SAMEORIGIN
+Content-Security-Policy: frame-ancestors 'none'
+```
+
+Cloudflare Access等のviewer authenticationのlogin画面がiframeを拒否する構成もあります。そのため**新規タブ表示を主導線として必ず残し、埋め込みはoptional**とします。
+
+CMS側iframeにはsandboxを付け、top-level navigation等を許可しません。Hugo/LiveReloadに必要なscriptとsame-origin権限だけを許可します。
+
+## article/site切替とcleanup
 
 article/site切替時はin-flight update完了を待ってsessionをreleaseします。
 
@@ -151,9 +188,7 @@ Hugo process stop
 
 CMS shutdownでもHugo child停止後にtemporary workspaceを削除します。workspaceは`PREVIEW_STATE_DIR`へ永続化しません。
 
-ブラウザtabを切替操作なしで閉じた場合の確実なreleaseはPhase 4の明示停止/lease recoveryで扱います。
-
-### Hugo Modules
+## Hugo Modules
 
 Hugo Modulesで`content`をcustom mountしているsiteは実blog repositoryでsmoke testしてください。必要ならmount-awareなpreview方式を追加します。
 
@@ -171,7 +206,16 @@ release:
 POST /admin/api/preview/local/release
 ```
 
-両方とも既存admin auth + CSRF境界の内側です。
+lifecycle:
+
+```text
+GET  /admin/api/preview/local/status
+POST /admin/api/preview/local/heartbeat
+POST /admin/api/preview/local/stop
+POST /admin/api/preview/local/reclaim
+```
+
+すべて既存admin auth + CSRF境界の内側です。status APIは別tabのowner session IDを返しません。
 
 ## 旧preview方式との違い
 
