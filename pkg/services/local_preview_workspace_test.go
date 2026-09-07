@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLocalPreviewWorkspaceMirrorsAndUpdatesContent(t *testing.T) {
@@ -148,6 +149,206 @@ func TestLocalPreviewWorkspaceReleaseProtectsActiveDraft(t *testing.T) {
 	}
 	if _, err := os.Stat(workspace.ContentDir); !os.IsNotExist(err) {
 		t.Fatalf("workspace still exists after release: %v", err)
+	}
+}
+
+func TestLocalPreviewWorkspaceLeaseAndHeartbeat(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.leaseTTL = 2 * time.Minute
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	workspace, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !workspace.LastSeenAt.Equal(now) {
+		t.Fatalf("last seen = %s, want %s", workspace.LastSeenAt, now)
+	}
+
+	now = now.Add(time.Minute)
+	workspace, err = manager.Heartbeat("tech", "draft-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !workspace.LastSeenAt.Equal(now) {
+		t.Fatalf("heartbeat last seen = %s, want %s", workspace.LastSeenAt, now)
+	}
+
+	expiredLastSeen := workspace.LastSeenAt
+	now = now.Add(3 * time.Minute)
+	_, active, stale := manager.Status("tech")
+	if !active || !stale {
+		t.Fatalf("active=%v stale=%v, want true/true", active, stale)
+	}
+	if _, err := manager.Heartbeat("tech", "draft-1"); !errors.Is(err, ErrLocalPreviewSessionExpired) {
+		t.Fatalf("heartbeat error = %v, want expired", err)
+	}
+	workspace, _, stale = manager.Status("tech")
+	if !stale || !workspace.LastSeenAt.Equal(expiredLastSeen) {
+		t.Fatalf("expired heartbeat mutated lease: stale=%v last_seen=%s want=%s", stale, workspace.LastSeenAt, expiredLastSeen)
+	}
+	if _, err := manager.Heartbeat("tech", "draft-2"); !errors.Is(err, ErrLocalPreviewSessionConflict) {
+		t.Fatalf("heartbeat error = %v, want conflict", err)
+	}
+}
+
+func TestLocalPreviewWorkspaceExpiredUpdateCannotRevive(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.leaseTTL = time.Minute
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	workspace, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(2 * time.Minute)
+	if _, _, _, err := manager.Update(runtime, "draft-1", "one.md", 2, []byte("revived")); !errors.Is(err, ErrLocalPreviewSessionExpired) {
+		t.Fatalf("Update() error = %v, want expired", err)
+	}
+	current, active, stale := manager.Status("tech")
+	if !active || !stale || current.Revision != 1 {
+		t.Fatalf("active=%v stale=%v revision=%d, want true/true/1", active, stale, current.Revision)
+	}
+	got, err := os.ReadFile(filepath.Join(workspace.ContentDir, "one.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "first" {
+		t.Fatalf("expired update changed content: %q", got)
+	}
+}
+
+func TestLocalPreviewWorkspaceClaimStaleBlocksSameSiteMutations(t *testing.T) {
+	repoTech := makeLocalPreviewWorkspaceRepo(t)
+	repoDaily := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.leaseTTL = time.Minute
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	tech := config.SiteRuntime{ID: "tech", RepoPath: repoTech, ContentDir: "content"}
+	daily := config.SiteRuntime{ID: "daily", RepoPath: repoDaily, ContentDir: "content"}
+	workspace, _, _, err := manager.Update(tech, "draft-tech", "one.md", 1, []byte("tech"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := manager.Update(daily, "draft-daily", "one.md", 1, []byte("daily")); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(2 * time.Minute)
+	claim, claimed, err := manager.ClaimStale("tech")
+	if err != nil || !claimed {
+		t.Fatalf("ClaimStale() claimed=%v err=%v", claimed, err)
+	}
+	if _, err := manager.Heartbeat("tech", "draft-tech"); !errors.Is(err, ErrLocalPreviewSessionReclaiming) {
+		t.Fatalf("Heartbeat() error = %v, want reclaiming", err)
+	}
+	if _, _, _, err := manager.Update(tech, "draft-tech", "one.md", 2, []byte("race")); !errors.Is(err, ErrLocalPreviewSessionReclaiming) {
+		t.Fatalf("Update() error = %v, want reclaiming", err)
+	}
+	if _, err := manager.Release("tech", "draft-tech"); !errors.Is(err, ErrLocalPreviewSessionReclaiming) {
+		t.Fatalf("Release() error = %v, want reclaiming", err)
+	}
+	if _, _, err := manager.ClaimStale("tech"); !errors.Is(err, ErrLocalPreviewSessionReclaiming) {
+		t.Fatalf("second ClaimStale() error = %v, want reclaiming", err)
+	}
+	if _, err := manager.Heartbeat("daily", "draft-daily"); !errors.Is(err, ErrLocalPreviewSessionExpired) {
+		t.Fatalf("daily heartbeat error = %v, want independently expired", err)
+	}
+
+	resourcePath := filepath.Join(repoTech, "content", "image.png")
+	if err := os.WriteFile(resourcePath, []byte("image"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	synced, err := manager.SyncContentResource(tech, "content/image.png", false)
+	if err != nil || synced {
+		t.Fatalf("SyncContentResource() synced=%v err=%v, want false/nil while reclaiming", synced, err)
+	}
+
+	reclaimed, err := manager.FinishReclaim(claim)
+	if err != nil || !reclaimed {
+		t.Fatalf("FinishReclaim() reclaimed=%v err=%v", reclaimed, err)
+	}
+	if _, err := os.Stat(workspace.ContentDir); !os.IsNotExist(err) {
+		t.Fatalf("reclaimed workspace still exists: %v", err)
+	}
+	if _, active, _ := manager.Status("tech"); active {
+		t.Fatal("reclaimed session is still active")
+	}
+	if _, _, _, err := manager.Update(tech, "draft-new", "one.md", 1, []byte("new")); err != nil {
+		t.Fatalf("new session after reclaim failed: %v", err)
+	}
+}
+
+func TestLocalPreviewWorkspaceCancelReclaimDoesNotReviveExpiredSession(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.leaseTTL = time.Minute
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	if _, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft")); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Minute)
+	claim, claimed, err := manager.ClaimStale("tech")
+	if err != nil || !claimed {
+		t.Fatalf("ClaimStale() claimed=%v err=%v", claimed, err)
+	}
+	manager.CancelReclaim(claim)
+	if _, err := manager.Heartbeat("tech", "draft-1"); !errors.Is(err, ErrLocalPreviewSessionExpired) {
+		t.Fatalf("Heartbeat() error = %v, want expired after cancel", err)
+	}
+	claim, claimed, err = manager.ClaimStale("tech")
+	if err != nil || !claimed {
+		t.Fatalf("second ClaimStale() claimed=%v err=%v", claimed, err)
+	}
+	if reclaimed, err := manager.FinishReclaim(claim); err != nil || !reclaimed {
+		t.Fatalf("FinishReclaim() reclaimed=%v err=%v", reclaimed, err)
+	}
+}
+
+func TestLocalPreviewWorkspaceReleaseStaleRequiresExpiredLease(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.leaseTTL = time.Minute
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	workspace, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ReleaseStale("tech"); !errors.Is(err, ErrLocalPreviewSessionNotStale) {
+		t.Fatalf("ReleaseStale error = %v, want not stale", err)
+	}
+	now = now.Add(2 * time.Minute)
+	released, err := manager.ReleaseStale("tech")
+	if err != nil || !released {
+		t.Fatalf("ReleaseStale released=%v err=%v", released, err)
+	}
+	if _, err := os.Stat(workspace.ContentDir); !os.IsNotExist(err) {
+		t.Fatalf("stale workspace still exists: %v", err)
 	}
 }
 

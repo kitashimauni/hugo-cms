@@ -47,7 +47,6 @@ function getCSRFHeaders() {
     return csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
 }
 
-// Reset CSRF token on 403 errors (token expired/invalid)
 function resetCSRFToken() {
     csrfToken = null;
 }
@@ -119,7 +118,6 @@ export async function saveArticle(payload) {
         },
         body: JSON.stringify(payload)
     });
-    // Handle CSRF token expiration - retry once with fresh token
     if (res.status === 403) {
         resetCSRFToken();
         await ensureCSRFToken(true);
@@ -259,6 +257,56 @@ export async function releaseLocalPreviewContent(draftID) {
         body: JSON.stringify({ draft_id: draftID })
     });
     if (!res.ok) throw await responseError(res, "Local Live Preview release failed");
+    return await res.json();
+}
+
+export async function fetchLocalPreviewStatus(draftID = "", signal) {
+    let url = '/admin/api/preview/local/status';
+    if (draftID) url += `?draft_id=${encodeURIComponent(draftID)}`;
+    const res = await fetch(withSite(url), {
+        headers: siteHeaders(),
+        signal
+    });
+    if (!res.ok) throw await responseError(res, "Local Live Preview status failed");
+    return await res.json();
+}
+
+export async function heartbeatLocalPreviewContent(draftID) {
+    const res = await fetchWithCSRF(withSite('/admin/api/preview/local/heartbeat'), {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            ...siteHeaders()
+        },
+        body: JSON.stringify({ draft_id: draftID })
+    });
+    if (!res.ok) throw await responseError(res, "Local Live Preview heartbeat failed");
+    return await res.json();
+}
+
+export async function stopLocalPreviewContent(draftID = "") {
+    const res = await fetchWithCSRF(withSite('/admin/api/preview/local/stop'), {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            ...siteHeaders()
+        },
+        body: JSON.stringify({ draft_id: draftID })
+    });
+    if (!res.ok) throw await responseError(res, "Local Live Preview stop failed");
+    return await res.json();
+}
+
+export async function reclaimStaleLocalPreview() {
+    const res = await fetchWithCSRF(withSite('/admin/api/preview/local/reclaim'), {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            ...siteHeaders()
+        },
+        body: JSON.stringify({})
+    });
+    if (!res.ok) throw await responseError(res, "Local Live Preview recovery failed");
     return await res.json();
 }
 

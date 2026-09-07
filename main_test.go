@@ -85,7 +85,16 @@ func TestMarkdownPreviewDoesNotUseIframe(t *testing.T) {
 	if !strings.Contains(template, `id="markdown-preview"`) {
 		t.Fatal("template is missing the Markdown preview container")
 	}
-	if strings.Contains(template, "<iframe") {
+	previewStart := strings.Index(template, `<div id="preview-view">`)
+	if previewStart < 0 {
+		t.Fatal("template is missing the Markdown preview view")
+	}
+	previewEnd := strings.Index(template[previewStart:], `<div id="modal-overlay">`)
+	if previewEnd < 0 {
+		t.Fatal("template is missing the Markdown preview view")
+	}
+	markdownPreview := template[previewStart : previewStart+previewEnd]
+	if strings.Contains(markdownPreview, "<iframe") {
 		t.Fatal("Markdown preview must not use an iframe")
 	}
 }
