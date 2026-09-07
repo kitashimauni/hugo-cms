@@ -64,35 +64,6 @@
             </div>
         </header>
 
-        <section id="local-preview-panel" class="deployment-panel hidden" aria-label="Local Live Preview">
-            <div class="deployment-heading">
-                <strong>Local Live Preview</strong>
-                <span id="local-preview-status" class="deployment-status idle">停止</span>
-            </div>
-            <div id="local-preview-message" class="deployment-message" aria-live="polite">
-                Hugoのtheme/layout/shortcode/CSS/JSを含むpreviewです。
-            </div>
-            <div class="deployment-actions">
-                <button id="local-preview-open-btn" class="action-btn" onclick="openLocalLivePreview()">新規タブで開く</button>
-                <button id="local-preview-embed-btn" class="action-btn secondary" onclick="toggleEmbeddedLocalPreview()">埋め込み表示</button>
-                <button id="local-preview-stop-btn" class="action-btn danger hidden" onclick="stopLocalLivePreview()">停止</button>
-                <button id="local-preview-reclaim-btn" class="action-btn secondary hidden" onclick="reclaimLocalLivePreview()">期限切れsessionを回収</button>
-            </div>
-            <div class="deployment-message" role="note">
-                埋め込みはpreview ingressのframe policyや外部認証によって利用できない場合があります。その場合も新規タブ表示は利用できます。
-            </div>
-            <div id="local-preview-embed" class="hidden" style="margin-top: 10px; height: min(58vh, 720px); min-height: 360px; border: 1px solid #444c56; border-radius: 6px; overflow: hidden; background: #fff;">
-                <iframe
-                    id="local-preview-frame"
-                    title="Local Live Preview"
-                    src="about:blank"
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
-                    referrerpolicy="no-referrer"
-                    style="display: block; width: 100%; height: 100%; border: 0; background: #fff;"
-                ></iframe>
-            </div>
-        </section>
-
         <section id="deployment-panel" class="deployment-panel hidden" aria-label="デプロイプレビュー">
             <div class="deployment-heading">
                 <strong>デプロイプレビュー</strong>
@@ -121,6 +92,55 @@
                     <textarea id="editor" spellcheck="false" placeholder="Select a file to edit..."></textarea>
                 </div>
             </div>
+
+            <section id="local-preview-view" aria-label="Local Live Preview">
+                <div id="local-preview-panel" class="local-preview-panel">
+                    <div class="local-preview-toolbar">
+                        <div class="deployment-heading">
+                            <strong>Live Preview</strong>
+                            <span id="local-preview-status" class="deployment-status idle">停止</span>
+                        </div>
+                        <span class="local-preview-caption">編集中のサイト表示</span>
+                    </div>
+                    <div id="local-preview-message" class="deployment-message" aria-live="polite">
+                        記事を選択すると未保存内容をpreviewへ反映します。
+                    </div>
+                    <div id="local-preview-loading" class="local-preview-loading hidden" role="status" aria-live="polite">
+                        Hugo previewを起動しています…
+                    </div>
+                    <div class="local-preview-actions">
+                        <button id="local-preview-open-btn" class="action-btn secondary" onclick="openLocalLivePreview()">新規タブで開く</button>
+                        <button id="local-preview-embed-btn" class="action-btn" onclick="toggleEmbeddedLocalPreview()">埋め込みを表示</button>
+                        <details id="local-preview-advanced" class="local-preview-advanced hidden">
+                            <summary>管理操作</summary>
+                            <div class="deployment-actions">
+                                <button id="local-preview-stop-btn" class="action-btn danger hidden" onclick="stopLocalLivePreview()">停止</button>
+                                <button id="local-preview-reclaim-btn" class="action-btn secondary hidden" onclick="reclaimLocalLivePreview()">期限切れsessionを回収</button>
+                            </div>
+                        </details>
+                    </div>
+                    <div id="local-preview-embed" class="local-preview-embed hidden">
+                        <div id="local-preview-frame-loading" class="local-preview-frame-overlay" role="status" aria-live="polite">
+                            Previewを読み込み中…
+                        </div>
+                        <iframe
+                            id="local-preview-frame"
+                            title="Local Live Preview"
+                            src="about:blank"
+                            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+                            referrerpolicy="no-referrer"
+                        ></iframe>
+                        <div id="local-preview-frame-error" class="local-preview-frame-error hidden" role="alert">
+                            <strong>埋め込みpreviewを表示できませんでした</strong>
+                            <span id="local-preview-frame-error-message">preview ingressのframe policyまたは外部認証で拒否された可能性があります。</span>
+                            <button class="action-btn" onclick="openLocalLivePreview()">新規タブで開く</button>
+                        </div>
+                    </div>
+                    <div class="local-preview-note" role="note">
+                        埋め込みが利用できない環境では「新規タブで開く」を使用してください。
+                    </div>
+                </div>
+            </section>
 
             <div id="preview-view">
                 <div class="markdown-preview-notice" role="note">

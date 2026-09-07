@@ -1,6 +1,6 @@
 # Local Live Preview設定ガイド
 
-> Issue #32ではPhase 1/2/3がmainへmerge済みです。Phase 4では、session lease/recovery、status/stop API、UIからのopen/stopとoptional iframe埋め込みを追加します。
+> Issue #32ではPhase 1〜4が実装済みです。session lease/recovery、status/stop APIに加え、CMS内の埋め込みpreviewを主導線とするUIを提供します。
 
 ## 基本設定
 
@@ -155,11 +155,13 @@ recovery時もHugo processを先にstopしてからshadow workspaceを削除し�
 
 Local Live Preview panelでは次を利用できます。
 
-- `新規タブで開く`: 常に利用できる主導線
-- `埋め込み表示`: CMS内のsandbox付きiframeへ表示
-- `停止`: 自分が所有するsession、またはworkspaceを伴わないsaved-content preview processを停止
-- `期限切れsessionを回収`: stale leaseだけを安全にreclaim
+- `埋め込み表示`: 記事を選択するとCMS内のsandbox付きiframeを主表示として自動表示
+- `新規タブで開く`: iframeが利用できない場合や補助的な確認に使う
+- `管理操作` > `停止`: 自分が所有するsession、またはworkspaceを伴わないsaved-content preview processを停止
+- `管理操作` > `期限切れsessionを回収`: stale leaseだけを安全にreclaim
 - stopped / starting / ready / failed / conflict / staleの状態表示
+
+desktopでは編集画面とLive Previewを左右に並べます。iframeの読み込み中はloading表示を出し、frame policy・外部認証・通信失敗などで一定時間応答がない場合はエラーと「新規タブで開く」fallbackを表示します。埋め込み表示はボタンから閉じられ、記事を切り替えるかstale sessionを回収すると再び自動表示されます。狭い画面では編集画面とpreviewを上下に配置します。
 
 ### iframe埋め込み
 
@@ -173,7 +175,7 @@ X-Frame-Options: SAMEORIGIN
 Content-Security-Policy: frame-ancestors 'none'
 ```
 
-Cloudflare Access等のviewer authenticationのlogin画面がiframeを拒否する構成もあります。そのため**新規タブ表示を主導線として必ず残し、埋め込みはoptional**とします。
+Cloudflare Access等のviewer authenticationのlogin画面がiframeを拒否する構成もあります。そのため**埋め込みを主導線にしつつ、新規タブ表示を必ずfallbackとして残します**。
 
 CMS側iframeにはsandboxを付け、top-level navigation等を許可しません。Hugo/LiveReloadに必要なscriptとsame-origin権限だけを許可します。
 

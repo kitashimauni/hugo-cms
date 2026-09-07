@@ -212,8 +212,10 @@ release時はHugo process停止後にworkspaceを削除する。active shadow se
 
 ## Phase 4への契約
 
-- Local Live Previewを開く/新規tab導線
-- starting / ready / failed状態表示
+- Local Live Previewを開く/新規tab導線（埋め込みを主導線、新規tabをfallback）
+- desktopの編集+埋め込みpreview並列表示と狭い画面での上下配置
+- iframe loading/error表示と新規tab fallback
+- starting / ready / failed / conflict / stale状態表示
 - Local Previewの明示停止とstale session recovery/lease方針
 - private network/Tailscale運用例
 - wildcard DNS / TLS ingress構成例

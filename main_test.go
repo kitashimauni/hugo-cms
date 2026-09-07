@@ -99,6 +99,25 @@ func TestMarkdownPreviewDoesNotUseIframe(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewProvidesEmbeddedSurfaceAndFallback(t *testing.T) {
+	content, err := os.ReadFile("templates/index.html")
+	if err != nil {
+		t.Fatalf("read admin template: %v", err)
+	}
+	template := string(content)
+	for _, marker := range []string{
+		`id="local-preview-view"`,
+		`id="local-preview-frame"`,
+		`id="local-preview-frame-loading"`,
+		`id="local-preview-frame-error"`,
+		`onclick="openLocalLivePreview()"`,
+	} {
+		if !strings.Contains(template, marker) {
+			t.Fatalf("Local Preview template is missing %s", marker)
+		}
+	}
+}
+
 func TestHTTPServerDoesNotCapRequestBodyDuration(t *testing.T) {
 	server := newHTTPServer(http.NotFoundHandler())
 

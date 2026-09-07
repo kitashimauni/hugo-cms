@@ -58,13 +58,35 @@ header { height: 50px; background: #252526; display: flex; align-items: center; 
 .view-toggle.active { background: #333; color: white; }
 
 /* Content Area */
-#content-area { flex: 1; position: relative; overflow: hidden; display: flex; }
+#content-area { flex: 1; position: relative; overflow: hidden; display: flex; min-width: 0; min-height: 0; }
 
 /* Editor View */
-#edit-view { display: flex; flex-direction: column; height: 100%; width: 100%; }
+#edit-view { display: flex; flex: 1 1 auto; flex-direction: column; height: 100%; width: 100%; min-width: 0; min-height: 0; }
 #fm-container { background: #252526; padding: 15px; border-bottom: 1px solid #333; max-height: 40%; overflow-y: auto; }
 #editor-wrapper { flex: 1; position: relative; }
 textarea { width: 100%; height: 100%; background: #1e1e1e; color: #d4d4d4; border: none; padding: 20px; font-family: Consolas, "Courier New", monospace; font-size: 15px; box-sizing: border-box; resize: none; outline: none; line-height: 1.5; }
+
+/* Local Live Preview */
+#local-preview-view { display: none; flex: 1 1 auto; flex-direction: column; width: 0; min-width: 0; min-height: 0; overflow: hidden; background: #20252b; border-left: 1px solid #333; }
+#content-area.local-preview-enabled.local-preview-mode #edit-view { flex: 1 1 50%; width: 50%; border-right: 1px solid #333; }
+#content-area.local-preview-enabled.local-preview-mode #local-preview-view { display: flex; flex: 1 1 50%; width: 50%; }
+.local-preview-panel { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; padding: 14px; overflow: hidden; }
+.local-preview-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.local-preview-caption { color: #8c959f; font-size: 12px; }
+.local-preview-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 9px; }
+.local-preview-actions .local-preview-advanced { margin-left: auto; }
+.local-preview-advanced > summary { padding: 6px 9px; border: 1px solid #4a4a4a; border-radius: 3px; background: #3c3c3c; color: #ccc; font-weight: normal; }
+.local-preview-advanced[open] > summary { border-radius: 3px 3px 0 0; }
+.local-preview-advanced .deployment-actions { margin-top: 0; padding: 8px; border: 1px solid #4a4a4a; border-top: 0; background: #2a2a2a; }
+.local-preview-loading { margin-top: 7px; color: #e2c08d; font-size: 12px; }
+.local-preview-embed { position: relative; display: flex; flex: 1; min-width: 0; min-height: 320px; margin-top: 12px; overflow: hidden; border: 1px solid #454d56; border-radius: 6px; background: #fff; }
+.local-preview-embed iframe { display: block; width: 100%; height: 100%; min-height: 320px; border: 0; background: #fff; }
+.local-preview-frame-overlay, .local-preview-frame-error { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 24px; box-sizing: border-box; text-align: center; }
+.local-preview-frame-overlay { color: #57606a; background: rgba(255, 255, 255, 0.92); }
+.local-preview-frame-error { z-index: 2; flex-direction: column; color: #24292f; background: rgba(255, 248, 197, 0.97); }
+.local-preview-frame-error strong { color: #9a6700; }
+.local-preview-frame-error span { max-width: 420px; font-size: 12px; line-height: 1.5; }
+.local-preview-note { margin-top: 8px; color: #8c959f; font-size: 11px; line-height: 1.4; }
 
 /* Markdown body preview */
 #preview-view { display: none; height: 100%; width: 100%; overflow-y: auto; background: #fff; color: #24292f; }
@@ -106,8 +128,9 @@ textarea { width: 100%; height: 100%; background: #1e1e1e; color: #d4d4d4; borde
 .deployment-link:hover { text-decoration: underline; }
 
 /* Split Mode */
-#content-area.split-mode #edit-view { width: 50%; border-right: 1px solid #333; display: flex !important; }
-#content-area.split-mode #preview-view { width: 50%; display: block !important; }
+#content-area.split-mode #edit-view { flex: 1 1 50%; width: 50%; border-right: 1px solid #333; display: flex !important; }
+#content-area.split-mode #local-preview-view { display: none !important; }
+#content-area.split-mode #preview-view { flex: 1 1 50%; width: 50%; display: block !important; }
 
 /* Utils */
 .action-btn { background: #0e639c; color: white; border: none; padding: 6px 12px; border-radius: 3px; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
@@ -151,8 +174,18 @@ details[open] > summary::before { content: '▾ '; }
     .desktop-actions { display: none; }
     .mobile-actions { display: block; }
 
+    /* Keep the editor and Local Preview usable together on small screens. */
+    #content-area.local-preview-enabled.local-preview-mode { flex-direction: column; overflow-y: auto; }
+    #content-area.local-preview-enabled.local-preview-mode #edit-view { flex: 1 1 55%; width: 100%; min-height: 280px; border-right: 0; }
+    #content-area.local-preview-enabled.local-preview-mode #local-preview-view { flex: 0 0 45%; width: 100%; min-height: 260px; border-top: 1px solid #333; border-left: 0; }
+    .local-preview-panel { padding: 8px 10px; }
+    .local-preview-caption, .local-preview-note { display: none; }
+    .local-preview-actions .local-preview-advanced { margin-left: 0; }
+    .local-preview-embed, .local-preview-embed iframe { min-height: 200px; }
+
     /* Disable Split on Mobile */
     #content-area.split-mode #edit-view, #content-area.split-mode #preview-view { width: 100%; }
+    #content-area.split-mode #edit-view { flex-basis: 100%; }
     #content-area.split-mode #preview-view { display: none !important; }
     #btn-view-split { display: none; }
     
