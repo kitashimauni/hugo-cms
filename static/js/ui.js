@@ -560,6 +560,15 @@ export function normalizeDeploymentState(value) {
     };
 }
 
+export function normalizeLocalPreviewState(value) {
+    if (!value || typeof value !== 'object') return null;
+    const state = { ...value };
+    if (state.session_active === true && state.session_owned === false && state.session_stale !== true) {
+        state.status = 'conflict';
+    }
+    return state;
+}
+
 export function configureDeploymentPreview(config) {
     const panel = document.getElementById('deployment-panel');
     if (!panel) return false;

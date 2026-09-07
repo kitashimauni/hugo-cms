@@ -20,6 +20,7 @@ globalThis.window = {
 
 const {
     normalizeDeploymentState,
+    normalizeLocalPreviewState,
     safeExternalURL,
 } = await import("./ui.js");
 const { createDraftUUID, createLocalPreviewSessionID, getOrCreateDraftID } = await import("./editor.js");
@@ -56,6 +57,31 @@ describe("normalizeDeploymentState", () => {
         assert.equal(normalizeDeploymentState({ status: "unexpected" }).status, "queued");
         assert.equal(normalizeDeploymentState({ status: "stale", url: "https://old.example.test" }).status, "stale");
         assert.equal(normalizeDeploymentState(null), null);
+    });
+});
+
+describe("normalizeLocalPreviewState", () => {
+    it("keeps an active session owned by another tab in conflict", () => {
+        const state = normalizeLocalPreviewState({
+            status: "ready",
+            process_state: "ready",
+            session_active: true,
+            session_owned: false,
+            session_stale: false,
+        });
+
+        assert.equal(state.status, "conflict");
+    });
+
+    it("does not replace the stale recovery state", () => {
+        const state = normalizeLocalPreviewState({
+            status: "stale",
+            session_active: true,
+            session_owned: false,
+            session_stale: true,
+        });
+
+        assert.equal(state.status, "stale");
     });
 });
 

@@ -266,7 +266,8 @@ function localPreviewStatusLabel(status) {
 }
 
 function renderLocalPreviewState(state) {
-    localPreviewState = state || null;
+    localPreviewState = UI.normalizeLocalPreviewState(state);
+    state = localPreviewState;
     const statusEl = document.getElementById('local-preview-status');
     const messageEl = document.getElementById('local-preview-message');
     const reclaimBtn = document.getElementById('local-preview-reclaim-btn');
