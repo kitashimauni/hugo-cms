@@ -59,14 +59,20 @@ func TestHugoPreviewURLResolverUsesShadowContentAndLocalOrigin(t *testing.T) {
 }
 
 func TestHugoListAllArgsUseShadowContentAndNoBuildLock(t *testing.T) {
-	runtime := config.SiteRuntime{ContentDir: "/tmp/shadow/content"}
 	want := []string{
 		"list", "all", "--source", ".", "--environment", localPreviewHugoEnvironment,
-		"--contentDir", "/tmp/shadow/content",
-		"--baseURL", "https://tech.preview.example.com/", "--noBuildLock",
+		"--noBuildLock",
 	}
-	if got := hugoListAllArgs(runtime, "https://tech.preview.example.com/"); !reflect.DeepEqual(got, want) {
+	if got := hugoListAllArgs(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("hugoListAllArgs() = %#v, want %#v", got, want)
+	}
+	runtime := config.SiteRuntime{ContentDir: "/tmp/shadow/content"}
+	wantEnvironment := []string{
+		"HUGO_CONTENTDIR=/tmp/shadow/content",
+		"HUGO_BASEURL=https://tech.preview.example.com/",
+	}
+	if got := hugoListAllEnvironment(runtime, "https://tech.preview.example.com/"); !reflect.DeepEqual(got, wantEnvironment) {
+		t.Fatalf("hugoListAllEnvironment() = %#v, want %#v", got, wantEnvironment)
 	}
 }
 

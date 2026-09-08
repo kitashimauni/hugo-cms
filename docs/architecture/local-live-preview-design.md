@@ -98,7 +98,7 @@ hugo server
   --noHTTPCache
 ```
 
-記事選択時の初回起動では、shadow workspaceをHugoの`--contentDir`として使い、`hugo list all`のCSVから選択記事の`permalink`を取得する。CMSはgeneratorに依存しない`PreviewURLResolver`契約を介して解決し、Hugo実装ではserverと同じ`--environment development`、`--baseURL`にLocal Preview URL、`--noBuildLock`、shadow `--contentDir`を渡す。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalinkやslugを再実装しない。以降の同一記事の編集はLiveReloadを利用する。
+記事選択時の初回起動では、shadow workspaceをHugoの`contentDir`として使い、`hugo list all`のCSVから選択記事の`permalink`を取得する。CMSはgeneratorに依存しない`PreviewURLResolver`契約を介して解決し、Hugo実装ではserverと同じ`--environment development`を指定し、`HUGO_CONTENTDIR`と`HUGO_BASEURL`のenvironment variableでshadow contentとLocal Preview URLをoverrideし、`--noBuildLock`を渡す。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalinkやslugを再実装しない。以降の同一記事の編集はLiveReloadを利用する。
 
 ## Reverse proxy / LiveReload
 

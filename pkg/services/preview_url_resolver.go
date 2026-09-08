@@ -85,19 +85,30 @@ func (resolver *hugoPreviewURLResolver) ResolveArticleURL(ctx context.Context, r
 }
 
 func runHugoListAll(ctx context.Context, runtime config.SiteRuntime, previewURL string) ([]byte, error) {
-	cmd := generatorCommandContext(ctx, runtime, "hugo", hugoListAllArgs(runtime, previewURL)...)
+	cmd := generatorCommandContextWithEnv(
+		ctx,
+		runtime,
+		hugoListAllEnvironment(runtime, previewURL),
+		"hugo",
+		hugoListAllArgs()...,
+	)
 	return cmd.CombinedOutput()
 }
 
-func hugoListAllArgs(runtime config.SiteRuntime, previewURL string) []string {
+func hugoListAllArgs() []string {
 	return []string{
 		"list",
 		"all",
 		"--source", ".",
 		"--environment", localPreviewHugoEnvironment,
-		"--contentDir", runtime.ContentDir,
-		"--baseURL", previewURL,
 		"--noBuildLock",
+	}
+}
+
+func hugoListAllEnvironment(runtime config.SiteRuntime, previewURL string) []string {
+	return []string{
+		"HUGO_CONTENTDIR=" + runtime.ContentDir,
+		"HUGO_BASEURL=" + previewURL,
 	}
 }
 
