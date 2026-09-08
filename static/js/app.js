@@ -6,6 +6,7 @@ import {
     shouldAutoShowEmbeddedLocalPreview,
     shouldCloseEmbeddedLocalPreview,
     shouldResyncLocalPreviewAfterInitialLoad,
+    shouldUseLocalPreviewSplitDefault,
 } from './local_preview.js';
 
 // Global State
@@ -26,6 +27,7 @@ let localPreviewController = null;
 let localPreviewOperationInProgress = false;
 let localPreviewFrameController = null;
 let localPreviewNeedsInitialNavigation = false;
+let localPreviewInitialNavigationInFlight = false;
 
 const LOCAL_PREVIEW_POLL_MS = 3000;
 const LOCAL_PREVIEW_HEARTBEAT_MS = 30000;
@@ -212,7 +214,10 @@ async function loadFile(path) {
         localPreviewFrameController?.resetDismissed();
         localPreviewNeedsInitialNavigation = true;
         updateLocalPreviewAvailability();
-        UI.switchView('split');
+        UI.switchView(shouldUseLocalPreviewSplitDefault({
+            enabled: localPreviewEnabled,
+            narrowViewport: isNarrowViewport(),
+        }) ? 'split' : 'edit');
         try {
             await ensureLocalPreviewSession();
             showEmbeddedLocalPreview({ reload: true });
@@ -247,6 +252,13 @@ async function switchView(viewName) {
 
 function localPreviewURL() {
     return UI.safeExternalURL(cmsConfig?._cms?.local_preview?.url || "");
+}
+
+function isNarrowViewport() {
+    if (typeof window.matchMedia === 'function') {
+        return window.matchMedia('(max-width: 768px)').matches;
+    }
+    return Number(window.innerWidth || 0) > 0 && window.innerWidth <= 768;
 }
 
 function configureLocalPreviewPanel() {
@@ -300,10 +312,21 @@ function handleLocalPreviewFrameLoad() {
         hasCurrentPath: Boolean(Editor.getCurrentPath()),
     })) return;
 
-    localPreviewNeedsInitialNavigation = false;
+    if (localPreviewInitialNavigationInFlight) return;
+    localPreviewInitialNavigationInFlight = true;
+    const requestPath = Editor.getCurrentPath();
     Editor.refreshLocalLivePreview()
-        .then(() => refreshLocalPreviewStatus())
-        .catch(() => undefined);
+        .then(() => {
+            if (Editor.getCurrentPath() === requestPath) localPreviewNeedsInitialNavigation = false;
+            return refreshLocalPreviewStatus();
+        })
+        .catch(() => undefined)
+        .finally(() => {
+            // Keep the pending flag until the content update succeeds, while
+            // the in-flight guard prevents repeated iframe load events from
+            // duplicating the request.
+            localPreviewInitialNavigationInFlight = false;
+        });
 }
 
 function updateLocalPreviewAvailability() {

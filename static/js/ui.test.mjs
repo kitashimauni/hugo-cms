@@ -29,6 +29,7 @@ const {
     shouldAutoShowEmbeddedLocalPreview,
     shouldCloseEmbeddedLocalPreview,
     shouldResyncLocalPreviewAfterInitialLoad,
+    shouldUseLocalPreviewSplitDefault,
 } = await import("./local_preview.js");
 const { createDraftUUID, createLocalPreviewSessionID, getOrCreateDraftID } = await import("./editor.js");
 const API = await import("./api.js");
@@ -150,6 +151,12 @@ describe("embedded Local Preview state transitions", () => {
         assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: false, enabled: true, hasCurrentPath: true }), false);
         assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: false, hasCurrentPath: true }), false);
         assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: true, hasCurrentPath: false }), false);
+    });
+
+    it("uses Split as the desktop default but keeps Edit on narrow viewports", () => {
+        assert.equal(shouldUseLocalPreviewSplitDefault({ enabled: true, narrowViewport: false }), true);
+        assert.equal(shouldUseLocalPreviewSplitDefault({ enabled: true, narrowViewport: true }), false);
+        assert.equal(shouldUseLocalPreviewSplitDefault({ enabled: false, narrowViewport: false }), false);
     });
 
     it("shows the iframe in loading state and clears it after a ready event", () => {

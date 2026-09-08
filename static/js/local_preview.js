@@ -14,6 +14,10 @@ export function shouldResyncLocalPreviewAfterInitialLoad({ pending, enabled, has
     return pending === true && enabled === true && hasCurrentPath === true;
 }
 
+export function shouldUseLocalPreviewSplitDefault({ enabled, narrowViewport } = {}) {
+    return enabled === true && narrowViewport !== true;
+}
+
 export function createLocalPreviewFrameController({
     getURL,
     wrapper,

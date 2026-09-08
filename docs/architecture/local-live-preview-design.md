@@ -217,7 +217,7 @@ release時はHugo process停止後にworkspaceを削除する。active shadow se
 
 - Local Live Previewを開く/新規tab導線（埋め込みを主導線、新規tabをfallback）
 - desktopの編集+埋め込みpreview並列表示と狭い画面での上下配置
-- iframe loading、応答未確認のbest-effort表示、新規tab fallback。preview側が`homecms-local-preview-ready`の`postMessage`を送る場合は明示的なready通知として扱う
+- iframe loading、応答未確認のbest-effort表示、新規tab fallback。preview側がCMS originをtarget originに指定して`homecms-local-preview-ready`の`postMessage`を送る場合は明示的なready通知として扱う
 - 記事選択時のHugo `--navigateToChanged`による実ページ追従と初回ready後の一度だけの再同期
 - Local Preview有効siteの`Edit` / `Preview` / `Split`統合。無効siteではMarkdown Previewを維持
 - starting / ready / failed / conflict / stale状態表示

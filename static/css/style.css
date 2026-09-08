@@ -179,7 +179,8 @@ details[open] > summary::before { content: '▾ '; }
 
     /* Keep the editor and Local Preview usable together on small screens. */
     #content-area.local-preview-view-mode, #content-area.local-preview-enabled.split-mode { flex-direction: column; overflow-y: auto; }
-    #content-area.local-preview-view-mode #local-preview-view, #content-area.local-preview-enabled.split-mode #local-preview-view { flex: 0 0 45%; width: 100%; min-height: 260px; border-top: 1px solid #333; border-left: 0; }
+    #content-area.local-preview-view-mode #local-preview-view { flex: 1 1 100%; width: 100%; min-height: 260px; border-top: 1px solid #333; border-left: 0; }
+    #content-area.local-preview-enabled.split-mode #local-preview-view { flex: 0 0 45%; width: 100%; min-height: 260px; border-top: 1px solid #333; border-left: 0; }
     #content-area.local-preview-enabled.split-mode #edit-view { flex: 1 1 55%; width: 100%; min-height: 280px; border-right: 0; }
     .local-preview-panel { padding: 8px 10px; }
     .local-preview-caption, .local-preview-note { display: none; }
