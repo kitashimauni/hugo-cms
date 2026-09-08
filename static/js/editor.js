@@ -26,6 +26,11 @@ export function getCurrentPath() {
     return currentPath;
 }
 
+export function getCurrentLocalPreviewFrontMatterKey() {
+    if (!currentPath) return "";
+    return JSON.stringify(getPayload().frontmatter ?? null);
+}
+
 function draftStorageKey(siteID, path) {
     return `hugo-cms:draft:${siteID}:${path}`;
 }
@@ -258,11 +263,16 @@ export async function refreshLocalLivePreview() {
     localPreviewSessionPath = requestPath;
     const revision = ++localPreviewRevision;
     const payload = getPayload();
+    const frontMatterKey = JSON.stringify(payload.frontmatter ?? null);
 
     const request = API.updateLocalPreviewContent(payload, sessionID, revision);
     localPreviewInflight.add(request);
     try {
-        return await request;
+        const result = await request;
+        if (typeof window.refreshLocalPreviewArticleURL === 'function') {
+            window.refreshLocalPreviewArticleURL(result, frontMatterKey).catch(() => undefined);
+        }
+        return result;
     } catch (e) {
         if (e?.status === 409) {
             if (!localPreviewConflictNotified) {

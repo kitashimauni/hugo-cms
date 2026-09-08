@@ -13,10 +13,6 @@ export function shouldAutoShowEmbeddedLocalPreview({ status, sessionOwned, hasCu
     return hasCurrentPath && sessionOwned === true && !dismissed && (status === 'starting' || status === 'ready');
 }
 
-export function shouldResyncLocalPreviewAfterInitialLoad({ pending, enabled, hasCurrentPath } = {}) {
-    return pending === true && enabled === true && hasCurrentPath === true;
-}
-
 export function shouldRetryLocalPreviewNavigation({ error, attempt } = {}) {
     if (!Number.isInteger(attempt) || attempt >= LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS) return false;
     const status = error?.status;

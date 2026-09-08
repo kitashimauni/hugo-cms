@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/services"
 	"net/http"
@@ -18,16 +20,10 @@ type fakeLocalPreviewNavigationWorkspaceManager struct {
 	workspace services.LocalPreviewWorkspace
 	active    bool
 	stale     bool
-	touched   bool
 }
 
 func (m *fakeLocalPreviewNavigationWorkspaceManager) Status(string) (services.LocalPreviewWorkspace, bool, bool) {
 	return m.workspace, m.active, m.stale
-}
-
-func (m *fakeLocalPreviewNavigationWorkspaceManager) TouchArticle(config.SiteRuntime, string, string) (services.LocalPreviewWorkspace, error) {
-	m.touched = true
-	return m.workspace, nil
 }
 
 func TestNavigateLocalPreviewUsesShadowContentAndPreservesProductionContent(t *testing.T) {
@@ -48,12 +44,15 @@ func TestNavigateLocalPreviewUsesShadowContentAndPreservesProductionContent(t *t
 		t.Fatal(err)
 	}
 
-	var ensuredSite config.SiteConfig
+	var resolvedRuntime config.SiteRuntime
 	response := executeLocalPreviewNavigationRequest(t, site.ID, localPreviewNavigationDependencies{
 		workspaceManager: workspaceManager,
-		ensureReady: func(site config.SiteConfig) error {
-			ensuredSite = site
-			return nil
+		resolveArticleURL: func(_ context.Context, runtime config.SiteRuntime, gotWorkspace services.LocalPreviewWorkspace, path string) (string, error) {
+			resolvedRuntime = runtime
+			if gotWorkspace.ContentDir != workspace.ContentDir || path != "one.md" {
+				t.Fatalf("resolver arguments = runtime=%#v workspace=%#v path=%q", runtime, gotWorkspace, path)
+			}
+			return "https://tech.preview.example.com/posts/one/", nil
 		},
 	}, "draft-1", "one.md")
 	if response.Code != http.StatusOK {
@@ -63,11 +62,11 @@ func TestNavigateLocalPreviewUsesShadowContentAndPreservesProductionContent(t *t
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["status"] != "navigated" || int(payload["revision"].(float64)) != 7 {
+	if payload["status"] != "resolved" || payload["article_url"] != "https://tech.preview.example.com/posts/one/" || int(payload["revision"].(float64)) != 7 {
 		t.Fatalf("response = %#v", payload)
 	}
-	if ensuredSite.ContentDir != workspace.ContentDir {
-		t.Fatalf("Hugo content directory = %q, want shadow directory %q", ensuredSite.ContentDir, workspace.ContentDir)
+	if resolvedRuntime.ContentDir != workspace.ContentDir {
+		t.Fatalf("resolver content directory = %q, want shadow directory %q", resolvedRuntime.ContentDir, workspace.ContentDir)
 	}
 	production, err := os.ReadFile(productionArticle)
 	if err != nil {
@@ -96,12 +95,12 @@ func TestNavigateLocalPreviewRejectsWrongOwnerAndPath(t *testing.T) {
 	if _, _, _, err := workspaceManager.Update(runtime, "draft-1", "one.md", 1, []byte("draft")); err != nil {
 		t.Fatal(err)
 	}
-	ensureCalls := 0
+	resolveCalls := 0
 	dependencies := localPreviewNavigationDependencies{
 		workspaceManager: workspaceManager,
-		ensureReady: func(config.SiteConfig) error {
-			ensureCalls++
-			return nil
+		resolveArticleURL: func(context.Context, config.SiteRuntime, services.LocalPreviewWorkspace, string) (string, error) {
+			resolveCalls++
+			return "", nil
 		},
 	}
 
@@ -113,8 +112,8 @@ func TestNavigateLocalPreviewRejectsWrongOwnerAndPath(t *testing.T) {
 	if pathResponse.Code != http.StatusConflict {
 		t.Fatalf("wrong path status = %d, want 409", pathResponse.Code)
 	}
-	if ensureCalls != 0 {
-		t.Fatalf("EnsureReady calls = %d, want 0 for rejected requests", ensureCalls)
+	if resolveCalls != 0 {
+		t.Fatalf("resolver calls = %d, want 0 for rejected requests", resolveCalls)
 	}
 }
 
@@ -131,19 +130,42 @@ func TestNavigateLocalPreviewRejectsStaleSession(t *testing.T) {
 		active: true,
 		stale:  true,
 	}
-	ensureCalls := 0
+	resolveCalls := 0
 	response := executeLocalPreviewNavigationRequest(t, site.ID, localPreviewNavigationDependencies{
 		workspaceManager: workspaceManager,
-		ensureReady: func(config.SiteConfig) error {
-			ensureCalls++
-			return nil
+		resolveArticleURL: func(context.Context, config.SiteRuntime, services.LocalPreviewWorkspace, string) (string, error) {
+			resolveCalls++
+			return "", nil
 		},
 	}, "draft-1", "one.md")
 	if response.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409", response.Code)
 	}
-	if ensureCalls != 0 || workspaceManager.touched {
-		t.Fatalf("stale session was processed: ensureCalls=%d touched=%v", ensureCalls, workspaceManager.touched)
+	if resolveCalls != 0 {
+		t.Fatalf("stale session was processed: resolver calls=%d", resolveCalls)
+	}
+}
+
+func TestNavigateLocalPreviewReturnsErrorWhenResolverFails(t *testing.T) {
+	site, _ := localPreviewNavigationTestSite(t)
+	configureLocalPreviewNavigationTestSite(t, site)
+	workspaceManager := &fakeLocalPreviewNavigationWorkspaceManager{
+		workspace: services.LocalPreviewWorkspace{
+			SiteID:      site.ID,
+			DraftID:     "draft-1",
+			ArticlePath: "one.md",
+			ContentDir:  filepath.Join(site.RepoPath, "shadow", "content"),
+		},
+		active: true,
+	}
+	response := executeLocalPreviewNavigationRequest(t, site.ID, localPreviewNavigationDependencies{
+		workspaceManager: workspaceManager,
+		resolveArticleURL: func(context.Context, config.SiteRuntime, services.LocalPreviewWorkspace, string) (string, error) {
+			return "", errors.New("generator failed")
+		},
+	}, "draft-1", "one.md")
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", response.Code)
 	}
 }
 

@@ -28,6 +28,7 @@ func TestHugoLocalPreviewArgs(t *testing.T) {
 	want := []string{
 		"server",
 		"--source", ".",
+		"--environment", localPreviewHugoEnvironment,
 		"--contentDir", "content",
 		"--bind", "127.0.0.1",
 		"--port", "14123",
@@ -39,7 +40,6 @@ func TestHugoLocalPreviewArgs(t *testing.T) {
 		"--buildFuture",
 		"--buildExpired",
 		"--watch",
-		"--navigateToChanged",
 		"--noHTTPCache",
 	}
 	if !reflect.DeepEqual(got, want) {
