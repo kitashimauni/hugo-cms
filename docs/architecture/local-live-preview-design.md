@@ -98,7 +98,7 @@ hugo server
   --noHTTPCache
 ```
 
-記事選択時の初回起動では、shadow workspaceへ記事を同期してからHugoへ最初のrequestを送り、ready後に同じ記事を一度だけ再同期する。これにより、Hugo processが起動済みでない場合も`--navigateToChanged`が選択記事の実ページへ遷移できる。以降の同一記事の編集はLiveReloadを利用し、CMSはpermalinkやslugを再実装しない。
+記事選択時の初回起動では、shadow workspaceへ記事を同期してからHugoへ最初のrequestを送り、iframeの初回load後に専用navigation APIを実行する。serverはHugoのready後に同じshadow記事をrevisionを増やさずatomic replaceし、filesystem eventを発生させる。これにより、記事を編集しなくても`--navigateToChanged`が選択記事の実ページへ遷移できる。以降の同一記事の編集はLiveReloadを利用し、CMSはpermalinkやslugを再実装しない。
 
 ## Reverse proxy / LiveReload
 
@@ -205,6 +205,14 @@ POST /admin/api/preview/local
 
 初回updateでworkspaceを作った場合、保存済みcontentを使っていた既存Hugo processを一度停止する。次のpreview hostname requestでshadow `contentDir`を使ってlazy startし、その後はHugo watcherが変更を拾う。
 
+### 初回記事navigation
+
+```text
+POST /admin/api/preview/local/navigate
+```
+
+iframeの初回load後にCMSが`draft_id`と記事pathを送る。serverはactive sessionの所有者・記事pathを検証し、Hugo processのreadyを待ってからshadow記事を同じ内容でatomic replaceする。`--navigateToChanged`のURL解決はHugoに委譲するため、CMS側のslug/url/permalink/page bundle mappingは持たない。この処理はproduction contentを変更せず、editor revisionも増やさない。通常の編集更新では実行しない。
+
 ### release
 
 ```text
@@ -218,7 +226,7 @@ release時はHugo process停止後にworkspaceを削除する。active shadow se
 - Local Live Previewを開く/新規tab導線（埋め込みを主導線、新規tabをfallback）
 - desktopの編集+埋め込みpreview並列表示と狭い画面での上下配置
 - iframe loading、応答未確認のbest-effort表示、新規tab fallback。preview側がCMS originをtarget originに指定して`homecms-local-preview-ready`の`postMessage`を送る場合は明示的なready通知として扱う
-- 記事選択時のHugo `--navigateToChanged`による実ページ追従と初回ready後の一度だけの再同期
+- 記事選択時のHugo `--navigateToChanged`による実ページ追従と、初回iframe load後のready確認・一度だけの再通知
 - Local Preview有効siteの`Edit` / `Preview` / `Split`統合。無効siteではMarkdown Previewを維持
 - starting / ready / failed / conflict / stale状態表示
 - Local Previewの明示停止とstale session recovery/lease方針

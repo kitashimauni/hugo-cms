@@ -315,9 +315,16 @@ function handleLocalPreviewFrameLoad() {
     if (localPreviewInitialNavigationInFlight) return;
     localPreviewInitialNavigationInFlight = true;
     const requestPath = Editor.getCurrentPath();
-    Editor.refreshLocalLivePreview()
+    const requestSessionID = localPreviewSessionID;
+    if (!requestSessionID) {
+        localPreviewInitialNavigationInFlight = false;
+        return;
+    }
+    API.navigateLocalPreviewContent(requestSessionID, requestPath)
         .then(() => {
-            if (Editor.getCurrentPath() === requestPath) localPreviewNeedsInitialNavigation = false;
+            if (Editor.getCurrentPath() === requestPath && localPreviewSessionID === requestSessionID) {
+                localPreviewNeedsInitialNavigation = false;
+            }
             return refreshLocalPreviewStatus();
         })
         .catch(() => undefined)
@@ -326,6 +333,13 @@ function handleLocalPreviewFrameLoad() {
             // the in-flight guard prevents repeated iframe load events from
             // duplicating the request.
             localPreviewInitialNavigationInFlight = false;
+            if (
+                localPreviewNeedsInitialNavigation &&
+                localPreviewSessionID &&
+                (Editor.getCurrentPath() !== requestPath || localPreviewSessionID !== requestSessionID)
+            ) {
+                handleLocalPreviewFrameLoad();
+            }
         });
 }
 

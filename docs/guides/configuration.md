@@ -254,7 +254,7 @@ CMSは設定読み込み時に、collection名・folder・path変数・`preview.
 2. **Local Live Preview**: 実際のgenerator/theme/layout/shortcode/CSS/JSを使う編集中確認
 3. **デプロイプレビュー**: 外部buildで特定commitを公開前に最終確認する
 
-Issue #32ではPhase 1/2でLocal Live Previewの設定・hostname routing・Hugo process/proxy/LiveReload基盤まで実装済みです。Phase 3 (#35)では未保存editor入力をephemeral shadow content workspaceへ約250msで反映し、Hugo watcherへつなぎます。Local Preview update自体はproduction working tree/Git index/refを書き換えず、content配下のmedia upload/deleteもactive workspaceへ同期します。Phase 4ではsession lifecycleの状態表示と操作を追加し、Issue #38でCMS内の埋め込みpreviewを主導線、新規タブをfallbackとするUIへ整理しています。Issue #40ではHugoの`--navigateToChanged`で選択記事の実ページへ追従し、Local Preview有効siteの`Edit` / `Preview` / `Split`をLocal Live Preview中心に統合しています。
+Issue #32ではPhase 1/2でLocal Live Previewの設定・hostname routing・Hugo process/proxy/LiveReload基盤まで実装済みです。Phase 3 (#35)では未保存editor入力をephemeral shadow content workspaceへ約250msで反映し、Hugo watcherへつなぎます。Local Preview update自体はproduction working tree/Git index/refを書き換えず、content配下のmedia upload/deleteもactive workspaceへ同期します。Phase 4ではsession lifecycleの状態表示と操作を追加し、Issue #38でCMS内の埋め込みpreviewを主導線、新規タブをfallbackとするUIへ整理しています。Issue #40ではHugoの`--navigateToChanged`で選択記事の実ページへ追従し、Local Preview有効siteの`Edit` / `Preview` / `Split`をLocal Live Preview中心に統合しています。Issue #42では記事選択直後にもHugoの実ページへ同期する専用navigation APIを追加し、CMS側でURL規則を推測せず初回表示を完了できるようにしています。
 
 Site Registryでサイトごとに設定します。
 

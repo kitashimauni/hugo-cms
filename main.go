@@ -113,6 +113,7 @@ func SetupRouter() (*gin.Engine, error) {
 				api.GET("/csrf-token", handlers.GetCSRFToken)
 				api.POST("/preview/markdown", handlers.RenderMarkdownPreview)
 				api.POST("/preview/local", handlers.UpdateLocalPreviewContent)
+				api.POST("/preview/local/navigate", handlers.NavigateLocalPreview)
 				api.POST("/preview/local/release", handlers.ReleaseLocalPreviewContent)
 				api.GET("/preview/local/status", handlers.GetLocalPreviewStatus)
 				api.POST("/preview/local/heartbeat", handlers.HeartbeatLocalPreviewContent)
