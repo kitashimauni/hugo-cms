@@ -26,8 +26,11 @@ const {
 } = await import("./ui.js");
 const {
     createLocalPreviewFrameController,
+    LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS,
+    localPreviewNavigationRetryDelay,
     shouldAutoShowEmbeddedLocalPreview,
     shouldCloseEmbeddedLocalPreview,
+    shouldRetryLocalPreviewNavigation,
     shouldResyncLocalPreviewAfterInitialLoad,
     shouldUseLocalPreviewSplitDefault,
 } = await import("./local_preview.js");
@@ -151,6 +154,17 @@ describe("embedded Local Preview state transitions", () => {
         assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: false, enabled: true, hasCurrentPath: true }), false);
         assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: false, hasCurrentPath: true }), false);
         assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: true, hasCurrentPath: false }), false);
+    });
+
+    it("retries transient initial navigation failures with bounded backoff", () => {
+        assert.equal(LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS, 3);
+        assert.equal(shouldRetryLocalPreviewNavigation({ error: new TypeError("network"), attempt: 1 }), true);
+        assert.equal(shouldRetryLocalPreviewNavigation({ error: { status: 503 }, attempt: 2 }), true);
+        assert.equal(shouldRetryLocalPreviewNavigation({ error: { status: 409 }, attempt: 1 }), false);
+        assert.equal(shouldRetryLocalPreviewNavigation({ error: { status: 400 }, attempt: 1 }), false);
+        assert.equal(shouldRetryLocalPreviewNavigation({ error: { status: 503 }, attempt: 3 }), false);
+        assert.equal(localPreviewNavigationRetryDelay(1), 250);
+        assert.equal(localPreviewNavigationRetryDelay(2), 750);
     });
 
     it("uses Split as the desktop default but keeps Edit on narrow viewports", () => {

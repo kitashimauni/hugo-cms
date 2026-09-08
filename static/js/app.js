@@ -3,8 +3,11 @@ import * as UI from './ui.js';
 import * as Editor from './editor.js';
 import {
     createLocalPreviewFrameController,
+    LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS,
+    localPreviewNavigationRetryDelay,
     shouldAutoShowEmbeddedLocalPreview,
     shouldCloseEmbeddedLocalPreview,
+    shouldRetryLocalPreviewNavigation,
     shouldResyncLocalPreviewAfterInitialLoad,
     shouldUseLocalPreviewSplitDefault,
 } from './local_preview.js';
@@ -28,6 +31,8 @@ let localPreviewOperationInProgress = false;
 let localPreviewFrameController = null;
 let localPreviewNeedsInitialNavigation = false;
 let localPreviewInitialNavigationInFlight = false;
+let localPreviewInitialNavigationAttempts = 0;
+let localPreviewInitialNavigationRetryTimer = null;
 
 const LOCAL_PREVIEW_POLL_MS = 3000;
 const LOCAL_PREVIEW_HEARTBEAT_MS = 30000;
@@ -212,7 +217,7 @@ async function loadFile(path) {
     localPreviewSessionID = "";
     if (localPreviewEnabled) {
         localPreviewFrameController?.resetDismissed();
-        localPreviewNeedsInitialNavigation = true;
+        requestLocalPreviewInitialNavigation();
         updateLocalPreviewAvailability();
         UI.switchView(shouldUseLocalPreviewSplitDefault({
             enabled: localPreviewEnabled,
@@ -313,6 +318,11 @@ function handleLocalPreviewFrameLoad() {
     })) return;
 
     if (localPreviewInitialNavigationInFlight) return;
+    if (localPreviewInitialNavigationAttempts >= LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS) return;
+    if (localPreviewInitialNavigationRetryTimer !== null) {
+        clearTimeout(localPreviewInitialNavigationRetryTimer);
+        localPreviewInitialNavigationRetryTimer = null;
+    }
     localPreviewInitialNavigationInFlight = true;
     const requestPath = Editor.getCurrentPath();
     const requestSessionID = localPreviewSessionID;
@@ -320,14 +330,32 @@ function handleLocalPreviewFrameLoad() {
         localPreviewInitialNavigationInFlight = false;
         return;
     }
+    const requestAttempt = ++localPreviewInitialNavigationAttempts;
     API.navigateLocalPreviewContent(requestSessionID, requestPath)
         .then(() => {
             if (Editor.getCurrentPath() === requestPath && localPreviewSessionID === requestSessionID) {
                 localPreviewNeedsInitialNavigation = false;
+                localPreviewInitialNavigationAttempts = 0;
             }
             return refreshLocalPreviewStatus();
         })
-        .catch(() => undefined)
+        .catch((error) => {
+            if (shouldRetryLocalPreviewNavigation({ error, attempt: requestAttempt })) {
+                localPreviewInitialNavigationRetryTimer = setTimeout(() => {
+                    localPreviewInitialNavigationRetryTimer = null;
+                    if (
+                        localPreviewNeedsInitialNavigation &&
+                        Editor.getCurrentPath() === requestPath &&
+                        localPreviewSessionID === requestSessionID
+                    ) {
+                        handleLocalPreviewFrameLoad();
+                    }
+                }, localPreviewNavigationRetryDelay(requestAttempt));
+                return undefined;
+            }
+            localPreviewInitialNavigationAttempts = LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS;
+            return refreshLocalPreviewStatus();
+        })
         .finally(() => {
             // Keep the pending flag until the content update succeeds, while
             // the in-flight guard prevents repeated iframe load events from
@@ -361,8 +389,22 @@ function showLocalPreviewFrameError(message) {
     localPreviewFrameController?.showError(message);
 }
 
+function requestLocalPreviewInitialNavigation() {
+    localPreviewNeedsInitialNavigation = true;
+    localPreviewInitialNavigationAttempts = 0;
+    if (localPreviewInitialNavigationRetryTimer !== null) {
+        clearTimeout(localPreviewInitialNavigationRetryTimer);
+        localPreviewInitialNavigationRetryTimer = null;
+    }
+}
+
 function closeEmbeddedLocalPreview(options = {}) {
     localPreviewNeedsInitialNavigation = false;
+    localPreviewInitialNavigationAttempts = 0;
+    if (localPreviewInitialNavigationRetryTimer !== null) {
+        clearTimeout(localPreviewInitialNavigationRetryTimer);
+        localPreviewInitialNavigationRetryTimer = null;
+    }
     localPreviewFrameController?.close(options);
     updateLocalPreviewAvailability();
 }
@@ -537,7 +579,7 @@ async function toggleEmbeddedLocalPreview() {
     if (!url) return UI.showToast('Local Live Preview URL is unavailable', 'warning');
     try {
         localPreviewFrameController?.resetDismissed();
-        localPreviewNeedsInitialNavigation = true;
+        requestLocalPreviewInitialNavigation();
         if (Editor.getCurrentPath()) await ensureLocalPreviewSession();
         showEmbeddedLocalPreview({ reload: true });
         setTimeout(() => refreshLocalPreviewStatus(), 500);
@@ -572,7 +614,7 @@ async function reclaimLocalLivePreview() {
         localPreviewSessionID = "";
         localPreviewFrameController?.resetDismissed();
         if (Editor.getCurrentPath()) {
-            localPreviewNeedsInitialNavigation = true;
+            requestLocalPreviewInitialNavigation();
             await ensureLocalPreviewSession();
             showEmbeddedLocalPreview({ reload: true });
         }

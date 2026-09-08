@@ -211,7 +211,7 @@ POST /admin/api/preview/local
 POST /admin/api/preview/local/navigate
 ```
 
-iframeの初回load後にCMSが`draft_id`と記事pathを送る。serverはactive sessionの所有者・記事pathを検証し、Hugo processのreadyを待ってからshadow記事を同じ内容でatomic replaceする。`--navigateToChanged`のURL解決はHugoに委譲するため、CMS側のslug/url/permalink/page bundle mappingは持たない。この処理はproduction contentを変更せず、editor revisionも増やさない。通常の編集更新では実行しない。
+iframeの初回load後にCMSが`draft_id`と記事pathを送る。serverはactive sessionの所有者・記事pathを検証し、Hugo processのreadyを待ってからshadow記事を同じ内容でatomic replaceする。`--navigateToChanged`のURL解決はHugoに委譲するため、CMS側のslug/url/permalink/page bundle mappingは持たない。この処理はproduction contentを変更せず、editor revisionも増やさない。network error、408/425/429、5xxに限ってclientが250ms・750msのbackoffで最大3回まで再試行し、409やその他の4xxは再試行しない。通常の編集更新では実行しない。
 
 ### release
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/services"
 	"net/http"
 	"path/filepath"
@@ -15,10 +16,29 @@ type localPreviewNavigateRequest struct {
 	Path    string `json:"path"`
 }
 
+type localPreviewNavigationWorkspaceManager interface {
+	Status(siteID string) (services.LocalPreviewWorkspace, bool, bool)
+	TouchArticle(runtime config.SiteRuntime, draftID, articlePath string) (services.LocalPreviewWorkspace, error)
+}
+
+type localPreviewNavigationDependencies struct {
+	workspaceManager localPreviewNavigationWorkspaceManager
+	ensureReady      func(config.SiteConfig) error
+}
+
 // NavigateLocalPreview starts Hugo when necessary and touches the selected
 // shadow article after the process is ready. Hugo's --navigateToChanged then
 // resolves the actual page URL, including slugs, permalinks and bundles.
 func NavigateLocalPreview(c *gin.Context) {
+	navigateLocalPreview(c, localPreviewNavigationDependencies{
+		ensureReady: func(site config.SiteConfig) error {
+			_, err := services.DefaultLocalPreviewManager().EnsureReady(site)
+			return err
+		},
+	})
+}
+
+func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDependencies) {
 	runtime, err := requestedRuntime(c)
 	if err != nil {
 		ErrorBadRequest(c, err.Error())
@@ -45,10 +65,13 @@ func NavigateLocalPreview(c *gin.Context) {
 		return
 	}
 
-	workspaceManager, err := services.DefaultLocalPreviewWorkspaceManager()
-	if err != nil {
-		ErrorInternal(c, "Local preview workspace is unavailable")
-		return
+	workspaceManager := dependencies.workspaceManager
+	if workspaceManager == nil {
+		workspaceManager, err = services.DefaultLocalPreviewWorkspaceManager()
+		if err != nil {
+			ErrorInternal(c, "Local preview workspace is unavailable")
+			return
+		}
 	}
 	workspace, active, stale := workspaceManager.Status(runtime.ID)
 	if !active {
@@ -70,7 +93,11 @@ func NavigateLocalPreview(c *gin.Context) {
 
 	site := runtime.SiteConfig()
 	site.ContentDir = workspace.ContentDir
-	if _, err := services.DefaultLocalPreviewManager().EnsureReady(site); err != nil {
+	if dependencies.ensureReady == nil {
+		ErrorInternal(c, "Local preview manager is unavailable")
+		return
+	}
+	if err := dependencies.ensureReady(site); err != nil {
 		ErrorInternal(c, "Failed to start Local Live Preview")
 		return
 	}

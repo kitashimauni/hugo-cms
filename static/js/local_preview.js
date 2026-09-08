@@ -1,4 +1,7 @@
 export const LOCAL_PREVIEW_FRAME_TIMEOUT_MS = 10000;
+export const LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS = 3;
+
+const INITIAL_NAVIGATION_RETRY_DELAYS_MS = [250, 750];
 
 const DEFAULT_TIMEOUT_MESSAGE = 'previewの読み込みを確認できません。新規タブで開いてください。';
 
@@ -12,6 +15,16 @@ export function shouldAutoShowEmbeddedLocalPreview({ status, sessionOwned, hasCu
 
 export function shouldResyncLocalPreviewAfterInitialLoad({ pending, enabled, hasCurrentPath } = {}) {
     return pending === true && enabled === true && hasCurrentPath === true;
+}
+
+export function shouldRetryLocalPreviewNavigation({ error, attempt } = {}) {
+    if (!Number.isInteger(attempt) || attempt >= LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS) return false;
+    const status = error?.status;
+    return status === undefined || status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+export function localPreviewNavigationRetryDelay(attempt) {
+    return INITIAL_NAVIGATION_RETRY_DELAYS_MS[Math.max(0, attempt - 1)] || 1000;
 }
 
 export function shouldUseLocalPreviewSplitDefault({ enabled, narrowViewport } = {}) {
