@@ -166,7 +166,7 @@ type PreviewURLResolver interface {
 }
 ```
 
-CMSはURL規則を再実装せず、generatorが返すURLのoriginだけをLocal Preview originへ変換する。Hugoでは`hugo list all`、Eleventyでは`eleventy --to=json`のgenerator metadataを使う。どちらもactive shadow workspaceを入力にし、保存前のFront Matterを含むgenerator自身のURL規則を利用する。
+CMSはURL規則を再実装せず、generatorが返すURLのoriginだけをLocal Preview originへ変換する。Hugoでは`hugo list all`、Eleventyではラッパーのprogrammatic `toJSON()`が返すgenerator metadataを使う。どちらもactive shadow workspaceを入力にし、保存前のFront Matterを含むgenerator自身のURL規則を利用する。
 
 ### Runtime Runner
 
@@ -205,7 +205,7 @@ flowchart LR
     Proxy --> Registry["Site Registry"]
     Registry --> Manager["Preview Manager"]
     Manager --> HugoProc["Hugo server (site A)"]
-    Manager --> EleventyProc["Eleventy --serve (site B)"]
+    Manager --> EleventyProc["Eleventy watch + loopback server (site B)"]
 ```
 
 preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:<preview-port>`をブラウザへ露出しないことで、previewプロセスのbind先をローカルに閉じ込めやすくする。
@@ -235,7 +235,7 @@ preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:
 | 標準コンテンツ | `content` | サイト設定による |
 | 標準出力 | `public` | `_site` |
 | メディア | `static`、Page Bundle等 | Passthrough Copy等 |
-| プレビュー | `hugo server` | `eleventy --serve` |
+| プレビュー | `hugo server` | CMS loopback server + Eleventy programmatic `watch` |
 | Front Matter | YAML、TOML、JSON | YAML、JSON、JavaScript等 |
 | URL決定 | slug、permalink、Page Kind等 | permalink、Data Cascade、pagination等 |
 
@@ -280,14 +280,16 @@ Eleventyはサイトの`package.json`にローカル依存関係として追加�
 標準的なプレビューコマンド:
 
 ```text
-mise exec -C <repository> -- npm exec -- eleventy \
+mise exec -C <repository> -- npm exec -- node <CMS>/scripts/eleventy-local-preview.cjs \
   --serve --input <shadow-content-dir> \
-  --output <OS-temporary-output-dir> --port=<allocated-port>
+  --production-input <repository-content-dir> \
+  --output <OS-temporary-output-dir> --port=<allocated-port> \
+  --host 127.0.0.1
 ```
 
-Eleventyは`--serve`と`--port`を提供している。Local Live Previewでは`--input`にactive shadow workspace、`--output`にOS temporary directoryを渡す。production repositoryをcwdにすることでconfig、layout、data、passthrough assetはサイト側の規則を利用し、productionの生成出力は変更しない。CMSは`--pathprefix`やpermalinkを再実装せず、generatorが返すURLをそのままproxyする。
+Local Live PreviewではCMSのNodeラッパーがEleventyのprogrammatic `watch`を起動し、静的出力とLiveReloadをloopback serverから提供する。`--host 127.0.0.1`はラッパー自身の`server.listen`へ渡され、内部portがwildcard bindにならない。`--input`にactive shadow workspace、`--production-input`にproduction content root、`--output`にOS temporary directoryを渡す。production repositoryをcwdにすることでconfigをproduction inputで解決し、`dir.includes`、`dir.layouts`、`dir.data`、passthrough assetをproduction側へ固定したまま、unsaved contentだけをshadowから読む。productionの生成出力は変更しない。CMSは`--pathprefix`やpermalinkを再実装せず、generatorが返すURLをそのままproxyする。
 
-URL解決は同じrepository cwdとshadow inputで`eleventy --to=json --quiet`を実行する。返却metadataの`inputPath`が選択記事に一致するentryから`url`を取得し、CMSはoriginだけをLocal Preview originへ書き換える。`permalink`、Data Cascade、computed data、paginationの計算はEleventyが担当する。
+URL解決は同じラッパーのJSONモードでprogrammatic `toJSON()`を実行する。返却metadataの`inputPath`が選択記事に一致するentryから`url`を取得し、CMSはoriginだけをLocal Preview originへ書き換える。`permalink`、Data Cascade、computed data、paginationの計算はEleventyが担当する。
 
 - <https://www.11ty.dev/docs/usage/>
 - <https://www.11ty.dev/docs/config/>

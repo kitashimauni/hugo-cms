@@ -8,12 +8,15 @@ import "path/filepath"
 // process settings that are currently global, so services can gradually accept
 // explicit runtime data instead of reading mutable package globals.
 type SiteRuntime struct {
-	ID                     string
-	Name                   string
-	RepoPath               string
-	Generator              string
-	Runtime                string
-	ContentDir             string
+	ID         string
+	Name       string
+	RepoPath   string
+	Generator  string
+	Runtime    string
+	ContentDir string
+	// ProductionContentDir remains the repository-relative content directory
+	// when ContentDir is temporarily replaced by a local-preview shadow path.
+	ProductionContentDir   string
 	StaticDir              string
 	PublicDir              string
 	PublicPath             string
@@ -41,6 +44,7 @@ func NewSiteRuntime(site SiteConfig) SiteRuntime {
 		Generator:              site.Generator,
 		Runtime:                site.Runtime,
 		ContentDir:             site.ContentDir,
+		ProductionContentDir:   site.ContentDir,
 		StaticDir:              site.StaticDir,
 		PublicDir:              site.PublicDir,
 		PublicPath:             filepath.Join(site.RepoPath, site.PublicDir),
@@ -76,6 +80,7 @@ func CurrentSiteRuntime() SiteRuntime {
 		Generator:              SiteGenerator,
 		Runtime:                GeneratorRuntime,
 		ContentDir:             ContentDir,
+		ProductionContentDir:   ContentDir,
 		StaticDir:              StaticDir,
 		PublicDir:              PublicDir,
 		PublicPath:             PublicPath,

@@ -66,17 +66,29 @@ func TestHugoLocalPreviewArgsRejectsURLPort(t *testing.T) {
 }
 
 func TestEleventyLocalPreviewArgs(t *testing.T) {
-	runtime := config.SiteRuntime{ContentDir: filepath.Join(t.TempDir(), "content")}
+	repo := t.TempDir()
+	runtime := config.SiteRuntime{
+		RepoPath:             repo,
+		ContentDir:           filepath.Join(t.TempDir(), "shadow", "content"),
+		ProductionContentDir: "content",
+	}
 	outputDir := filepath.Join(t.TempDir(), "hugo-cms-local-preview", "output")
 	got, err := eleventyLocalPreviewArgs(runtime, 14123, outputDir)
 	if err != nil {
 		t.Fatalf("eleventyLocalPreviewArgs() error = %v", err)
 	}
+	scriptPath, err := eleventyLocalPreviewScriptPath()
+	if err != nil {
+		t.Fatalf("eleventyLocalPreviewScriptPath() error = %v", err)
+	}
 	want := []string{
+		"node", scriptPath,
 		"--serve",
 		"--input", runtime.ContentDir,
+		"--production-input", filepath.Join(repo, "content"),
 		"--output", outputDir,
 		"--port", "14123",
+		"--host", LocalPreviewBindAddress,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("eleventyLocalPreviewArgs() = %#v, want %#v", got, want)
@@ -89,7 +101,26 @@ func TestEleventyLocalPreviewArgsRejectsRelativeOutput(t *testing.T) {
 	}
 }
 
-func TestEleventyLocalPreviewCommandUsesDetectedPackageManagerAndLoopbackEnv(t *testing.T) {
+func TestEleventyNodeCommandArgsUsesDetectedPackageManager(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		pm   eleventyPackageManager
+		want []string
+	}{
+		{name: "npm", pm: eleventyPackageManager{Name: "npm"}, want: []string{"exec", "--", "node", "helper.cjs", "--json"}},
+		{name: "pnpm", pm: eleventyPackageManager{Name: "pnpm"}, want: []string{"exec", "node", "helper.cjs", "--json"}},
+		{name: "yarn", pm: eleventyPackageManager{Name: "yarn"}, want: []string{"exec", "node", "helper.cjs", "--json"}},
+		{name: "bun", pm: eleventyPackageManager{Name: "bun"}, want: []string{"run", "node", "helper.cjs", "--json"}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := eleventyNodeCommandArgs(testCase.pm, "helper.cjs", "--json"); !reflect.DeepEqual(got, testCase.want) {
+				t.Fatalf("eleventyNodeCommandArgs() = %#v, want %#v", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestEleventyLocalPreviewCommandUsesDetectedPackageManagerAndLoopbackServer(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"devDependencies":{"@11ty/eleventy":"^3.0.0"}}`), 0644); err != nil {
 		t.Fatal(err)
@@ -98,10 +129,11 @@ func TestEleventyLocalPreviewCommandUsesDetectedPackageManagerAndLoopbackEnv(t *
 		t.Fatal(err)
 	}
 	runtime := config.SiteRuntime{
-		ID:         "daily-blog",
-		RepoPath:   repo,
-		Generator:  "eleventy",
-		ContentDir: filepath.Join(repo, "content"),
+		ID:                   "daily-blog",
+		RepoPath:             repo,
+		Generator:            "eleventy",
+		ContentDir:           filepath.Join(t.TempDir(), "shadow", "content"),
+		ProductionContentDir: "content",
 	}
 	cleanup := localPreviewProcessCleanup(runtime)
 	t.Cleanup(cleanup)
@@ -111,13 +143,10 @@ func TestEleventyLocalPreviewCommandUsesDetectedPackageManagerAndLoopbackEnv(t *
 		t.Fatalf("eleventyLocalPreviewCommand() error = %v", err)
 	}
 	joined := strings.Join(cmd.Args, " ")
-	for _, want := range []string{"npm", "exec", "--", "eleventy", "--serve", "--input", runtime.ContentDir, "--output", "--port", "14123"} {
+	for _, want := range []string{"npm", "exec", "--", "node", "eleventy-local-preview.cjs", "--serve", "--input", runtime.ContentDir, "--production-input", filepath.Join(repo, "content"), "--output", "--port", "14123", "--host", LocalPreviewBindAddress} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("command args = %q, missing %q", joined, want)
 		}
-	}
-	if !containsEnv(cmd.Env, "HOST", LocalPreviewBindAddress) {
-		t.Fatalf("command environment does not force loopback HOST: %#v", cmd.Env)
 	}
 }
 
@@ -311,16 +340,6 @@ func testLocalPreviewCommand(ctx context.Context, _ config.SiteRuntime, port int
 		"HUGO_CMS_LOCAL_PREVIEW_PORT="+strconv.Itoa(port),
 	)
 	return cmd, nil
-}
-
-func containsEnv(environment []string, key, value string) bool {
-	want := key + "=" + value
-	for _, entry := range environment {
-		if entry == want {
-			return true
-		}
-	}
-	return false
 }
 
 func TestLocalPreviewHelperProcess(t *testing.T) {

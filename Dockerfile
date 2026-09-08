@@ -57,6 +57,7 @@ WORKDIR /app
 COPY --from=builder /out/hugo-cms /app/hugo-cms
 COPY static /app/static
 COPY templates /app/templates
+COPY scripts /app/scripts
 COPY deploy/docker-tool-bootstrap.sh /usr/local/bin/docker-tool-bootstrap
 
 RUN chmod 0755 /app/hugo-cms /usr/local/bin/docker-tool-bootstrap \

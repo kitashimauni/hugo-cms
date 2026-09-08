@@ -59,6 +59,9 @@ func (resolver *hugoPreviewURLResolver) ResolveArticleURL(ctx context.Context, r
 	if workspace.ArticlePath != filepath.ToSlash(articlePath) {
 		return "", fmt.Errorf("preview workspace article does not match request")
 	}
+	if strings.TrimSpace(runtime.ProductionContentDir) == "" {
+		runtime.ProductionContentDir = runtime.ContentDir
+	}
 	runtime.ContentDir = workspace.ContentDir
 	previewURL, err := localPreviewResolverURL(runtime)
 	if err != nil {
@@ -256,6 +259,9 @@ func (resolver *eleventyPreviewURLResolver) ResolveArticleURL(ctx context.Contex
 	if workspace.ArticlePath != filepath.ToSlash(articlePath) {
 		return "", fmt.Errorf("preview workspace article does not match request")
 	}
+	if strings.TrimSpace(runtime.ProductionContentDir) == "" {
+		runtime.ProductionContentDir = runtime.ContentDir
+	}
 	runtime.ContentDir = workspace.ContentDir
 	previewURL, err := localPreviewResolverURL(runtime)
 	if err != nil {
@@ -290,11 +296,23 @@ func runEleventyJSON(ctx context.Context, runtime config.SiteRuntime) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	args := append([]string{}, pm.Args...)
-	args = append(args,
+	productionInput, err := eleventyProductionContentDir(runtime)
+	if err != nil {
+		return nil, err
+	}
+	scriptPath, err := eleventyLocalPreviewScriptPath()
+	if err != nil {
+		return nil, err
+	}
+	outputDir, err := eleventyLocalPreviewOutputDir(runtime)
+	if err != nil {
+		return nil, err
+	}
+	args := eleventyNodeCommandArgs(pm, scriptPath,
+		"--json",
 		"--input", runtime.ContentDir,
-		"--to=json",
-		"--quiet",
+		"--production-input", productionInput,
+		"--output", outputDir,
 	)
 	cmd := generatorCommandContextWithEnv(
 		ctx,

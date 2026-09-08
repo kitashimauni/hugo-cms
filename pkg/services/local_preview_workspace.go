@@ -51,9 +51,9 @@ type localPreviewReclaimState struct {
 }
 
 // LocalPreviewWorkspaceManager owns ephemeral shadow content directories. The
-// original repository remains the Hugo source root for configuration, theme,
-// layouts, static files and assets; only contentDir is redirected to this
-// workspace.
+// original repository remains the generator source root for configuration,
+// theme, layouts, static files and assets; only the content input is redirected
+// to this workspace.
 type LocalPreviewWorkspaceManager struct {
 	root             string
 	mu               sync.Mutex
@@ -266,7 +266,8 @@ func (m *LocalPreviewWorkspaceManager) Status(siteID string) (LocalPreviewWorksp
 
 // SyncContentResource mirrors a content-directory resource change made through
 // the normal CMS media API into an already-active shadow workspace. Static
-// resources do not need this because Hugo still uses the original source root.
+// resources do not need this because generators still use the original source
+// root for static files.
 func (m *LocalPreviewWorkspaceManager) SyncContentResource(runtime config.SiteRuntime, repoPath string, deleted bool) (bool, error) {
 	if runtime.ID == "" {
 		return false, fmt.Errorf("local preview site ID is required")
@@ -349,8 +350,8 @@ func (m *LocalPreviewWorkspaceManager) Release(siteID, draftID string) (bool, er
 // ClaimStale atomically marks an expired workspace as reclaiming. While the
 // claim is held, heartbeat/update/release/resource-sync operations for the same
 // site cannot mutate or revive the session. This claim must be acquired before
-// stopping Hugo so a racing heartbeat cannot leave a fresh session with a
-// stopped process.
+// stopping the generator so a racing heartbeat cannot leave a fresh session
+// with a stopped process.
 func (m *LocalPreviewWorkspaceManager) ClaimStale(siteID string) (LocalPreviewReclaim, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -395,8 +396,8 @@ func (m *LocalPreviewWorkspaceManager) FinishReclaim(claim LocalPreviewReclaim) 
 }
 
 // CancelReclaim releases a stale claim without removing the workspace. It is
-// used when Hugo cannot be stopped; the expired session remains stale and can
-// be reclaimed again, but it still cannot be revived by heartbeat/update.
+// used when the generator cannot be stopped; the expired session remains stale
+// and can be reclaimed again, but it still cannot be revived by heartbeat/update.
 func (m *LocalPreviewWorkspaceManager) CancelReclaim(claim LocalPreviewReclaim) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -31,19 +31,20 @@ func LocalPreviewIngress(manager *services.LocalPreviewManager) gin.HandlerFunc 
 			return
 		}
 
+		runtime := config.NewSiteRuntime(site)
 		// Phase 3 keeps unsaved editor content outside the production working
 		// tree. If this site has an active shadow workspace, point the selected
-		// generator's input at it while leaving repository configuration,
-		// theme/layout, data, static and asset files rooted in the repository.
+		// generator's input at it while retaining the production content root for
+		// configuration-relative includes, layouts and data.
 		if workspaceManager, workspaceErr := services.DefaultLocalPreviewWorkspaceManager(); workspaceErr == nil {
 			if workspace, ok := workspaceManager.Active(site.ID); ok {
-				site.ContentDir = workspace.ContentDir
+				runtime.ContentDir = workspace.ContentDir
 			}
 		} else {
 			slog.Warn("Local preview shadow workspace unavailable; serving saved content", "site", site.ID, "error", workspaceErr)
 		}
 
-		if err := manager.Proxy(c.Writer, c.Request, site); err != nil {
+		if err := manager.ProxyRuntime(c.Writer, c.Request, runtime); err != nil {
 			slog.Error("Local preview proxy failed", "site", site.ID, "error", err)
 			if !c.Writer.Written() {
 				c.AbortWithStatus(http.StatusBadGateway)

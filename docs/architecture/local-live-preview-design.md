@@ -103,14 +103,16 @@ hugo server
 Eleventyは対象siteのpackage managerを再利用し、production repositoryをcwdにしたままshadow contentを入力にする。
 
 ```text
-<package-manager> exec eleventy
+<package-manager> exec node <CMS>/scripts/eleventy-local-preview.cjs
   --serve
   --input <shadow-content-dir>
+  --production-input <repository-content-dir>
   --output <OS-temporary-output-dir>
   --port <internal-port>
+  --host 127.0.0.1
 ```
 
-Eleventyの出力ディレクトリはproductionの`public`/`_site`を上書きしない。内部serverはloopback portだけでproxyから利用し、停止時にtemporary outputを削除する。Eleventy dev serverのwatch/live reloadをそのまま使う。
+CMSのNodeラッパーはEleventyのprogrammatic `watch`で再ビルドし、CMS側のHTTP/LiveReload WebSocket serverを実際に`127.0.0.1`へbindする。Eleventy標準Dev Serverのhost省略時のbind挙動や`HOST`環境変数には依存しない。出力ディレクトリはproductionの`public`/`_site`を上書きせず、停止時にtemporary outputを削除する。
 
 記事選択時の初回起動では、shadow workspaceをgeneratorの入力として使う。CMSはgeneratorに依存しない`PreviewURLResolver`契約を介して解決する。Hugo実装はserverと同じ`--environment development`を指定し、`HUGO_CONTENTDIR`と`HUGO_BASEURL`のenvironment variableでshadow contentとLocal Preview URLをoverrideし、`--noBuildLock`を渡す。Eleventy実装は同じrepository cwdとshadow `--input`で`--to=json --quiet`を実行し、Eleventyが返す`inputPath`と`url`を対応づける。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalink、slug、Data Cascade、paginationを再実装しない。以降の同一記事の編集はgeneratorのwatch/live reloadを利用する。
 
@@ -154,7 +156,7 @@ OS temporary directory/
         ... mirrored site content ...
 ```
 
-generatorのworking directoryは元repositoryのまま維持する。Hugo config、theme/layout、static、assets、modulesは元repoから読み、`--contentDir`だけをshadow directoryのabsolute pathへ差し替える。Eleventyもconfig、layout、data、passthrough assetは元repoから読み、`--input`だけをshadow directoryへ差し替え、生成出力はtemporary directoryへ分離する。
+generatorのworking directoryは元repositoryのまま維持する。Hugo config、theme/layout、static、assets、modulesは元repoから読み、`--contentDir`だけをshadow directoryのabsolute pathへ差し替える。Eleventyはproduction inputで解決した`dir.includes`、`dir.layouts`、`dir.data`をshadow inputからの相対pathへ再配置し、`--input`だけをshadow directoryへ差し替える。これにより`../_includes`、input外のglobal data、input配下のdirectory data、passthrough assetもproduction側を参照し、生成出力はtemporary directoryへ分離する。
 
 workspaceは`PREVIEW_STATE_DIR`へ永続化しない。session releaseまたはCMS shutdown時に削除する。
 

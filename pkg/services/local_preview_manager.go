@@ -202,27 +202,30 @@ func (m *LocalPreviewManager) Status(siteID string) (LocalPreviewProcessSlot, bo
 }
 
 func (m *LocalPreviewManager) EnsureReady(site config.SiteConfig) (LocalPreviewProcessSlot, error) {
+	return m.ensureReadyRuntime(config.NewSiteRuntime(site))
+}
+
+func (m *LocalPreviewManager) ensureReadyRuntime(runtime config.SiteRuntime) (LocalPreviewProcessSlot, error) {
 	if m.isShuttingDown() {
 		return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
 	}
-	if site.Preview.LocalPreview.Enabled == nil || !*site.Preview.LocalPreview.Enabled {
-		return LocalPreviewProcessSlot{}, fmt.Errorf("local preview is disabled for site %q", site.ID)
+	if runtime.LocalPreview.Enabled == nil || !*runtime.LocalPreview.Enabled {
+		return LocalPreviewProcessSlot{}, fmt.Errorf("local preview is disabled for site %q", runtime.ID)
 	}
-	if !localPreviewGeneratorSupported(site.Generator) {
-		return LocalPreviewProcessSlot{}, fmt.Errorf("local live preview is not supported for generator %q", site.Generator)
+	if !localPreviewGeneratorSupported(runtime.Generator) {
+		return LocalPreviewProcessSlot{}, fmt.Errorf("local live preview is not supported for generator %q", runtime.Generator)
 	}
 
-	previewURL := strings.TrimSpace(site.Preview.LocalPreview.URL)
+	previewURL := strings.TrimSpace(runtime.LocalPreview.URL)
 	if previewURL == "" {
 		var err error
-		previewURL, err = config.LocalPreviewURL(site.ID)
+		previewURL, err = config.LocalPreviewURL(runtime.ID)
 		if err != nil {
 			return LocalPreviewProcessSlot{}, err
 		}
 	}
-	runtime := config.NewSiteRuntime(site)
 
-	lock := m.siteLock(site.ID)
+	lock := m.siteLock(runtime.ID)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -230,22 +233,22 @@ func (m *LocalPreviewManager) EnsureReady(site config.SiteConfig) (LocalPreviewP
 		return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
 	}
 
-	if slot, ok := m.lifecycle.Get(site.ID); ok {
-		process := m.process(site.ID)
+	if slot, ok := m.lifecycle.Get(runtime.ID); ok {
+		process := m.process(runtime.ID)
 		switch slot.State {
 		case LocalPreviewReady:
 			if process != nil && !process.exited() {
 				return slot, nil
 			}
-			_, _ = m.lifecycle.Transition(site.ID, LocalPreviewFailed, errors.New("local preview process is not running"))
+			_, _ = m.lifecycle.Transition(runtime.ID, LocalPreviewFailed, errors.New("local preview process is not running"))
 		case LocalPreviewFailed:
 			// Cleanup below before allocating another port.
 		case LocalPreviewStopped:
 			// Release the stale reservation below.
 		case LocalPreviewStarting, LocalPreviewStopping:
-			return LocalPreviewProcessSlot{}, fmt.Errorf("local preview for site %q is unexpectedly %s", site.ID, slot.State)
+			return LocalPreviewProcessSlot{}, fmt.Errorf("local preview for site %q is unexpectedly %s", runtime.ID, slot.State)
 		}
-		m.cleanupFailedSlotLocked(site.ID, process, nil)
+		m.cleanupFailedSlotLocked(runtime.ID, process, nil)
 	}
 
 	var lastErr error
@@ -254,43 +257,43 @@ func (m *LocalPreviewManager) EnsureReady(site config.SiteConfig) (LocalPreviewP
 			return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
 		}
 
-		slot, err := m.lifecycle.Reserve(site.ID, localPreviewPortAvailable)
+		slot, err := m.lifecycle.Reserve(runtime.ID, localPreviewPortAvailable)
 		if err != nil {
 			return LocalPreviewProcessSlot{}, err
 		}
-		if _, err := m.lifecycle.Transition(site.ID, LocalPreviewStarting, nil); err != nil {
+		if _, err := m.lifecycle.Transition(runtime.ID, LocalPreviewStarting, nil); err != nil {
 			return LocalPreviewProcessSlot{}, err
 		}
 
 		process, err := m.startProcess(runtime, slot.Port, previewURL)
 		if err != nil {
 			lastErr = err
-			m.cleanupFailedSlotLocked(site.ID, process, err)
+			m.cleanupFailedSlotLocked(runtime.ID, process, err)
 			continue
 		}
 		if m.isShuttingDown() {
-			m.cleanupFailedSlotLocked(site.ID, process, errLocalPreviewShuttingDown)
+			m.cleanupFailedSlotLocked(runtime.ID, process, errLocalPreviewShuttingDown)
 			return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
 		}
 
 		if err := m.waitUntilReady(process, slot.Port); err != nil {
 			lastErr = err
-			m.cleanupFailedSlotLocked(site.ID, process, err)
+			m.cleanupFailedSlotLocked(runtime.ID, process, err)
 			continue
 		}
 
-		readySlot, err := m.lifecycle.Transition(site.ID, LocalPreviewReady, nil)
+		readySlot, err := m.lifecycle.Transition(runtime.ID, LocalPreviewReady, nil)
 		if err != nil {
-			m.cleanupFailedSlotLocked(site.ID, process, err)
+			m.cleanupFailedSlotLocked(runtime.ID, process, err)
 			return LocalPreviewProcessSlot{}, err
 		}
 		if m.isShuttingDown() {
-			m.cleanupFailedSlotLocked(site.ID, process, errLocalPreviewShuttingDown)
+			m.cleanupFailedSlotLocked(runtime.ID, process, errLocalPreviewShuttingDown)
 			return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
 		}
 		if process.exited() {
 			lastErr = process.processError()
-			m.cleanupFailedSlotLocked(site.ID, process, lastErr)
+			m.cleanupFailedSlotLocked(runtime.ID, process, lastErr)
 			continue
 		}
 		return readySlot, nil
@@ -299,7 +302,7 @@ func (m *LocalPreviewManager) EnsureReady(site config.SiteConfig) (LocalPreviewP
 	if lastErr == nil {
 		lastErr = errors.New("local preview failed to start")
 	}
-	return LocalPreviewProcessSlot{}, fmt.Errorf("failed to start local preview for site %q after %d attempts: %w", site.ID, m.startAttempts, lastErr)
+	return LocalPreviewProcessSlot{}, fmt.Errorf("failed to start local preview for site %q after %d attempts: %w", runtime.ID, m.startAttempts, lastErr)
 }
 
 func (m *LocalPreviewManager) startProcess(runtime config.SiteRuntime, port int, previewURL string) (*managedLocalPreviewProcess, error) {
@@ -313,7 +316,8 @@ func (m *LocalPreviewManager) startProcess(runtime config.SiteRuntime, port int,
 	}
 
 	stderr := newCappedBuffer(localPreviewStderrLimit)
-	// Hugo may emit useful startup/build diagnostics to either stream. Keep the
+	// Generator processes may emit useful startup/build diagnostics to either
+	// stream. Keep the
 	// bounded tail of both without allowing child output to grow memory without
 	// limit or leak CMS secrets through the browser response.
 	cmd.Stdout = stderr
@@ -493,11 +497,15 @@ func (m *LocalPreviewManager) Shutdown(ctx context.Context) error {
 }
 
 func (m *LocalPreviewManager) Proxy(w http.ResponseWriter, r *http.Request, site config.SiteConfig) error {
-	slot, err := m.EnsureReady(site)
+	return m.ProxyRuntime(w, r, config.NewSiteRuntime(site))
+}
+
+func (m *LocalPreviewManager) ProxyRuntime(w http.ResponseWriter, r *http.Request, runtime config.SiteRuntime) error {
+	slot, err := m.ensureReadyRuntime(runtime)
 	if err != nil {
 		return err
 	}
-	proxy, err := newLocalPreviewReverseProxy(site, slot.Port)
+	proxy, err := newLocalPreviewReverseProxy(runtime, slot.Port)
 	if err != nil {
 		return err
 	}
@@ -505,11 +513,11 @@ func (m *LocalPreviewManager) Proxy(w http.ResponseWriter, r *http.Request, site
 	return nil
 }
 
-func newLocalPreviewReverseProxy(site config.SiteConfig, port int) (*httputil.ReverseProxy, error) {
-	previewURL := strings.TrimSpace(site.Preview.LocalPreview.URL)
+func newLocalPreviewReverseProxy(runtime config.SiteRuntime, port int) (*httputil.ReverseProxy, error) {
+	previewURL := strings.TrimSpace(runtime.LocalPreview.URL)
 	if previewURL == "" {
 		var err error
-		previewURL, err = config.LocalPreviewURL(site.ID)
+		previewURL, err = config.LocalPreviewURL(runtime.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -546,7 +554,7 @@ func newLocalPreviewReverseProxy(site config.SiteConfig, port int) (*httputil.Re
 			return nil
 		},
 		ErrorHandler: func(writer http.ResponseWriter, _ *http.Request, proxyErr error) {
-			slog.Error("Local preview upstream error", "site", site.ID, "error", proxyErr)
+			slog.Error("Local preview upstream error", "site", runtime.ID, "error", proxyErr)
 			http.Error(writer, "local preview upstream unavailable", http.StatusBadGateway)
 		},
 	}
@@ -620,9 +628,9 @@ func eleventyLocalPreviewCommand(ctx context.Context, runtime config.SiteRuntime
 	return generatorCommandContextWithEnv(
 		ctx,
 		runtime,
-		[]string{"NODE_ENV=development", "ELEVENTY_ENV=development", "HOST=" + LocalPreviewBindAddress},
+		[]string{"NODE_ENV=development", "ELEVENTY_ENV=development"},
 		pm.Bin,
-		append(append([]string{}, pm.Args...), args...)...,
+		eleventyNodeCommandArgs(pm, args[1], args[2:]...)...,
 	), nil
 }
 
@@ -636,12 +644,63 @@ func eleventyLocalPreviewArgs(runtime config.SiteRuntime, port int, outputDir st
 	if strings.TrimSpace(outputDir) == "" || !filepath.IsAbs(outputDir) {
 		return nil, fmt.Errorf("Eleventy local preview output directory must be absolute")
 	}
+	productionInput, err := eleventyProductionContentDir(runtime)
+	if err != nil {
+		return nil, err
+	}
+	scriptPath, err := eleventyLocalPreviewScriptPath()
+	if err != nil {
+		return nil, err
+	}
 	return []string{
+		"node", scriptPath,
 		"--serve",
 		"--input", runtime.ContentDir,
+		"--production-input", productionInput,
 		"--output", outputDir,
 		"--port", strconv.Itoa(port),
+		"--host", LocalPreviewBindAddress,
 	}, nil
+}
+
+func eleventyProductionContentDir(runtime config.SiteRuntime) (string, error) {
+	contentDir := strings.TrimSpace(runtime.ProductionContentDir)
+	if contentDir == "" {
+		contentDir = strings.TrimSpace(runtime.ContentDir)
+	}
+	if contentDir == "" {
+		return "", fmt.Errorf("Eleventy production content directory is required")
+	}
+	if filepath.IsAbs(contentDir) {
+		return filepath.Clean(contentDir), nil
+	}
+	if strings.TrimSpace(runtime.RepoPath) == "" {
+		return "", fmt.Errorf("Eleventy production repository is required")
+	}
+	return filepath.Abs(filepath.Join(runtime.RepoPath, contentDir))
+}
+
+func eleventyLocalPreviewScriptPath() (string, error) {
+	const scriptName = "eleventy-local-preview.cjs"
+	candidates := make([]string, 0, 2)
+	if executable, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(executable), "scripts", scriptName))
+	}
+	if workingDirectory, err := os.Getwd(); err == nil {
+		for current := workingDirectory; ; current = filepath.Dir(current) {
+			candidates = append(candidates, filepath.Join(current, "scripts", scriptName))
+			parent := filepath.Dir(current)
+			if parent == current {
+				break
+			}
+		}
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("Eleventy local preview helper script is unavailable")
 }
 
 func eleventyLocalPreviewOutputDir(runtime config.SiteRuntime) (string, error) {
