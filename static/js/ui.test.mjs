@@ -22,11 +22,13 @@ const {
     normalizeDeploymentState,
     normalizeLocalPreviewState,
     safeExternalURL,
+    switchView,
 } = await import("./ui.js");
 const {
     createLocalPreviewFrameController,
     shouldAutoShowEmbeddedLocalPreview,
     shouldCloseEmbeddedLocalPreview,
+    shouldResyncLocalPreviewAfterInitialLoad,
 } = await import("./local_preview.js");
 const { createDraftUUID, createLocalPreviewSessionID, getOrCreateDraftID } = await import("./editor.js");
 const API = await import("./api.js");
@@ -143,6 +145,13 @@ describe("embedded Local Preview state transitions", () => {
         assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "ready", sessionOwned: true, hasCurrentPath: true, dismissed: true }), false);
     });
 
+    it("resyncs the selected article only once after the initial iframe response", () => {
+        assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: true, hasCurrentPath: true }), true);
+        assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: false, enabled: true, hasCurrentPath: true }), false);
+        assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: false, hasCurrentPath: true }), false);
+        assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: true, hasCurrentPath: false }), false);
+    });
+
     it("shows the iframe in loading state and clears it after a ready event", () => {
         const harness = createPreviewFrameHarness();
 
@@ -180,6 +189,86 @@ describe("embedded Local Preview state transitions", () => {
         harness.controller.show({ reload: true });
         assert.equal(harness.controller.isDismissed(), false);
         assert.equal(harness.controller.isVisible(), true);
+    });
+});
+
+function createViewHarness({ localPreviewEnabled = false } = {}) {
+    const makeClassList = (...initial) => {
+        const values = new Set(initial);
+        return {
+            add(value) { values.add(value); },
+            remove(...items) { items.forEach(value => values.delete(value)); },
+            contains(value) { return values.has(value); },
+        };
+    };
+    const makeElement = id => ({
+        id,
+        classList: makeClassList(),
+        dataset: {},
+        style: { display: "" },
+    });
+    const contentArea = makeElement("content-area");
+    if (localPreviewEnabled) contentArea.classList.add("local-preview-enabled");
+    const elements = new Map([
+        ["content-area", contentArea],
+        ["edit-view", makeElement("edit-view")],
+        ["preview-view", makeElement("preview-view")],
+        ["local-preview-view", makeElement("local-preview-view")],
+        ["btn-view-edit", makeElement("btn-view-edit")],
+        ["btn-view-preview", makeElement("btn-view-preview")],
+        ["btn-view-split", makeElement("btn-view-split")],
+    ]);
+    const previousDocument = globalThis.document;
+    globalThis.document = {
+        getElementById(id) { return elements.get(id); },
+        querySelectorAll(selector) {
+            return selector === ".view-toggle"
+                ? [elements.get("btn-view-edit"), elements.get("btn-view-preview"), elements.get("btn-view-split")]
+                : [];
+        },
+    };
+    return {
+        contentArea,
+        editView: elements.get("edit-view"),
+        previewView: elements.get("preview-view"),
+        localPreviewView: elements.get("local-preview-view"),
+        restore() { globalThis.document = previousDocument; },
+    };
+}
+
+describe("view surface integration", () => {
+    it("uses Local Live Preview for Preview and Split when enabled", () => {
+        const harness = createViewHarness({ localPreviewEnabled: true });
+        try {
+            switchView("preview");
+            assert.equal(harness.localPreviewView.style.display, "flex");
+            assert.equal(harness.previewView.style.display, "none");
+            assert.equal(harness.editView.style.display, "none");
+
+            switchView("split");
+            assert.equal(harness.contentArea.classList.contains("split-mode"), true);
+            assert.equal(harness.editView.style.display, "flex");
+            assert.equal(harness.localPreviewView.style.display, "flex");
+            assert.equal(harness.previewView.style.display, "none");
+
+            switchView("edit");
+            assert.equal(harness.contentArea.classList.contains("split-mode"), false);
+            assert.equal(harness.editView.style.display, "flex");
+            assert.equal(harness.localPreviewView.style.display, "none");
+        } finally {
+            harness.restore();
+        }
+    });
+
+    it("keeps the Markdown surface as Preview when Local Live Preview is disabled", () => {
+        const harness = createViewHarness();
+        try {
+            switchView("preview");
+            assert.equal(harness.previewView.style.display, "block");
+            assert.equal(harness.localPreviewView.style.display, "none");
+        } finally {
+            harness.restore();
+        }
     });
 });
 

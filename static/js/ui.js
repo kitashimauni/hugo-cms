@@ -3,27 +3,38 @@ import * as API from './api.js';
 
 export function switchView(viewName) {
     const contentArea = document.getElementById('content-area');
-    contentArea.classList.remove('split-mode');
-    contentArea.classList.toggle(
-        'local-preview-mode',
-        viewName === 'edit' &&
-        contentArea.classList.contains('local-preview-enabled') &&
-        contentArea.dataset.localPreviewHasArticle === 'true',
-    );
-    document.getElementById('btn-view-split').classList.remove('active');
+    if (viewName === 'split') {
+        applySplitView(contentArea);
+        return;
+    }
 
-    document.getElementById('edit-view').style.display = 'none';
-    document.getElementById('preview-view').style.display = 'none';
+    contentArea.classList.remove('split-mode', 'local-preview-view-mode');
+    const editView = document.getElementById('edit-view');
+    const previewView = document.getElementById('preview-view');
+    const localPreviewView = document.getElementById('local-preview-view');
+    editView.style.display = 'none';
+    previewView.style.display = 'none';
+    localPreviewView.style.display = 'none';
 
     if (viewName === 'edit') {
-        document.getElementById('edit-view').style.display = 'flex';
+        editView.style.display = 'flex';
     } else if (viewName === 'preview') {
-        document.getElementById('preview-view').style.display = 'block';
+        if (contentArea.classList.contains('local-preview-enabled')) {
+            contentArea.classList.add('local-preview-view-mode');
+            localPreviewView.style.display = 'flex';
+        } else {
+            previewView.style.display = 'block';
+        }
+    } else if (viewName === 'markdown') {
+        previewView.style.display = 'block';
     }
+
+    contentArea.dataset.viewMode = viewName === 'markdown' ? 'preview' : viewName;
+    document.getElementById('btn-view-split').classList.remove('active');
 
     const toggles = document.querySelectorAll('.view-toggle');
     toggles.forEach(btn => {
-        if (btn.id === 'btn-view-' + viewName) {
+        if (btn.id === 'btn-view-' + (viewName === 'markdown' ? 'preview' : viewName)) {
             btn.classList.add('active');
         } else {
             btn.classList.remove('active');
@@ -31,21 +42,34 @@ export function switchView(viewName) {
     });
 }
 
+function applySplitView(contentArea) {
+    const localPreviewEnabled = contentArea.classList.contains('local-preview-enabled');
+    const editView = document.getElementById('edit-view');
+    const previewView = document.getElementById('preview-view');
+    const localPreviewView = document.getElementById('local-preview-view');
+
+    contentArea.classList.remove('local-preview-view-mode');
+    contentArea.classList.add('split-mode');
+    editView.style.display = 'flex';
+    previewView.style.display = localPreviewEnabled ? 'none' : 'block';
+    localPreviewView.style.display = localPreviewEnabled ? 'flex' : 'none';
+    contentArea.dataset.viewMode = 'split';
+
+    document.getElementById('btn-view-split').classList.add('active');
+    document.getElementById('btn-view-edit').classList.remove('active');
+    document.getElementById('btn-view-preview').classList.remove('active');
+
+    // Trigger the simple preview build only when it is the active split surface.
+    if (!localPreviewEnabled && window.buildAndPreview) window.buildAndPreview();
+}
+
 export function toggleSplitView() {
     const contentArea = document.getElementById('content-area');
     const isSplit = contentArea.classList.toggle('split-mode');
-    const splitBtn = document.getElementById('btn-view-split');
 
     if (isSplit) {
-        contentArea.classList.remove('local-preview-mode');
-        splitBtn.classList.add('active');
-        document.getElementById('btn-view-edit').classList.remove('active');
-        document.getElementById('btn-view-preview').classList.remove('active');
-
-        // Trigger build since preview is shown
-        if (window.buildAndPreview) window.buildAndPreview();
+        applySplitView(contentArea);
     } else {
-        splitBtn.classList.remove('active');
         switchView('edit');
     }
 }

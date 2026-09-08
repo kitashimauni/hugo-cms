@@ -35,7 +35,7 @@
             <div style="display: flex; align-items: center;">
                 <div class="view-toggles">
                     <button class="view-toggle active" id="btn-view-edit" onclick="switchView('edit')">Edit</button>
-                    <button class="view-toggle" id="btn-view-preview" onclick="switchView('preview')">本文プレビュー</button>
+                    <button class="view-toggle" id="btn-view-preview" onclick="switchView('preview')">Preview</button>
                     <button class="view-toggle" id="btn-view-split" onclick="toggleSplitView()">Split</button>
                 </div>
                 
@@ -111,6 +111,7 @@
                     <div class="local-preview-actions">
                         <button id="local-preview-open-btn" class="action-btn secondary" onclick="openLocalLivePreview()">新規タブで開く</button>
                         <button id="local-preview-embed-btn" class="action-btn" onclick="toggleEmbeddedLocalPreview()">埋め込みを表示</button>
+                        <button id="local-preview-markdown-btn" class="action-btn secondary" onclick="showMarkdownFallback()">簡易Markdownを表示</button>
                         <details id="local-preview-advanced" class="local-preview-advanced hidden">
                             <summary>管理操作</summary>
                             <div class="deployment-actions">

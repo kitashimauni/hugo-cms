@@ -157,11 +157,20 @@ Local Live Preview panelでは次を利用できます。
 
 - `埋め込み表示`: 記事を選択するとCMS内のsandbox付きiframeを主表示として自動表示
 - `新規タブで開く`: iframeが利用できない場合や補助的な確認に使う
+- `簡易Markdownを表示`: generatorを使わない補助/fallback表示
 - `管理操作` > `停止`: 自分が所有するsession、またはworkspaceを伴わないsaved-content preview processを停止
 - `管理操作` > `期限切れsessionを回収`: stale leaseだけを安全にreclaim
 - stopped / starting / ready / failed / conflict / staleの状態表示
 
-desktopでは編集画面とLive Previewを左右に並べます。iframeの読み込み中はloading表示を出し、`load`または対応するpreview bridgeのready通知を一定時間確認できない場合は、エラーと「新規タブで開く」fallbackを表示します。これはbest-effortの判定であり、CSPや`X-Frame-Options`などによるiframe拒否をブラウザAPIだけで確実に判定するものではありません。埋め込み表示はボタンから閉じられ、記事を切り替えるかstale sessionを回収すると再び自動表示されます。狭い画面では編集画面とpreviewを上下に配置します。
+Local Live Previewが有効なsiteではheaderのview切替を次のように扱います。
+
+- `Edit`: Editorのみを全幅表示
+- `Preview`: Local Live Previewを全幅表示
+- `Split`: EditorとLocal Live Previewを左右（狭い画面では上下）に表示
+
+記事選択時はdesktopでは`Split`を初期viewにし、Hugoが解決した記事ページを表示します。CMSは`slug`、`url`、permalink、page bundleの規則を推測せず、Hugo serverの`--navigateToChanged`に遷移を任せます。Local Live Previewが無効なsiteでは、従来どおり`Preview`と`Split`の右側に簡易Markdown Previewを表示します。
+
+iframeの読み込み中はloading表示を出し、`load`または対応するpreview bridgeのready通知を一定時間確認できない場合は、エラーと「新規タブで開く」fallbackを表示します。これはbest-effortの判定であり、CSPや`X-Frame-Options`などによるiframe拒否をブラウザAPIだけで確実に判定するものではありません。埋め込み表示はボタンから閉じられ、記事を切り替えるかstale sessionを回収すると再び自動表示されます。狭い画面では編集画面とpreviewを上下に配置します。
 
 preview側を管理できる場合は、正常表示後に親ウィンドウへ `window.parent.postMessage({ type: 'homecms-local-preview-ready' }, '<preview origin>')` を送ると、CMSが明示的なready通知として扱います。
 
