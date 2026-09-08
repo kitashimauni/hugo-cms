@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"io"
@@ -28,6 +29,8 @@ func NewPreviewURLResolver(generator string) (PreviewURLResolver, error) {
 	switch strings.ToLower(strings.TrimSpace(generator)) {
 	case "", "hugo":
 		return &hugoPreviewURLResolver{}, nil
+	case "eleventy", "11ty":
+		return &eleventyPreviewURLResolver{}, nil
 	default:
 		return nil, fmt.Errorf("preview URL resolution is not supported for generator %q", generator)
 	}
@@ -56,6 +59,7 @@ func (resolver *hugoPreviewURLResolver) ResolveArticleURL(ctx context.Context, r
 	if workspace.ArticlePath != filepath.ToSlash(articlePath) {
 		return "", fmt.Errorf("preview workspace article does not match request")
 	}
+	runtime.ContentDir = workspace.ContentDir
 	previewURL, err := localPreviewResolverURL(runtime)
 	if err != nil {
 		return "", err
@@ -236,3 +240,152 @@ func localPreviewArticleURL(previewURL, resolvedURL string) (string, error) {
 }
 
 var _ PreviewURLResolver = (*hugoPreviewURLResolver)(nil)
+
+type eleventyPreviewURLResolver struct {
+	run func(context.Context, config.SiteRuntime) ([]byte, error)
+}
+
+func (resolver *eleventyPreviewURLResolver) ResolveArticleURL(ctx context.Context, runtime config.SiteRuntime, workspace LocalPreviewWorkspace, articlePath string) (string, error) {
+	articlePath = filepath.Clean(strings.TrimSpace(articlePath))
+	if articlePath == "." || filepath.IsAbs(articlePath) {
+		return "", fmt.Errorf("invalid preview article path")
+	}
+	if workspace.ContentDir == "" {
+		return "", fmt.Errorf("preview workspace content directory is required")
+	}
+	if workspace.ArticlePath != filepath.ToSlash(articlePath) {
+		return "", fmt.Errorf("preview workspace article does not match request")
+	}
+	runtime.ContentDir = workspace.ContentDir
+	previewURL, err := localPreviewResolverURL(runtime)
+	if err != nil {
+		return "", err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, previewURLResolveTimeout)
+	defer cancel()
+
+	run := resolver.run
+	if run == nil {
+		run = runEleventyJSON
+	}
+	output, err := run(ctx, runtime)
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("eleventy URL resolution timed out after %s", previewURLResolveTimeout)
+		}
+		return "", fmt.Errorf("eleventy URL resolution failed: %w", err)
+	}
+	resolvedURL, err := parseEleventyJSON(output, runtime, articlePath)
+	if err != nil {
+		return "", err
+	}
+	return localPreviewArticleURL(previewURL, resolvedURL)
+}
+
+func runEleventyJSON(ctx context.Context, runtime config.SiteRuntime) ([]byte, error) {
+	pm, err := detectEleventyPackageManager(runtime.RepoPath)
+	if err != nil {
+		return nil, err
+	}
+	args := append([]string{}, pm.Args...)
+	args = append(args,
+		"--input", runtime.ContentDir,
+		"--to=json",
+		"--quiet",
+	)
+	cmd := generatorCommandContextWithEnv(
+		ctx,
+		runtime,
+		[]string{"NODE_ENV=development", "ELEVENTY_ENV=development"},
+		pm.Bin,
+		args...,
+	)
+	return cmd.Output()
+}
+
+type eleventyPreviewJSONEntry struct {
+	InputPath  string          `json:"inputPath"`
+	URL        json.RawMessage `json:"url"`
+	OutputPath string          `json:"outputPath"`
+	Data       struct {
+		Page struct {
+			InputPath string          `json:"inputPath"`
+			URL       json.RawMessage `json:"url"`
+		} `json:"page"`
+	} `json:"data"`
+}
+
+func parseEleventyJSON(output []byte, runtime config.SiteRuntime, articlePath string) (string, error) {
+	var entries []eleventyPreviewJSONEntry
+	if err := json.Unmarshal(output, &entries); err != nil {
+		return "", fmt.Errorf("parse eleventy JSON output: %w", err)
+	}
+	for _, entry := range entries {
+		inputPath := entry.InputPath
+		if strings.TrimSpace(inputPath) == "" {
+			inputPath = entry.Data.Page.InputPath
+		}
+		if !eleventyInputPathMatches(runtime.ContentDir, articlePath, inputPath) {
+			continue
+		}
+		resolvedURL := jsonStringValue(entry.URL)
+		if resolvedURL == "" {
+			resolvedURL = jsonStringValue(entry.Data.Page.URL)
+		}
+		if resolvedURL == "" {
+			continue
+		}
+		return resolvedURL, nil
+	}
+	return "", fmt.Errorf("eleventy did not resolve article %q", articlePath)
+}
+
+func jsonStringValue(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" || string(raw) == "false" {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func eleventyInputPathMatches(inputDir, articlePath, listedPath string) bool {
+	target := normalizePreviewPath(articlePath)
+	candidate := normalizePreviewPath(listedPath)
+	if target == "" || candidate == "" {
+		return false
+	}
+	if candidate == target {
+		return true
+	}
+	inputDir = strings.TrimSpace(inputDir)
+	if inputDir == "" {
+		return false
+	}
+	inputBase := normalizePreviewPath(filepath.Base(filepath.Clean(inputDir)))
+	if inputBase != "" && (candidate == inputBase+"/"+target || strings.HasSuffix(candidate, "/"+inputBase+"/"+target)) {
+		return true
+	}
+	expected := normalizePreviewPath(filepath.Join(inputDir, filepath.FromSlash(articlePath)))
+	return expected != "" && candidate == expected
+}
+
+func normalizePreviewPath(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if value == "" {
+		return ""
+	}
+	value = strings.TrimPrefix(value, "./")
+	value = strings.TrimSuffix(path.Clean(value), "/")
+	if value == "." {
+		return ""
+	}
+	return value
+}
+
+var _ PreviewURLResolver = (*eleventyPreviewURLResolver)(nil)

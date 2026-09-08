@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -61,6 +62,72 @@ func TestHugoLocalPreviewArgsUsesHTTPReloadPort(t *testing.T) {
 func TestHugoLocalPreviewArgsRejectsURLPort(t *testing.T) {
 	if _, err := hugoLocalPreviewArgs(config.SiteRuntime{ContentDir: "content"}, 14123, "https://tech.preview.example.com:8443/"); err == nil {
 		t.Fatal("hugoLocalPreviewArgs() should reject an external URL port")
+	}
+}
+
+func TestEleventyLocalPreviewArgs(t *testing.T) {
+	runtime := config.SiteRuntime{ContentDir: `C:\preview\tech\content`}
+	outputDir := `C:\Temp\hugo-cms-local-preview\output`
+	got, err := eleventyLocalPreviewArgs(runtime, 14123, outputDir)
+	if err != nil {
+		t.Fatalf("eleventyLocalPreviewArgs() error = %v", err)
+	}
+	want := []string{
+		"--serve",
+		"--input", runtime.ContentDir,
+		"--output", outputDir,
+		"--port", "14123",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("eleventyLocalPreviewArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestEleventyLocalPreviewArgsRejectsRelativeOutput(t *testing.T) {
+	if _, err := eleventyLocalPreviewArgs(config.SiteRuntime{ContentDir: "content"}, 14123, "_site"); err == nil {
+		t.Fatal("eleventyLocalPreviewArgs() should reject a relative output directory")
+	}
+}
+
+func TestEleventyLocalPreviewCommandUsesDetectedPackageManagerAndLoopbackEnv(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"devDependencies":{"@11ty/eleventy":"^3.0.0"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{
+		ID:         "daily-blog",
+		RepoPath:   repo,
+		Generator:  "eleventy",
+		ContentDir: filepath.Join(repo, "content"),
+	}
+	cleanup := localPreviewProcessCleanup(runtime)
+	t.Cleanup(cleanup)
+
+	cmd, err := eleventyLocalPreviewCommand(context.Background(), runtime, 14123)
+	if err != nil {
+		t.Fatalf("eleventyLocalPreviewCommand() error = %v", err)
+	}
+	joined := strings.Join(cmd.Args, " ")
+	for _, want := range []string{"npm", "exec", "--", "eleventy", "--serve", "--input", runtime.ContentDir, "--output", "--port", "14123"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("command args = %q, missing %q", joined, want)
+		}
+	}
+	if !containsEnv(cmd.Env, "HOST", LocalPreviewBindAddress) {
+		t.Fatalf("command environment does not force loopback HOST: %#v", cmd.Env)
+	}
+}
+
+func TestLocalPreviewManagerSupportsEleventy(t *testing.T) {
+	manager, site := newTestLocalPreviewManager(t)
+	site.Generator = "eleventy"
+	defer shutdownTestLocalPreviewManager(t, manager)
+
+	if _, err := manager.EnsureReady(site); err != nil {
+		t.Fatalf("EnsureReady() error = %v", err)
 	}
 }
 
@@ -244,6 +311,16 @@ func testLocalPreviewCommand(ctx context.Context, _ config.SiteRuntime, port int
 		"HUGO_CMS_LOCAL_PREVIEW_PORT="+strconv.Itoa(port),
 	)
 	return cmd, nil
+}
+
+func containsEnv(environment []string, key, value string) bool {
+	want := key + "=" + value
+	for _, entry := range environment {
+		if entry == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLocalPreviewHelperProcess(t *testing.T) {

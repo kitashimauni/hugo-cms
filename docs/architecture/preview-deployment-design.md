@@ -91,13 +91,13 @@ production branchへ直接commit/pushする従来Publishは使用しない。rea
 
 ## Local Live Preview process / proxy
 
-Hugo processは最初のpreview requestでlazy startし、内部portはCMSが`14100-14999`から予約する。port利用可否をloopbackでprobeしたあとに起動し、bind race等でstartupに失敗した場合はslotを解放して別portで有限回retryする。
+generator processは最初のpreview requestでlazy startし、内部portはCMSが`14100-14999`から予約する。port利用可否をloopbackでprobeしたあとに起動し、bind race等でstartupに失敗した場合はslotを解放して別portで有限回retryする。
 
 Hugoにはexternal preview URLを`--baseURL`として渡し、`--appendPort=false`を使う。HTTPS previewではLiveReload portを443、HTTP previewでは80に固定し、internal portをbrowserへ露出させない。`--renderToMemory`、draft/future content、watchを有効にする。
 
 reverse proxyはpath prefixを加えずrequest pathをそのままHugoへ渡す。root-relative `/css/...`、`/js/...`、`/images/...`はsite自身のorigin rootから取得される。内部`127.0.0.1:<port>`または`localhost:<port>`を指すabsolute `Location`だけをexternal preview originへ書き換え、外部redirectは保持する。HTTP Upgradeを透過してHugo LiveReloadのWebSocketを通す。
 
-CMS shutdown時には起動済みHugo processを停止する。異常終了したprocessはfailed状態となり、次のrequestで再起動可能とする。
+CMS shutdown時には起動済みgenerator processを停止する。異常終了したprocessはfailed状態となり、次のrequestで再起動可能とする。
 
 ## ライフサイクルと競合
 

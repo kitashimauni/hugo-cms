@@ -32,9 +32,9 @@ func LocalPreviewIngress(manager *services.LocalPreviewManager) gin.HandlerFunc 
 		}
 
 		// Phase 3 keeps unsaved editor content outside the production working
-		// tree. If this site has an active shadow workspace, point Hugo's
-		// contentDir at it while leaving configuration/theme/layout/static files
-		// rooted in the original repository.
+		// tree. If this site has an active shadow workspace, point the selected
+		// generator's input at it while leaving repository configuration,
+		// theme/layout, data, static and asset files rooted in the repository.
 		if workspaceManager, workspaceErr := services.DefaultLocalPreviewWorkspaceManager(); workspaceErr == nil {
 			if workspace, ok := workspaceManager.Active(site.ID); ok {
 				site.ContentDir = workspace.ContentDir

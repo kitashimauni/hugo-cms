@@ -7,7 +7,9 @@ Issue #32のLocal Live Previewは段階的に実装する。
 - Phase 1 (#33): 設定model、derived URL、Host validation、process lifecycle/port reservation
 - Phase 2 (#34): Hugo lazy start/stop、loopback port、hostname reverse proxy、redirect補正、WebSocket/LiveReload中継
 - Phase 3 (#35): shadow content workspace + editor debounce + content resource同期
-- Phase 4: UI/運用導線
+- Phase 4: UI/運用導線、generator別URL解決
+- Issue #46: Eleventy `--serve`、shadow input、generator metadata URL解決
+- Issue #37: 実blog・wildcard ingressでのHugo/Eleventy受け入れ確認は実環境で継続する
 
 Local Live PreviewはMarkdown本文プレビューとDeployment Previewを置き換えず、両者の中間を担う。
 
@@ -60,9 +62,9 @@ sites:
 
 HTTPSではport省略または`:443`、HTTPではport省略または`:80`だけを許可する。preview namespace内のinvalid/unknown HostはCMS admin routeへfall throughさせない。HostはSite Registry lookupにだけ使い、repository path、command、internal portへ変換しない。
 
-## Hugo process lifecycle
+## Generator process lifecycle
 
-`LocalPreviewManager`がsiteごとのHugo processを管理する。
+`LocalPreviewManager`がsiteごとのgenerator processを管理する。generatorごとの差異はprocess command factoryと`PreviewURLResolver`へ閉じ込め、lifecycle、port reservation、proxy、shutdownは共通化する。
 
 ```text
 stopped -> starting -> ready -> stopping -> stopped
@@ -98,7 +100,19 @@ hugo server
   --noHTTPCache
 ```
 
-記事選択時の初回起動では、shadow workspaceをHugoの`contentDir`として使い、`hugo list all`のCSVから選択記事の`permalink`を取得する。CMSはgeneratorに依存しない`PreviewURLResolver`契約を介して解決し、Hugo実装ではserverと同じ`--environment development`を指定し、`HUGO_CONTENTDIR`と`HUGO_BASEURL`のenvironment variableでshadow contentとLocal Preview URLをoverrideし、`--noBuildLock`を渡す。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalinkやslugを再実装しない。以降の同一記事の編集はLiveReloadを利用する。
+Eleventyは対象siteのpackage managerを再利用し、production repositoryをcwdにしたままshadow contentを入力にする。
+
+```text
+<package-manager> exec eleventy
+  --serve
+  --input <shadow-content-dir>
+  --output <OS-temporary-output-dir>
+  --port <internal-port>
+```
+
+Eleventyの出力ディレクトリはproductionの`public`/`_site`を上書きしない。内部serverはloopback portだけでproxyから利用し、停止時にtemporary outputを削除する。Eleventy dev serverのwatch/live reloadをそのまま使う。
+
+記事選択時の初回起動では、shadow workspaceをgeneratorの入力として使う。CMSはgeneratorに依存しない`PreviewURLResolver`契約を介して解決する。Hugo実装はserverと同じ`--environment development`を指定し、`HUGO_CONTENTDIR`と`HUGO_BASEURL`のenvironment variableでshadow contentとLocal Preview URLをoverrideし、`--noBuildLock`を渡す。Eleventy実装は同じrepository cwdとshadow `--input`で`--to=json --quiet`を実行し、Eleventyが返す`inputPath`と`url`を対応づける。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalink、slug、Data Cascade、paginationを再実装しない。以降の同一記事の編集はgeneratorのwatch/live reloadを利用する。
 
 ## Reverse proxy / LiveReload
 
@@ -122,7 +136,7 @@ Editor input
   -> 250ms debounce
   -> POST /admin/api/preview/local
   -> shadow content directory
-  -> Hugo watcher
+  -> generator watcher
   -> rebuild / LiveReload
 ```
 
@@ -140,7 +154,7 @@ OS temporary directory/
         ... mirrored site content ...
 ```
 
-Hugoのworking directory/source rootは元repositoryのまま維持する。Hugo config、theme/layout、static、assets、modulesは元repoから読み、`--contentDir`だけをshadow directoryのabsolute pathへ差し替える。
+generatorのworking directoryは元repositoryのまま維持する。Hugo config、theme/layout、static、assets、modulesは元repoから読み、`--contentDir`だけをshadow directoryのabsolute pathへ差し替える。Eleventyもconfig、layout、data、passthrough assetは元repoから読み、`--input`だけをshadow directoryへ差し替え、生成出力はtemporary directoryへ分離する。
 
 workspaceは`PREVIEW_STATE_DIR`へ永続化しない。session releaseまたはCMS shutdown時に削除する。
 
@@ -168,7 +182,7 @@ static配下はHugoが元repositoryを直接参照するためshadow同期しな
 - 別siteは独立workspaceを利用可能
 - stale tabは別tabのworkspaceをreleaseできない
 
-article/site切替ではbrowserがin-flight update完了を待ってreleaseする。serverはHugo processを先に停止し、その後shadow directoryを削除する。
+article/site切替ではbrowserがin-flight update完了を待ってreleaseする。serverはgenerator processを先に停止し、その後shadow directoryを削除する。
 
 ブラウザtabを切替操作なしで閉じた場合の確実なlease解放はPhase 4の停止UI/lease運用で扱う。それまではCMS shutdownで全workspaceをcleanupする。
 
@@ -203,7 +217,7 @@ POST /admin/api/preview/local
 }
 ```
 
-初回updateでworkspaceを作った場合、保存済みcontentを使っていた既存Hugo processを一度停止する。次のpreview hostname requestでshadow `contentDir`を使ってlazy startし、その後はHugo watcherが変更を拾う。
+初回updateでworkspaceを作った場合、保存済みcontentを使っていた既存generator processを一度停止する。次のpreview hostname requestでshadow inputを使ってlazy startし、その後はgenerator watcherが変更を拾う。
 
 ### 初回記事URL解決
 
@@ -219,7 +233,7 @@ POST /admin/api/preview/local/navigate
 POST /admin/api/preview/local/release
 ```
 
-release時はHugo process停止後にworkspaceを削除する。active shadow sessionがなければ次のpreview requestは保存済みrepository contentを使う。
+release時はgenerator process停止後にworkspaceを削除する。active shadow sessionがなければ次のpreview requestは保存済みrepository contentを使う。Eleventyのtemporary outputも同時に削除する。
 
 ## Phase 4への契約
 

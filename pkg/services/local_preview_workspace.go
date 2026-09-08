@@ -224,7 +224,7 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 
 // Heartbeat renews a live lease without changing content. Once the lease has
 // expired, the browser must reclaim/restart instead of reviving a session whose
-// Hugo process may already be stopping.
+// generator process may already be stopping.
 func (m *LocalPreviewWorkspaceManager) Heartbeat(siteID, draftID string) (LocalPreviewWorkspace, error) {
 	if err := validateDraftID(draftID); err != nil {
 		return LocalPreviewWorkspace{}, err
@@ -407,7 +407,7 @@ func (m *LocalPreviewWorkspaceManager) CancelReclaim(claim LocalPreviewReclaim) 
 }
 
 // ReleaseStale atomically claims and removes an expired workspace. Callers that
-// must stop the Hugo process before deleting the workspace should use
+// must stop the generator process before deleting the workspace should use
 // ClaimStale followed by FinishReclaim instead.
 func (m *LocalPreviewWorkspaceManager) ReleaseStale(siteID string) (bool, error) {
 	claim, claimed, err := m.ClaimStale(siteID)

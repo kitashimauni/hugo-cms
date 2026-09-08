@@ -43,11 +43,6 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 		ErrorConflict(c, "Local Live Preview is disabled for this site")
 		return
 	}
-	if generator := strings.TrimSpace(runtime.Generator); generator != "" && !strings.EqualFold(generator, "hugo") {
-		ErrorConflict(c, "Local Live Preview currently supports Hugo only")
-		return
-	}
-
 	var req localPreviewNavigateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ErrorBadRequest(c, "Invalid JSON")
