@@ -23,6 +23,11 @@ const {
     normalizeLocalPreviewState,
     safeExternalURL,
 } = await import("./ui.js");
+const {
+    createLocalPreviewFrameController,
+    shouldAutoShowEmbeddedLocalPreview,
+    shouldCloseEmbeddedLocalPreview,
+} = await import("./local_preview.js");
 const { createDraftUUID, createLocalPreviewSessionID, getOrCreateDraftID } = await import("./editor.js");
 const API = await import("./api.js");
 
@@ -82,6 +87,99 @@ describe("normalizeLocalPreviewState", () => {
         });
 
         assert.equal(state.status, "stale");
+    });
+});
+
+function createPreviewFrameHarness() {
+    const makeClassList = (...initial) => {
+        const values = new Set(initial);
+        return {
+            add(value) { values.add(value); },
+            remove(value) { values.delete(value); },
+            contains(value) { return values.has(value); },
+        };
+    };
+    const wrapper = { classList: makeClassList("hidden") };
+    const frame = {
+        src: "about:blank",
+        getAttribute(name) { return name === "src" ? this.src : null; },
+    };
+    const button = { textContent: "埋め込み表示" };
+    const loading = { classList: makeClassList("hidden") };
+    const error = { classList: makeClassList("hidden") };
+    const errorMessage = { textContent: "" };
+    let timerCallback = null;
+    const controller = createLocalPreviewFrameController({
+        getURL: () => "https://preview.example.test/",
+        wrapper,
+        frame,
+        button,
+        loading,
+        error,
+        errorMessage,
+        setTimeoutFn(callback) {
+            timerCallback = callback;
+            return "preview-timer";
+        },
+        clearTimeoutFn() {
+            timerCallback = null;
+        },
+    });
+    return { controller, wrapper, frame, button, loading, error, errorMessage, triggerTimeout: () => timerCallback?.() };
+}
+
+describe("embedded Local Preview state transitions", () => {
+    it("closes the embed for conflict, stale, or missing article state", () => {
+        assert.equal(shouldCloseEmbeddedLocalPreview({ status: "conflict", hasCurrentPath: true }), true);
+        assert.equal(shouldCloseEmbeddedLocalPreview({ status: "stale", hasCurrentPath: true }), true);
+        assert.equal(shouldCloseEmbeddedLocalPreview({ status: "ready", hasCurrentPath: false }), true);
+        assert.equal(shouldCloseEmbeddedLocalPreview({ status: "ready", hasCurrentPath: true }), false);
+    });
+
+    it("only auto-shows an owned preview for an active article", () => {
+        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "starting", sessionOwned: true, hasCurrentPath: true, dismissed: false }), true);
+        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "conflict", sessionOwned: true, hasCurrentPath: true, dismissed: false }), false);
+        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "ready", sessionOwned: false, hasCurrentPath: true, dismissed: false }), false);
+        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "ready", sessionOwned: true, hasCurrentPath: true, dismissed: true }), false);
+    });
+
+    it("shows the iframe in loading state and clears it after a ready event", () => {
+        const harness = createPreviewFrameHarness();
+
+        assert.equal(harness.controller.show(), true);
+        assert.equal(harness.controller.isVisible(), true);
+        assert.equal(harness.frame.src, "https://preview.example.test/");
+        assert.equal(harness.loading.classList.contains("hidden"), false);
+        assert.equal(harness.button.textContent, "埋め込みを閉じる");
+
+        harness.controller.handleReady();
+        assert.equal(harness.loading.classList.contains("hidden"), true);
+        assert.equal(harness.error.classList.contains("hidden"), true);
+    });
+
+    it("shows a best-effort fallback state when the iframe does not respond", () => {
+        const harness = createPreviewFrameHarness();
+
+        harness.controller.show();
+        harness.triggerTimeout();
+
+        assert.equal(harness.error.classList.contains("hidden"), false);
+        assert.match(harness.errorMessage.textContent, /確認できません/);
+    });
+
+    it("keeps dismissal separate from manual reopening", () => {
+        const harness = createPreviewFrameHarness();
+
+        harness.controller.show();
+        harness.controller.close({ dismiss: true });
+        assert.equal(harness.controller.isDismissed(), true);
+        assert.equal(harness.controller.isVisible(), false);
+        assert.equal(harness.frame.src, "about:blank");
+
+        harness.controller.resetDismissed();
+        harness.controller.show({ reload: true });
+        assert.equal(harness.controller.isDismissed(), false);
+        assert.equal(harness.controller.isVisible(), true);
     });
 });
 

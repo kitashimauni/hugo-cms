@@ -4,6 +4,12 @@ import * as API from './api.js';
 export function switchView(viewName) {
     const contentArea = document.getElementById('content-area');
     contentArea.classList.remove('split-mode');
+    contentArea.classList.toggle(
+        'local-preview-mode',
+        viewName === 'edit' &&
+        contentArea.classList.contains('local-preview-enabled') &&
+        contentArea.dataset.localPreviewHasArticle === 'true',
+    );
     document.getElementById('btn-view-split').classList.remove('active');
 
     document.getElementById('edit-view').style.display = 'none';
@@ -31,6 +37,7 @@ export function toggleSplitView() {
     const splitBtn = document.getElementById('btn-view-split');
 
     if (isSplit) {
+        contentArea.classList.remove('local-preview-mode');
         splitBtn.classList.add('active');
         document.getElementById('btn-view-edit').classList.remove('active');
         document.getElementById('btn-view-preview').classList.remove('active');
