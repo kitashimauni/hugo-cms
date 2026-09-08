@@ -222,6 +222,60 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 	return workspace, created, true, nil
 }
 
+// TouchArticle rewrites the selected shadow article without changing its
+// editor revision. It is used after Hugo is ready so --navigateToChanged gets
+// a filesystem event even when the selected article content has not changed.
+func (m *LocalPreviewWorkspaceManager) TouchArticle(runtime config.SiteRuntime, draftID, articlePath string) (LocalPreviewWorkspace, error) {
+	if err := validateDraftID(draftID); err != nil {
+		return LocalPreviewWorkspace{}, err
+	}
+	articlePath = filepath.Clean(strings.TrimSpace(articlePath))
+	if articlePath == "." || filepath.IsAbs(articlePath) {
+		return LocalPreviewWorkspace{}, fmt.Errorf("invalid local preview article path")
+	}
+	if runtime.ID == "" {
+		return LocalPreviewWorkspace{}, fmt.Errorf("local preview site ID is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return LocalPreviewWorkspace{}, fmt.Errorf("local preview workspace manager is closed")
+	}
+	if m.reclaimingLocked(runtime.ID) {
+		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionReclaiming
+	}
+	workspace, ok := m.sessions[runtime.ID]
+	if !ok {
+		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionNotFound
+	}
+	now := m.currentTimeLocked()
+	if m.staleLocked(workspace, now) {
+		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionExpired
+	}
+	if workspace.DraftID != draftID {
+		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionConflict
+	}
+	if workspace.ArticlePath != filepath.ToSlash(articlePath) {
+		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionMismatch
+	}
+
+	target := SafeJoin(workspace.ContentDir, "", articlePath)
+	if target == "" {
+		return LocalPreviewWorkspace{}, fmt.Errorf("invalid local preview article path")
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		return LocalPreviewWorkspace{}, fmt.Errorf("read local preview article: %w", err)
+	}
+	if err := writeLocalPreviewFileAtomic(target, content); err != nil {
+		return LocalPreviewWorkspace{}, err
+	}
+	workspace.LastSeenAt = now
+	m.sessions[runtime.ID] = workspace
+	return workspace, nil
+}
+
 // Heartbeat renews a live lease without changing content. Once the lease has
 // expired, the browser must reclaim/restart instead of reviving a session whose
 // Hugo process may already be stopping.

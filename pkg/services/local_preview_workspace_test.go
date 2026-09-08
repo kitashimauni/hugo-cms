@@ -58,6 +58,41 @@ func TestLocalPreviewWorkspaceMirrorsAndUpdatesContent(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewWorkspaceTouchArticleRewritesSameContentWithoutRevisionChange(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	workspace, _, _, err := manager.Update(runtime, "draft-1", "one.md", 7, []byte("draft"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	touched, err := manager.TouchArticle(runtime, "draft-1", "one.md")
+	if err != nil {
+		t.Fatalf("TouchArticle() error = %v", err)
+	}
+	if touched.Revision != 7 {
+		t.Fatalf("revision = %d, want 7", touched.Revision)
+	}
+	content, err := os.ReadFile(filepath.Join(workspace.ContentDir, "one.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "draft" {
+		t.Fatalf("touched content = %q, want draft", content)
+	}
+	production, err := os.ReadFile(filepath.Join(repo, "content", "one.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(production) != "original" {
+		t.Fatalf("production content was modified: %q", production)
+	}
+}
+
 func TestLocalPreviewWorkspaceRejectsStaleRevision(t *testing.T) {
 	repo := makeLocalPreviewWorkspaceRepo(t)
 	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())

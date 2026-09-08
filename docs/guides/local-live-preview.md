@@ -170,6 +170,10 @@ Local Live Previewが有効なsiteではheaderのview切替を次のように扱
 
 記事選択時はdesktopでは`Split`を初期viewにし、Hugoが解決した記事ページを表示します。CMSは`slug`、`url`、permalink、page bundleの規則を推測せず、Hugo serverの`--navigateToChanged`に遷移を任せます。Local Live Previewが無効なsiteでは、従来どおり`Preview`と`Split`の右側に簡易Markdown Previewを表示します。
 
+記事選択直後の初回表示では、現在の記事をshadow workspaceへ反映した後、iframeの最初の読み込み完了を契機に専用のnavigation APIを呼び出します。serverはHugoがreadyになったことを確認してから同じshadow記事をrevisionを増やさずatomic replaceし、`--navigateToChanged`へfilesystem changeを通知します。これにより、記事を編集しなくてもHugo自身がslug、`url`、permalink、page bundleの実ページURLを解決します。通常の編集更新ではこのnavigation APIを呼び出さず、従来どおりLiveReloadを利用します。
+
+初回navigationのnetwork error、408/425/429、5xxは250ms・750msのbackoffで最大3試行します。409（別session、stale、記事不一致）やその他の4xxは再試行せず、通常のsession recovery表示へ委譲します。
+
 iframeの読み込み中はloading表示を出し、`load`または対応するpreview bridgeのready通知を一定時間確認できない場合は、エラーと「新規タブで開く」fallbackを表示します。これはbest-effortの判定であり、CSPや`X-Frame-Options`などによるiframe拒否をブラウザAPIだけで確実に判定するものではありません。埋め込み表示はボタンから閉じられ、記事を切り替えるかstale sessionを回収すると再び自動表示されます。狭い画面では編集画面とpreviewを上下に配置します。
 
 preview側を管理できる場合は、正常表示後に親ウィンドウへ `window.parent.postMessage({ type: 'homecms-local-preview-ready' }, '<CMS origin>')` を送ると、CMSが明示的なready通知として扱います。第2引数のtarget originはpreview originではなく、親フレームであるCMSのorigin（例: `https://cms.example.com`）を指定し、`*`は使用しません。
@@ -212,6 +216,21 @@ editor update:
 ```text
 POST /admin/api/preview/local
 ```
+
+記事選択後の初回navigation:
+
+```text
+POST /admin/api/preview/local/navigate
+```
+
+```json
+{
+  "draft_id": "<local-preview-session-id>",
+  "path": "posts/example.md"
+}
+```
+
+このAPIはactive sessionの所有者と記事pathを検証し、Hugoのready後にshadow上の同じ記事を再通知します。production content、Git working tree、editorのrevisionは変更しません。
 
 release:
 

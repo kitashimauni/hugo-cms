@@ -26,8 +26,11 @@ const {
 } = await import("./ui.js");
 const {
     createLocalPreviewFrameController,
+    LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS,
+    localPreviewNavigationRetryDelay,
     shouldAutoShowEmbeddedLocalPreview,
     shouldCloseEmbeddedLocalPreview,
+    shouldRetryLocalPreviewNavigation,
     shouldResyncLocalPreviewAfterInitialLoad,
     shouldUseLocalPreviewSplitDefault,
 } = await import("./local_preview.js");
@@ -151,6 +154,17 @@ describe("embedded Local Preview state transitions", () => {
         assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: false, enabled: true, hasCurrentPath: true }), false);
         assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: false, hasCurrentPath: true }), false);
         assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: true, hasCurrentPath: false }), false);
+    });
+
+    it("retries transient initial navigation failures with bounded backoff", () => {
+        assert.equal(LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS, 3);
+        assert.equal(shouldRetryLocalPreviewNavigation({ error: new TypeError("network"), attempt: 1 }), true);
+        assert.equal(shouldRetryLocalPreviewNavigation({ error: { status: 503 }, attempt: 2 }), true);
+        assert.equal(shouldRetryLocalPreviewNavigation({ error: { status: 409 }, attempt: 1 }), false);
+        assert.equal(shouldRetryLocalPreviewNavigation({ error: { status: 400 }, attempt: 1 }), false);
+        assert.equal(shouldRetryLocalPreviewNavigation({ error: { status: 503 }, attempt: 3 }), false);
+        assert.equal(localPreviewNavigationRetryDelay(1), 250);
+        assert.equal(localPreviewNavigationRetryDelay(2), 750);
     });
 
     it("uses Split as the desktop default but keeps Edit on narrow viewports", () => {
@@ -341,6 +355,7 @@ describe("preview API contracts", () => {
         const article = { path: "posts/one.md", body: "# Draft", frontmatter: { title: "Draft" } };
         await API.renderMarkdownPreview(article);
         await API.updateLocalPreviewContent(article, "local-session", 7);
+        await API.navigateLocalPreviewContent("local-session", article.path);
         await API.releaseLocalPreviewContent("local-session");
         await API.fetchLocalPreviewStatus("local-session");
         await API.heartbeatLocalPreviewContent("local-session");
@@ -356,20 +371,22 @@ describe("preview API contracts", () => {
         assert.deepEqual(JSON.parse(calls[1].options.body), article);
         assert.equal(calls[2].url, "/admin/api/preview/local?site=docs+site");
         assert.deepEqual(JSON.parse(calls[2].options.body), { ...article, draft_id: "local-session", revision: 7 });
-        assert.equal(calls[3].url, "/admin/api/preview/local/release?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[3].options.body), { draft_id: "local-session" });
-        assert.equal(calls[4].url, "/admin/api/preview/local/status?draft_id=local-session&site=docs+site");
-        assert.equal(calls[5].url, "/admin/api/preview/local/heartbeat?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[5].options.body), { draft_id: "local-session" });
-        assert.equal(calls[6].url, "/admin/api/preview/local/stop?site=docs+site");
+        assert.equal(calls[3].url, "/admin/api/preview/local/navigate?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[3].options.body), { draft_id: "local-session", path: article.path });
+        assert.equal(calls[4].url, "/admin/api/preview/local/release?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[4].options.body), { draft_id: "local-session" });
+        assert.equal(calls[5].url, "/admin/api/preview/local/status?draft_id=local-session&site=docs+site");
+        assert.equal(calls[6].url, "/admin/api/preview/local/heartbeat?site=docs+site");
         assert.deepEqual(JSON.parse(calls[6].options.body), { draft_id: "local-session" });
-        assert.equal(calls[7].url, "/admin/api/preview/local/reclaim?site=docs+site");
-        assert.equal(calls[8].url, "/admin/api/preview/deployments?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[8].options.body), { path: article.path, draft_id: "draft/id" });
-        assert.equal(calls[9].url, "/admin/api/preview/deployments/draft%2Fid?site=docs+site");
-        assert.equal(calls[10].url, "/admin/api/preview/deployments/draft%2Fid/retry?site=docs+site");
-        assert.equal(calls[11].url, "/admin/api/preview/deployments/draft%2Fid/discard?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[12].options.body), { path: article.path, draft_id: "draft/id" });
+        assert.equal(calls[7].url, "/admin/api/preview/local/stop?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[7].options.body), { draft_id: "local-session" });
+        assert.equal(calls[8].url, "/admin/api/preview/local/reclaim?site=docs+site");
+        assert.equal(calls[9].url, "/admin/api/preview/deployments?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[9].options.body), { path: article.path, draft_id: "draft/id" });
+        assert.equal(calls[10].url, "/admin/api/preview/deployments/draft%2Fid?site=docs+site");
+        assert.equal(calls[11].url, "/admin/api/preview/deployments/draft%2Fid/retry?site=docs+site");
+        assert.equal(calls[12].url, "/admin/api/preview/deployments/draft%2Fid/discard?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[13].options.body), { path: article.path, draft_id: "draft/id" });
         calls.slice(1).forEach(call => {
             assert.equal(call.options.headers["X-CMS-Site"], "docs site");
         });
