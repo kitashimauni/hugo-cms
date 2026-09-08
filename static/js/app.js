@@ -1,6 +1,11 @@
 import * as API from './api.js';
 import * as UI from './ui.js';
 import * as Editor from './editor.js';
+import {
+    createLocalPreviewFrameController,
+    shouldAutoShowEmbeddedLocalPreview,
+    shouldCloseEmbeddedLocalPreview,
+} from './local_preview.js';
 
 // Global State
 let cmsConfig = null;
@@ -18,16 +23,15 @@ let localPreviewPollTimer = null;
 let localPreviewHeartbeatTimer = null;
 let localPreviewController = null;
 let localPreviewOperationInProgress = false;
-let localPreviewFrameLoadTimer = null;
-let localPreviewEmbedDismissed = false;
+let localPreviewFrameController = null;
 
 const LOCAL_PREVIEW_POLL_MS = 3000;
 const LOCAL_PREVIEW_HEARTBEAT_MS = 30000;
-const LOCAL_PREVIEW_FRAME_TIMEOUT_MS = 10000;
 
 init();
 
 async function init() {
+    initializeLocalPreviewFrame();
     try {
         siteRegistry = await API.fetchSites();
         API.initializeCurrentSite(siteRegistry);
@@ -39,8 +43,6 @@ async function init() {
     }
 
     Editor.initAutoSave();
-    initializeLocalPreviewFrame();
-
     window.switchView = switchView;
     window.toggleSplitView = UI.toggleSplitView;
     window.toggleSidebar = UI.toggleSidebar;
@@ -203,7 +205,8 @@ async function loadFile(path) {
 
     localPreviewSessionID = "";
     if (localPreviewEnabled) {
-        localPreviewEmbedDismissed = false;
+        localPreviewFrameController?.resetDismissed();
+        updateLocalPreviewMode();
         try {
             await ensureLocalPreviewSession();
             showEmbeddedLocalPreview({ reload: true });
@@ -241,77 +244,74 @@ function localPreviewURL() {
 }
 
 function configureLocalPreviewPanel() {
-    const contentArea = document.getElementById('content-area');
     const panel = document.getElementById('local-preview-panel');
-    if (contentArea) {
-        contentArea.classList.toggle('local-preview-enabled', localPreviewEnabled);
-        contentArea.classList.toggle('local-preview-mode', localPreviewEnabled);
-    }
+    updateLocalPreviewMode();
     if (!localPreviewEnabled) {
         closeEmbeddedLocalPreview();
         return;
     }
     if (!panel) return;
-    localPreviewEmbedDismissed = false;
+    localPreviewFrameController?.resetDismissed();
     renderLocalPreviewState({ enabled: true, status: 'stopped', process_state: 'stopped', session_active: false });
 }
 
 function initializeLocalPreviewFrame() {
     const frame = document.getElementById('local-preview-frame');
-    if (!frame || frame.dataset.listenersAttached === 'true') return;
-    frame.addEventListener('load', handleLocalPreviewFrameLoad);
-    frame.addEventListener('error', () => showLocalPreviewFrameError('preview ingressから応答を受け取れませんでした。'));
-    frame.dataset.listenersAttached = 'true';
+    if (!frame || localPreviewFrameController) return;
+    localPreviewFrameController = createLocalPreviewFrameController({
+        getURL: localPreviewURL,
+        wrapper: document.getElementById('local-preview-embed'),
+        frame,
+        button: document.getElementById('local-preview-embed-btn'),
+        loading: document.getElementById('local-preview-frame-loading'),
+        error: document.getElementById('local-preview-frame-error'),
+        errorMessage: document.getElementById('local-preview-frame-error-message'),
+    });
+    frame.addEventListener('load', () => localPreviewFrameController?.handleLoad());
+    frame.addEventListener('error', () => localPreviewFrameController?.handleError());
+    window.addEventListener('message', handleLocalPreviewReadyMessage);
 }
 
-function clearLocalPreviewFrameLoadTimer() {
-    if (localPreviewFrameLoadTimer) {
-        clearTimeout(localPreviewFrameLoadTimer);
-        localPreviewFrameLoadTimer = null;
+function handleLocalPreviewReadyMessage(event) {
+    const frame = document.getElementById('local-preview-frame');
+    const url = localPreviewURL();
+    if (!frame || !url || event.source !== frame.contentWindow) return;
+    let origin;
+    try {
+        origin = new URL(url).origin;
+    } catch (_) {
+        return;
     }
+    if (event.origin !== origin || event.data?.type !== 'homecms-local-preview-ready') return;
+    localPreviewFrameController?.handleReady();
 }
 
-function handleLocalPreviewFrameLoad() {
-    clearLocalPreviewFrameLoadTimer();
-    const loading = document.getElementById('local-preview-frame-loading');
-    const error = document.getElementById('local-preview-frame-error');
-    if (loading) loading.classList.add('hidden');
-    if (error) error.classList.add('hidden');
+function updateLocalPreviewMode() {
+    const contentArea = document.getElementById('content-area');
+    if (!contentArea) return;
+    const hasCurrentPath = Boolean(Editor.getCurrentPath());
+    const embedded = localPreviewFrameController?.isVisible() === true;
+    contentArea.dataset.localPreviewHasArticle = String(hasCurrentPath);
+    contentArea.classList.toggle('local-preview-enabled', localPreviewEnabled);
+    contentArea.classList.toggle(
+        'local-preview-mode',
+        localPreviewEnabled && !contentArea.classList.contains('split-mode') && (hasCurrentPath || embedded),
+    );
+}
+
+function showEmbeddedLocalPreview(options = {}) {
+    const shown = localPreviewFrameController?.show(options) === true;
+    if (shown) updateLocalPreviewMode();
+    return shown;
 }
 
 function showLocalPreviewFrameError(message) {
-    clearLocalPreviewFrameLoadTimer();
-    const loading = document.getElementById('local-preview-frame-loading');
-    const error = document.getElementById('local-preview-frame-error');
-    const errorMessage = document.getElementById('local-preview-frame-error-message');
-    if (loading) loading.classList.add('hidden');
-    if (errorMessage && message) errorMessage.textContent = message;
-    if (error) error.classList.remove('hidden');
+    localPreviewFrameController?.showError(message);
 }
 
-function showEmbeddedLocalPreview({ reload = false } = {}) {
-    const wrapper = document.getElementById('local-preview-embed');
-    const frame = document.getElementById('local-preview-frame');
-    const btn = document.getElementById('local-preview-embed-btn');
-    const url = localPreviewURL();
-    if (!wrapper || !frame || !url) return false;
-
-    const wasVisible = !wrapper.classList.contains('hidden');
-    const shouldLoad = reload || frame.getAttribute('src') !== url;
-    wrapper.classList.remove('hidden');
-    if (btn) btn.textContent = '埋め込みを閉じる';
-    if (!wasVisible || shouldLoad) {
-        const loading = document.getElementById('local-preview-frame-loading');
-        const error = document.getElementById('local-preview-frame-error');
-        if (loading) loading.classList.remove('hidden');
-        if (error) error.classList.add('hidden');
-        clearLocalPreviewFrameLoadTimer();
-        if (shouldLoad) frame.src = url;
-        localPreviewFrameLoadTimer = setTimeout(() => {
-            showLocalPreviewFrameError('previewの読み込みに時間がかかっています。新規タブで開いてください。');
-        }, LOCAL_PREVIEW_FRAME_TIMEOUT_MS);
-    }
-    return true;
+function closeEmbeddedLocalPreview(options = {}) {
+    localPreviewFrameController?.close(options);
+    updateLocalPreviewMode();
 }
 
 function localPreviewStatusClass(status) {
@@ -370,9 +370,15 @@ function renderLocalPreviewState(state) {
         stopBtn.classList.toggle('hidden', !(state?.session_owned || (!state?.session_active && processRunning)));
     }
 
-    if (!Editor.getCurrentPath() || status === 'conflict' || status === 'stale') {
+    const hasCurrentPath = Boolean(Editor.getCurrentPath());
+    if (shouldCloseEmbeddedLocalPreview({ status, hasCurrentPath })) {
         closeEmbeddedLocalPreview();
-    } else if ((status === 'starting' || status === 'ready') && state?.session_owned === true && Editor.getCurrentPath() && !localPreviewEmbedDismissed) {
+    } else if (shouldAutoShowEmbeddedLocalPreview({
+        status,
+        sessionOwned: state?.session_owned,
+        hasCurrentPath,
+        dismissed: localPreviewFrameController?.isDismissed(),
+    })) {
         showEmbeddedLocalPreview();
     } else if (status === 'failed' && state?.process_error) {
         showLocalPreviewFrameError(state.process_error);
@@ -477,28 +483,13 @@ async function toggleEmbeddedLocalPreview() {
     const url = localPreviewURL();
     if (!url) return UI.showToast('Local Live Preview URL is unavailable', 'warning');
     try {
-        localPreviewEmbedDismissed = false;
+        localPreviewFrameController?.resetDismissed();
         if (Editor.getCurrentPath()) await ensureLocalPreviewSession();
         showEmbeddedLocalPreview({ reload: true });
         setTimeout(() => refreshLocalPreviewStatus(), 500);
     } catch (e) {
         UI.showToast('埋め込みpreviewを開始できません: ' + e.message, 'error');
     }
-}
-
-function closeEmbeddedLocalPreview({ dismiss = false } = {}) {
-    const wrapper = document.getElementById('local-preview-embed');
-    const frame = document.getElementById('local-preview-frame');
-    const btn = document.getElementById('local-preview-embed-btn');
-    clearLocalPreviewFrameLoadTimer();
-    if (dismiss) localPreviewEmbedDismissed = true;
-    if (wrapper) wrapper.classList.add('hidden');
-    if (frame) frame.src = 'about:blank';
-    if (btn) btn.textContent = '埋め込み表示';
-    const loading = document.getElementById('local-preview-frame-loading');
-    const error = document.getElementById('local-preview-frame-error');
-    if (loading) loading.classList.add('hidden');
-    if (error) error.classList.add('hidden');
 }
 
 async function stopLocalLivePreview() {
@@ -525,7 +516,7 @@ async function reclaimLocalLivePreview() {
     try {
         await API.reclaimStaleLocalPreview();
         localPreviewSessionID = "";
-        localPreviewEmbedDismissed = false;
+        localPreviewFrameController?.resetDismissed();
         if (Editor.getCurrentPath()) {
             await ensureLocalPreviewSession();
             showEmbeddedLocalPreview({ reload: true });

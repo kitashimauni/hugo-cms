@@ -4,7 +4,12 @@ import * as API from './api.js';
 export function switchView(viewName) {
     const contentArea = document.getElementById('content-area');
     contentArea.classList.remove('split-mode');
-    contentArea.classList.toggle('local-preview-mode', viewName === 'edit');
+    contentArea.classList.toggle(
+        'local-preview-mode',
+        viewName === 'edit' &&
+        contentArea.classList.contains('local-preview-enabled') &&
+        contentArea.dataset.localPreviewHasArticle === 'true',
+    );
     document.getElementById('btn-view-split').classList.remove('active');
 
     document.getElementById('edit-view').style.display = 'none';

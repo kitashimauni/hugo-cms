@@ -161,7 +161,9 @@ Local Live Preview panelでは次を利用できます。
 - `管理操作` > `期限切れsessionを回収`: stale leaseだけを安全にreclaim
 - stopped / starting / ready / failed / conflict / staleの状態表示
 
-desktopでは編集画面とLive Previewを左右に並べます。iframeの読み込み中はloading表示を出し、frame policy・外部認証・通信失敗などで一定時間応答がない場合はエラーと「新規タブで開く」fallbackを表示します。埋め込み表示はボタンから閉じられ、記事を切り替えるかstale sessionを回収すると再び自動表示されます。狭い画面では編集画面とpreviewを上下に配置します。
+desktopでは編集画面とLive Previewを左右に並べます。iframeの読み込み中はloading表示を出し、`load`または対応するpreview bridgeのready通知を一定時間確認できない場合は、エラーと「新規タブで開く」fallbackを表示します。これはbest-effortの判定であり、CSPや`X-Frame-Options`などによるiframe拒否をブラウザAPIだけで確実に判定するものではありません。埋め込み表示はボタンから閉じられ、記事を切り替えるかstale sessionを回収すると再び自動表示されます。狭い画面では編集画面とpreviewを上下に配置します。
+
+preview側を管理できる場合は、正常表示後に親ウィンドウへ `window.parent.postMessage({ type: 'homecms-local-preview-ready' }, '<preview origin>')` を送ると、CMSが明示的なready通知として扱います。
 
 ### iframe埋め込み
 
