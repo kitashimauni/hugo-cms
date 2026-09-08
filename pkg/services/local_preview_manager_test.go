@@ -39,7 +39,6 @@ func TestHugoLocalPreviewArgs(t *testing.T) {
 		"--buildFuture",
 		"--buildExpired",
 		"--watch",
-		"--navigateToChanged",
 		"--noHTTPCache",
 	}
 	if !reflect.DeepEqual(got, want) {

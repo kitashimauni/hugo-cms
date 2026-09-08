@@ -8,7 +8,6 @@ import {
     shouldAutoShowEmbeddedLocalPreview,
     shouldCloseEmbeddedLocalPreview,
     shouldRetryLocalPreviewNavigation,
-    shouldResyncLocalPreviewAfterInitialLoad,
     shouldUseLocalPreviewSplitDefault,
 } from './local_preview.js';
 
@@ -29,10 +28,10 @@ let localPreviewHeartbeatTimer = null;
 let localPreviewController = null;
 let localPreviewOperationInProgress = false;
 let localPreviewFrameController = null;
-let localPreviewNeedsInitialNavigation = false;
-let localPreviewInitialNavigationInFlight = false;
-let localPreviewInitialNavigationAttempts = 0;
-let localPreviewInitialNavigationRetryTimer = null;
+let localPreviewArticleURL = "";
+let localPreviewURLResolutionGeneration = 0;
+let localPreviewFrontMatterKey = "";
+let localPreviewHasFrontMatterKey = false;
 
 const LOCAL_PREVIEW_POLL_MS = 3000;
 const LOCAL_PREVIEW_HEARTBEAT_MS = 30000;
@@ -126,6 +125,7 @@ async function init() {
     window.showMarkdownFallback = () => switchView('markdown');
     window.stopLocalLivePreview = stopLocalLivePreview;
     window.reclaimLocalLivePreview = reclaimLocalLivePreview;
+    window.refreshLocalPreviewArticleURL = refreshLocalPreviewArticleURL;
 
     console.log("Hugo CMS Initialized");
 }
@@ -133,6 +133,10 @@ async function init() {
 async function loadSiteData() {
     stopLocalPreviewMonitoring();
     localPreviewSessionID = "";
+    localPreviewArticleURL = "";
+    localPreviewURLResolutionGeneration += 1;
+    localPreviewFrontMatterKey = "";
+    localPreviewHasFrontMatterKey = false;
     localPreviewState = null;
 
     cmsConfig = await API.fetchConfig();
@@ -215,9 +219,12 @@ async function loadFile(path) {
     }
 
     localPreviewSessionID = "";
+    localPreviewArticleURL = "";
+    localPreviewURLResolutionGeneration += 1;
+    localPreviewFrontMatterKey = "";
+    localPreviewHasFrontMatterKey = false;
     if (localPreviewEnabled) {
         localPreviewFrameController?.resetDismissed();
-        requestLocalPreviewInitialNavigation();
         updateLocalPreviewAvailability();
         UI.switchView(shouldUseLocalPreviewSplitDefault({
             enabled: localPreviewEnabled,
@@ -225,10 +232,13 @@ async function loadFile(path) {
         }) ? 'split' : 'edit');
         try {
             await ensureLocalPreviewSession();
-            showEmbeddedLocalPreview({ reload: true });
-        } catch (_) {
-            // Editor already reports 409 conflicts; status panel provides the
-            // persistent recovery action when the old session becomes stale.
+            const articleURL = await resolveLocalPreviewArticleURL();
+            if (Editor.getCurrentPath() === path && !articleURL) {
+                throw new Error('generatorから記事URLを取得できませんでした');
+            }
+            if (Editor.getCurrentPath() === path) showEmbeddedLocalPreview({ reload: true });
+        } catch (error) {
+            showLocalPreviewResolutionError(error);
         }
         await refreshLocalPreviewStatus();
     }
@@ -259,6 +269,10 @@ function localPreviewURL() {
     return UI.safeExternalURL(cmsConfig?._cms?.local_preview?.url || "");
 }
 
+function currentLocalPreviewURL() {
+    return Editor.getCurrentPath() ? localPreviewArticleURL : localPreviewURL();
+}
+
 function isNarrowViewport() {
     if (typeof window.matchMedia === 'function') {
         return window.matchMedia('(max-width: 768px)').matches;
@@ -282,7 +296,7 @@ function initializeLocalPreviewFrame() {
     const frame = document.getElementById('local-preview-frame');
     if (!frame || localPreviewFrameController) return;
     localPreviewFrameController = createLocalPreviewFrameController({
-        getURL: localPreviewURL,
+        getURL: currentLocalPreviewURL,
         wrapper: document.getElementById('local-preview-embed'),
         frame,
         button: document.getElementById('local-preview-embed-btn'),
@@ -311,64 +325,6 @@ function handleLocalPreviewReadyMessage(event) {
 
 function handleLocalPreviewFrameLoad() {
     localPreviewFrameController?.handleLoad();
-    if (!shouldResyncLocalPreviewAfterInitialLoad({
-        pending: localPreviewNeedsInitialNavigation,
-        enabled: localPreviewEnabled,
-        hasCurrentPath: Boolean(Editor.getCurrentPath()),
-    })) return;
-
-    if (localPreviewInitialNavigationInFlight) return;
-    if (localPreviewInitialNavigationAttempts >= LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS) return;
-    if (localPreviewInitialNavigationRetryTimer !== null) {
-        clearTimeout(localPreviewInitialNavigationRetryTimer);
-        localPreviewInitialNavigationRetryTimer = null;
-    }
-    localPreviewInitialNavigationInFlight = true;
-    const requestPath = Editor.getCurrentPath();
-    const requestSessionID = localPreviewSessionID;
-    if (!requestSessionID) {
-        localPreviewInitialNavigationInFlight = false;
-        return;
-    }
-    const requestAttempt = ++localPreviewInitialNavigationAttempts;
-    API.navigateLocalPreviewContent(requestSessionID, requestPath)
-        .then(() => {
-            if (Editor.getCurrentPath() === requestPath && localPreviewSessionID === requestSessionID) {
-                localPreviewNeedsInitialNavigation = false;
-                localPreviewInitialNavigationAttempts = 0;
-            }
-            return refreshLocalPreviewStatus();
-        })
-        .catch((error) => {
-            if (shouldRetryLocalPreviewNavigation({ error, attempt: requestAttempt })) {
-                localPreviewInitialNavigationRetryTimer = setTimeout(() => {
-                    localPreviewInitialNavigationRetryTimer = null;
-                    if (
-                        localPreviewNeedsInitialNavigation &&
-                        Editor.getCurrentPath() === requestPath &&
-                        localPreviewSessionID === requestSessionID
-                    ) {
-                        handleLocalPreviewFrameLoad();
-                    }
-                }, localPreviewNavigationRetryDelay(requestAttempt));
-                return undefined;
-            }
-            localPreviewInitialNavigationAttempts = LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS;
-            return refreshLocalPreviewStatus();
-        })
-        .finally(() => {
-            // Keep the pending flag until the content update succeeds, while
-            // the in-flight guard prevents repeated iframe load events from
-            // duplicating the request.
-            localPreviewInitialNavigationInFlight = false;
-            if (
-                localPreviewNeedsInitialNavigation &&
-                localPreviewSessionID &&
-                (Editor.getCurrentPath() !== requestPath || localPreviewSessionID !== requestSessionID)
-            ) {
-                handleLocalPreviewFrameLoad();
-            }
-        });
 }
 
 function updateLocalPreviewAvailability() {
@@ -380,6 +336,7 @@ function updateLocalPreviewAvailability() {
 }
 
 function showEmbeddedLocalPreview(options = {}) {
+    if (Editor.getCurrentPath() && !localPreviewArticleURL) return false;
     const shown = localPreviewFrameController?.show(options) === true;
     if (shown) updateLocalPreviewAvailability();
     return shown;
@@ -389,24 +346,78 @@ function showLocalPreviewFrameError(message) {
     localPreviewFrameController?.showError(message);
 }
 
-function requestLocalPreviewInitialNavigation() {
-    localPreviewNeedsInitialNavigation = true;
-    localPreviewInitialNavigationAttempts = 0;
-    if (localPreviewInitialNavigationRetryTimer !== null) {
-        clearTimeout(localPreviewInitialNavigationRetryTimer);
-        localPreviewInitialNavigationRetryTimer = null;
-    }
+function showLocalPreviewResolutionError(error) {
+    const message = `記事URLを解決できません: ${error?.message || 'generatorからURLを取得できませんでした。'}`;
+    const messageEl = document.getElementById('local-preview-message');
+    if (messageEl) messageEl.textContent = message;
+    showLocalPreviewFrameError(message);
 }
 
 function closeEmbeddedLocalPreview(options = {}) {
-    localPreviewNeedsInitialNavigation = false;
-    localPreviewInitialNavigationAttempts = 0;
-    if (localPreviewInitialNavigationRetryTimer !== null) {
-        clearTimeout(localPreviewInitialNavigationRetryTimer);
-        localPreviewInitialNavigationRetryTimer = null;
-    }
     localPreviewFrameController?.close(options);
     updateLocalPreviewAvailability();
+}
+
+function isLocalPreviewArticleURL(value) {
+    const rootURL = localPreviewURL();
+    if (!rootURL || !value) return false;
+    try {
+        return new URL(value).origin === new URL(rootURL).origin;
+    } catch (_) {
+        return false;
+    }
+}
+
+async function resolveLocalPreviewArticleURL() {
+    if (!localPreviewEnabled || !Editor.getCurrentPath() || !localPreviewSessionID) return null;
+    const requestPath = Editor.getCurrentPath();
+    const requestSessionID = localPreviewSessionID;
+    const requestGeneration = localPreviewURLResolutionGeneration;
+    for (let attempt = 1; attempt <= LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS; attempt++) {
+        if (
+            Editor.getCurrentPath() !== requestPath ||
+            localPreviewSessionID !== requestSessionID ||
+            localPreviewURLResolutionGeneration !== requestGeneration
+        ) return null;
+        try {
+            const result = await API.resolveLocalPreviewArticleURL(requestSessionID, requestPath);
+            const articleURL = UI.safeExternalURL(result?.article_url || "");
+            if (!isLocalPreviewArticleURL(articleURL)) throw new Error('generator returned an invalid local preview URL');
+            if (
+                Editor.getCurrentPath() !== requestPath ||
+                localPreviewSessionID !== requestSessionID ||
+                localPreviewURLResolutionGeneration !== requestGeneration
+            ) return null;
+            localPreviewArticleURL = articleURL;
+            return articleURL;
+        } catch (error) {
+            if (!shouldRetryLocalPreviewNavigation({ error, attempt })) throw error;
+            await new Promise(resolve => setTimeout(resolve, localPreviewNavigationRetryDelay(attempt)));
+        }
+    }
+    return null;
+}
+
+async function refreshLocalPreviewArticleURL(updateResult, frontMatterKey = "") {
+    if (updateResult?.session_id) localPreviewSessionID = updateResult.session_id;
+    if (localPreviewHasFrontMatterKey && localPreviewFrontMatterKey === frontMatterKey && localPreviewArticleURL) {
+        return localPreviewArticleURL;
+    }
+    localPreviewFrontMatterKey = frontMatterKey;
+    localPreviewHasFrontMatterKey = true;
+    localPreviewURLResolutionGeneration += 1;
+    localPreviewArticleURL = "";
+    if (!localPreviewEnabled || !Editor.getCurrentPath()) return null;
+    try {
+        const articleURL = await resolveLocalPreviewArticleURL();
+        if (articleURL && Editor.getCurrentPath() && !localPreviewFrameController?.isDismissed()) {
+            showEmbeddedLocalPreview();
+        }
+        return articleURL;
+    } catch (error) {
+        showLocalPreviewResolutionError(error);
+        return null;
+    }
 }
 
 function localPreviewStatusClass(status) {
@@ -551,16 +562,22 @@ async function refreshLocalPreviewStatus() {
 }
 
 async function openLocalLivePreview() {
-    const url = localPreviewURL();
-    if (!localPreviewEnabled || !url) {
+    if (!localPreviewEnabled || !localPreviewURL()) {
         UI.showToast('Local Live Preview is not configured', 'warning');
         return;
     }
     try {
-        if (Editor.getCurrentPath()) await ensureLocalPreviewSession();
+        if (Editor.getCurrentPath()) {
+            await ensureLocalPreviewSession();
+            const articleURL = await resolveLocalPreviewArticleURL();
+            if (!articleURL) throw new Error('generatorから記事URLを取得できませんでした');
+        }
+        const url = currentLocalPreviewURL();
+        if (!url) throw new Error('記事URLを解決できませんでした');
         window.open(url, '_blank', 'noopener');
         setTimeout(() => refreshLocalPreviewStatus(), 500);
     } catch (e) {
+        showLocalPreviewResolutionError(e);
         UI.showToast('Local Live Previewを開けません: ' + e.message, 'error');
     }
 }
@@ -575,15 +592,18 @@ async function toggleEmbeddedLocalPreview() {
         return;
     }
 
-    const url = localPreviewURL();
-    if (!url) return UI.showToast('Local Live Preview URL is unavailable', 'warning');
+    if (!localPreviewURL()) return UI.showToast('Local Live Preview URL is unavailable', 'warning');
     try {
         localPreviewFrameController?.resetDismissed();
-        requestLocalPreviewInitialNavigation();
-        if (Editor.getCurrentPath()) await ensureLocalPreviewSession();
+        if (Editor.getCurrentPath()) {
+            await ensureLocalPreviewSession();
+            const articleURL = await resolveLocalPreviewArticleURL();
+            if (!articleURL) throw new Error('generatorから記事URLを取得できませんでした');
+        }
         showEmbeddedLocalPreview({ reload: true });
         setTimeout(() => refreshLocalPreviewStatus(), 500);
     } catch (e) {
+        showLocalPreviewResolutionError(e);
         UI.showToast('埋め込みpreviewを開始できません: ' + e.message, 'error');
     }
 }
@@ -594,6 +614,10 @@ async function stopLocalLivePreview() {
     try {
         const released = await Editor.releaseLocalLivePreview();
         localPreviewSessionID = "";
+        localPreviewArticleURL = "";
+        localPreviewURLResolutionGeneration += 1;
+        localPreviewFrontMatterKey = "";
+        localPreviewHasFrontMatterKey = false;
         if (!released) await API.stopLocalPreviewContent("");
         closeEmbeddedLocalPreview();
         UI.showToast('Local Live Previewを停止しました', 'success');
@@ -612,14 +636,20 @@ async function reclaimLocalLivePreview() {
     try {
         await API.reclaimStaleLocalPreview();
         localPreviewSessionID = "";
+        localPreviewArticleURL = "";
+        localPreviewURLResolutionGeneration += 1;
+        localPreviewFrontMatterKey = "";
+        localPreviewHasFrontMatterKey = false;
         localPreviewFrameController?.resetDismissed();
         if (Editor.getCurrentPath()) {
-            requestLocalPreviewInitialNavigation();
             await ensureLocalPreviewSession();
+            const articleURL = await resolveLocalPreviewArticleURL();
+            if (!articleURL) throw new Error('generatorから記事URLを取得できませんでした');
             showEmbeddedLocalPreview({ reload: true });
         }
         UI.showToast('Local Live Preview sessionを回収しました', 'success');
     } catch (e) {
+        showLocalPreviewResolutionError(e);
         UI.showToast('Local Live Previewを回収できません: ' + e.message, 'error');
     } finally {
         localPreviewOperationInProgress = false;

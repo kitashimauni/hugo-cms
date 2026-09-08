@@ -158,6 +158,16 @@ type GeneratorAdapter interface {
 
 アダプターはコマンドの定義だけを返し、プロセスを直接管理しない。起動、停止、タイムアウト、ログ収集は共通の`ProcessSupervisor`が担当する。
 
+初回のLocal Live Preview URL解決は、未保存内容を含むactive shadow workspaceを受け取る専用契約へ分離する。
+
+```go
+type PreviewURLResolver interface {
+	ResolveArticleURL(ctx context.Context, runtime SiteRuntime, workspace LocalPreviewWorkspace, articlePath string) (string, error)
+}
+```
+
+CMSはURL規則を再実装せず、generatorが返すURLのoriginだけをLocal Preview originへ変換する。Hugoでは`hugo list all`を使い、Eleventyなど他generatorのresolverは個別Issueで追加する。
+
 ### Runtime Runner
 
 コマンドを対象サイトのランタイムで実行する。

@@ -247,7 +247,7 @@ export async function updateLocalPreviewContent(payload, draftID, revision, sign
     return await res.json();
 }
 
-export async function navigateLocalPreviewContent(draftID, path) {
+export async function resolveLocalPreviewArticleURL(draftID, path) {
     const res = await fetchWithCSRF(withSite('/admin/api/preview/local/navigate'), {
         method: 'POST',
         headers: {
@@ -256,9 +256,13 @@ export async function navigateLocalPreviewContent(draftID, path) {
         },
         body: JSON.stringify({ draft_id: draftID, path })
     });
-    if (!res.ok) throw await responseError(res, "Local Live Preview navigation failed");
+    if (!res.ok) throw await responseError(res, "Local Live Preview URL resolution failed");
     return await res.json();
 }
+
+// Backward-compatible name for integrations that still use the pre-#44 API
+// helper. The endpoint now resolves and returns the article URL directly.
+export const navigateLocalPreviewContent = resolveLocalPreviewArticleURL;
 
 export async function releaseLocalPreviewContent(draftID) {
     const res = await fetchWithCSRF(withSite('/admin/api/preview/local/release'), {

@@ -602,7 +602,6 @@ func hugoLocalPreviewArgs(runtime config.SiteRuntime, port int, previewURL strin
 		"--buildFuture",
 		"--buildExpired",
 		"--watch",
-		"--navigateToChanged",
 		"--noHTTPCache",
 	}, nil
 }

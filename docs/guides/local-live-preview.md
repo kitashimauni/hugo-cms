@@ -168,11 +168,11 @@ Local Live Previewが有効なsiteではheaderのview切替を次のように扱
 - `Preview`: Local Live Previewを全幅表示
 - `Split`: EditorとLocal Live Previewを左右（狭い画面では上下）に表示
 
-記事選択時はdesktopでは`Split`を初期viewにし、Hugoが解決した記事ページを表示します。CMSは`slug`、`url`、permalink、page bundleの規則を推測せず、Hugo serverの`--navigateToChanged`に遷移を任せます。Local Live Previewが無効なsiteでは、従来どおり`Preview`と`Split`の右側に簡易Markdown Previewを表示します。
+記事選択時はdesktopでは`Split`を初期viewにし、generatorが解決した記事ページを表示します。CMSは`slug`、`url`、permalink、page bundleの規則を推測せず、generatorのURL resolverへ解決を委譲します。Local Live Previewが無効なsiteでは、従来どおり`Preview`と`Split`の右側に簡易Markdown Previewを表示します。
 
-記事選択直後の初回表示では、現在の記事をshadow workspaceへ反映した後、iframeの最初の読み込み完了を契機に専用のnavigation APIを呼び出します。serverはHugoがreadyになったことを確認してから同じshadow記事をrevisionを増やさずatomic replaceし、`--navigateToChanged`へfilesystem changeを通知します。これにより、記事を編集しなくてもHugo自身がslug、`url`、permalink、page bundleの実ページURLを解決します。通常の編集更新ではこのnavigation APIを呼び出さず、従来どおりLiveReloadを利用します。
+記事選択直後の初回表示では、現在の記事をshadow workspaceへ反映した後、serverが同じworkspaceを使ってHugo `list all`を実行し、選択記事の`permalink`を取得します。取得したURLはpath、query、fragmentを保持したままLocal Preview originへ変換し、iframeと新規タブへ直接設定します。これにより、記事を編集しなくてもHugo自身がslug、`url`、permalink、page bundle、languageの実ページURLを解決します。通常の本文編集ではiframeの現在URLを維持してLiveReloadを利用し、URLに影響するfront matter変更時だけ再解決します。
 
-初回navigationのnetwork error、408/425/429、5xxは250ms・750msのbackoffで最大3試行します。409（別session、stale、記事不一致）やその他の4xxは再試行せず、通常のsession recovery表示へ委譲します。
+初回URL解決のnetwork error、408/425/429、5xxは250ms・750msのbackoffで最大3試行します。409（別session、stale、記事不一致）やその他の4xxは再試行せず、通常のsession recovery表示へ委譲します。URLを解決できない場合はpreview rootへフォールバックせず、エラー状態を表示します。
 
 iframeの読み込み中はloading表示を出し、`load`または対応するpreview bridgeのready通知を一定時間確認できない場合は、エラーと「新規タブで開く」fallbackを表示します。これはbest-effortの判定であり、CSPや`X-Frame-Options`などによるiframe拒否をブラウザAPIだけで確実に判定するものではありません。埋め込み表示はボタンから閉じられ、記事を切り替えるかstale sessionを回収すると再び自動表示されます。狭い画面では編集画面とpreviewを上下に配置します。
 
@@ -217,7 +217,7 @@ editor update:
 POST /admin/api/preview/local
 ```
 
-記事選択後の初回navigation:
+記事選択後の初回URL解決:
 
 ```text
 POST /admin/api/preview/local/navigate
@@ -230,7 +230,7 @@ POST /admin/api/preview/local/navigate
 }
 ```
 
-このAPIはactive sessionの所有者と記事pathを検証し、Hugoのready後にshadow上の同じ記事を再通知します。production content、Git working tree、editorのrevisionは変更しません。
+このAPIはactive sessionの所有者と記事pathを検証し、shadow workspaceを使ってgeneratorの実ページURLを解決します。成功時は`article_url`、`revision`、`session_id`を返し、production content、Git working tree、editorのrevisionは変更しません。解決に失敗した場合はエラーを返し、preview rootへフォールバックしません。
 
 release:
 

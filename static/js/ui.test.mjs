@@ -31,7 +31,6 @@ const {
     shouldAutoShowEmbeddedLocalPreview,
     shouldCloseEmbeddedLocalPreview,
     shouldRetryLocalPreviewNavigation,
-    shouldResyncLocalPreviewAfterInitialLoad,
     shouldUseLocalPreviewSplitDefault,
 } = await import("./local_preview.js");
 const { createDraftUUID, createLocalPreviewSessionID, getOrCreateDraftID } = await import("./editor.js");
@@ -149,14 +148,7 @@ describe("embedded Local Preview state transitions", () => {
         assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "ready", sessionOwned: true, hasCurrentPath: true, dismissed: true }), false);
     });
 
-    it("resyncs the selected article only once after the initial iframe response", () => {
-        assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: true, hasCurrentPath: true }), true);
-        assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: false, enabled: true, hasCurrentPath: true }), false);
-        assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: false, hasCurrentPath: true }), false);
-        assert.equal(shouldResyncLocalPreviewAfterInitialLoad({ pending: true, enabled: true, hasCurrentPath: false }), false);
-    });
-
-    it("retries transient initial navigation failures with bounded backoff", () => {
+    it("retries transient URL resolution failures with bounded backoff", () => {
         assert.equal(LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS, 3);
         assert.equal(shouldRetryLocalPreviewNavigation({ error: new TypeError("network"), attempt: 1 }), true);
         assert.equal(shouldRetryLocalPreviewNavigation({ error: { status: 503 }, attempt: 2 }), true);
@@ -355,7 +347,7 @@ describe("preview API contracts", () => {
         const article = { path: "posts/one.md", body: "# Draft", frontmatter: { title: "Draft" } };
         await API.renderMarkdownPreview(article);
         await API.updateLocalPreviewContent(article, "local-session", 7);
-        await API.navigateLocalPreviewContent("local-session", article.path);
+        await API.resolveLocalPreviewArticleURL("local-session", article.path);
         await API.releaseLocalPreviewContent("local-session");
         await API.fetchLocalPreviewStatus("local-session");
         await API.heartbeatLocalPreviewContent("local-session");
