@@ -296,27 +296,32 @@ func runEleventyJSON(ctx context.Context, runtime config.SiteRuntime) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	productionInput, err := eleventyProductionContentDir(runtime)
+	projectDir, outputDir, err := prepareEleventyLocalPreviewProject(runtime)
 	if err != nil {
 		return nil, err
 	}
+	cleanup := localPreviewProcessCleanup(runtime)
+	defer cleanup()
 	scriptPath, err := eleventyLocalPreviewScriptPath()
 	if err != nil {
 		return nil, err
 	}
-	outputDir, err := eleventyLocalPreviewOutputDir(runtime)
+	inputDir, err := eleventyLocalPreviewInputDir(runtime)
 	if err != nil {
 		return nil, err
 	}
+	commandRuntime := runtime
+	commandRuntime.RepoPath = projectDir
+	commandRuntime.ContentDir = inputDir
+	commandRuntime.LocalPreviewProjectDir = projectDir
 	args := eleventyNodeCommandArgs(pm, scriptPath,
 		"--json",
-		"--input", runtime.ContentDir,
-		"--production-input", productionInput,
+		"--input", inputDir,
 		"--output", outputDir,
 	)
 	cmd := generatorCommandContextWithEnv(
 		ctx,
-		runtime,
+		commandRuntime,
 		[]string{"NODE_ENV=development", "ELEVENTY_ENV=development"},
 		pm.Bin,
 		args...,

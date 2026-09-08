@@ -16,7 +16,10 @@ type SiteRuntime struct {
 	ContentDir string
 	// ProductionContentDir remains the repository-relative content directory
 	// when ContentDir is temporarily replaced by a local-preview shadow path.
-	ProductionContentDir   string
+	ProductionContentDir string
+	// LocalPreviewProjectDir is an ephemeral project root used by a generator's
+	// local preview. It is intentionally transient and is never persisted.
+	LocalPreviewProjectDir string
 	StaticDir              string
 	PublicDir              string
 	PublicPath             string

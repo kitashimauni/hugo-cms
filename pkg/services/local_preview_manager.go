@@ -611,23 +611,30 @@ func eleventyLocalPreviewCommand(ctx context.Context, runtime config.SiteRuntime
 	if err != nil {
 		return nil, err
 	}
-	outputDir, err := eleventyLocalPreviewOutputDir(runtime)
+	projectDir, outputDir, err := prepareEleventyLocalPreviewProject(runtime)
 	if err != nil {
 		return nil, err
-	}
-	if err := os.RemoveAll(outputDir); err != nil {
-		return nil, fmt.Errorf("reset Eleventy local preview output: %w", err)
-	}
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return nil, fmt.Errorf("create Eleventy local preview output: %w", err)
 	}
 	args, err := eleventyLocalPreviewArgs(runtime, port, outputDir)
 	if err != nil {
+		if runtime.LocalPreviewProjectDir == "" {
+			_ = os.RemoveAll(projectDir)
+		}
 		return nil, err
 	}
+	commandRuntime := runtime
+	commandRuntime.RepoPath = projectDir
+	commandRuntime.ContentDir, err = eleventyLocalPreviewInputDir(runtime)
+	if err != nil {
+		if runtime.LocalPreviewProjectDir == "" {
+			_ = os.RemoveAll(projectDir)
+		}
+		return nil, err
+	}
+	commandRuntime.LocalPreviewProjectDir = projectDir
 	return generatorCommandContextWithEnv(
 		ctx,
-		runtime,
+		commandRuntime,
 		[]string{"NODE_ENV=development", "ELEVENTY_ENV=development"},
 		pm.Bin,
 		eleventyNodeCommandArgs(pm, args[1], args[2:]...)...,
@@ -638,13 +645,10 @@ func eleventyLocalPreviewArgs(runtime config.SiteRuntime, port int, outputDir st
 	if port < 1 || port > 65535 {
 		return nil, fmt.Errorf("invalid local preview port %d", port)
 	}
-	if strings.TrimSpace(runtime.ContentDir) == "" {
-		return nil, fmt.Errorf("Eleventy local preview content directory is required")
-	}
 	if strings.TrimSpace(outputDir) == "" || !filepath.IsAbs(outputDir) {
 		return nil, fmt.Errorf("Eleventy local preview output directory must be absolute")
 	}
-	productionInput, err := eleventyProductionContentDir(runtime)
+	inputDir, err := eleventyLocalPreviewInputDir(runtime)
 	if err != nil {
 		return nil, err
 	}
@@ -655,29 +659,11 @@ func eleventyLocalPreviewArgs(runtime config.SiteRuntime, port int, outputDir st
 	return []string{
 		"node", scriptPath,
 		"--serve",
-		"--input", runtime.ContentDir,
-		"--production-input", productionInput,
+		"--input", inputDir,
 		"--output", outputDir,
 		"--port", strconv.Itoa(port),
 		"--host", LocalPreviewBindAddress,
 	}, nil
-}
-
-func eleventyProductionContentDir(runtime config.SiteRuntime) (string, error) {
-	contentDir := strings.TrimSpace(runtime.ProductionContentDir)
-	if contentDir == "" {
-		contentDir = strings.TrimSpace(runtime.ContentDir)
-	}
-	if contentDir == "" {
-		return "", fmt.Errorf("Eleventy production content directory is required")
-	}
-	if filepath.IsAbs(contentDir) {
-		return filepath.Clean(contentDir), nil
-	}
-	if strings.TrimSpace(runtime.RepoPath) == "" {
-		return "", fmt.Errorf("Eleventy production repository is required")
-	}
-	return filepath.Abs(filepath.Join(runtime.RepoPath, contentDir))
 }
 
 func eleventyLocalPreviewScriptPath() (string, error) {
@@ -703,7 +689,10 @@ func eleventyLocalPreviewScriptPath() (string, error) {
 	return "", fmt.Errorf("Eleventy local preview helper script is unavailable")
 }
 
-func eleventyLocalPreviewOutputDir(runtime config.SiteRuntime) (string, error) {
+func eleventyLocalPreviewProjectDir(runtime config.SiteRuntime) (string, error) {
+	if projectDir := strings.TrimSpace(runtime.LocalPreviewProjectDir); projectDir != "" {
+		return filepath.Abs(projectDir)
+	}
 	if strings.TrimSpace(runtime.ID) == "" {
 		return "", fmt.Errorf("Eleventy local preview site ID is required")
 	}
@@ -715,15 +704,73 @@ func eleventyLocalPreviewOutputDir(runtime config.SiteRuntime) (string, error) {
 	return filepath.Join(os.TempDir(), "hugo-cms-local-preview", fmt.Sprintf("%x", digest[:12])), nil
 }
 
+func eleventyLocalPreviewOutputDir(runtime config.SiteRuntime) (string, error) {
+	projectDir, err := eleventyLocalPreviewProjectDir(runtime)
+	if err != nil {
+		return "", err
+	}
+	publicDir, err := eleventyLocalPreviewPublicDir(runtime)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(projectDir, publicDir), nil
+}
+
+func prepareEleventyLocalPreviewProject(runtime config.SiteRuntime) (string, string, error) {
+	projectDir, err := eleventyLocalPreviewProjectDir(runtime)
+	if err != nil {
+		return "", "", err
+	}
+	inputDir, err := eleventyLocalPreviewInputDir(runtime)
+	if err != nil {
+		return "", "", err
+	}
+	publicDir, err := eleventyLocalPreviewPublicDir(runtime)
+	if err != nil {
+		return "", "", err
+	}
+
+	if runtime.LocalPreviewProjectDir == "" {
+		if err := os.RemoveAll(projectDir); err != nil {
+			return "", "", fmt.Errorf("reset Eleventy local preview project: %w", err)
+		}
+		contentSource := strings.TrimSpace(runtime.ContentDir)
+		if !filepath.IsAbs(contentSource) {
+			contentSource = filepath.Join(runtime.RepoPath, inputDir)
+		}
+		if err := createEleventyLocalPreviewProjectOverlay(runtime.RepoPath, projectDir, inputDir, publicDir, contentSource); err != nil {
+			_ = os.RemoveAll(projectDir)
+			return "", "", err
+		}
+	} else if info, err := os.Stat(projectDir); err != nil || !info.IsDir() {
+		return "", "", fmt.Errorf("Eleventy local preview project root is unavailable: %w", err)
+	}
+
+	outputDir := filepath.Join(projectDir, publicDir)
+	if err := os.RemoveAll(outputDir); err != nil {
+		return "", "", fmt.Errorf("reset Eleventy local preview output: %w", err)
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return "", "", fmt.Errorf("create Eleventy local preview output: %w", err)
+	}
+	return projectDir, outputDir, nil
+}
+
 func localPreviewProcessCleanup(runtime config.SiteRuntime) func() {
-	generator := strings.ToLower(strings.TrimSpace(runtime.Generator))
-	if generator != "eleventy" && generator != "11ty" {
+	if !isEleventyLocalPreviewGenerator(runtime.Generator) {
 		return func() {}
 	}
 	return func() {
-		outputDir, err := eleventyLocalPreviewOutputDir(runtime)
+		if runtime.LocalPreviewProjectDir != "" {
+			outputDir, err := eleventyLocalPreviewOutputDir(runtime)
+			if err == nil {
+				_ = os.RemoveAll(outputDir)
+			}
+			return
+		}
+		projectDir, err := eleventyLocalPreviewProjectDir(runtime)
 		if err == nil {
-			_ = os.RemoveAll(outputDir)
+			_ = os.RemoveAll(projectDir)
 		}
 	}
 }

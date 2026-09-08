@@ -181,7 +181,7 @@ CMSはURL規則を再実装せず、generatorが返すURLのoriginだけをLocal
 
 未登録の任意コマンドをリポジトリ設定から直接実行してはならない。標準アダプターで対応できないサイト向けのカスタムコマンドは、管理者の明示承認と隔離環境を必須とする。
 
-generator processの作業ディレクトリは`cmd.Dir=repo_path`で一度だけ固定する。relativeな`repo_path`を子process内で再解決しないよう、miseは`mise exec -C . -- ...`、Hugoは`--source .`で実行する。Eleventyのpackage managerとHugoの`new content`も同じ作業ディレクトリを使う。
+generator processの作業ディレクトリは`cmd.Dir=repo_path`で一度だけ固定する。relativeな`repo_path`を子process内で再解決しないよう、miseは`mise exec -C . -- ...`、Hugoは`--source .`で実行する。EleventyのLocal Previewだけは、production repositoryを元にしたtemporary project-root overlayを`cmd.Dir`として使い、package managerとCMS helperを同じ作業ディレクトリから起動する。
 
 ### Preview Process Supervisor
 
@@ -281,13 +281,12 @@ Eleventyはサイトの`package.json`にローカル依存関係として追加�
 
 ```text
 mise exec -C <repository> -- npm exec -- node <CMS>/scripts/eleventy-local-preview.cjs \
-  --serve --input <shadow-content-dir> \
-  --production-input <repository-content-dir> \
-  --output <OS-temporary-output-dir> --port=<allocated-port> \
+  --serve --input <project-relative-content-dir> \
+  --output <temporary-project-public-dir> --port=<allocated-port> \
   --host 127.0.0.1
 ```
 
-Local Live PreviewではCMSのNodeラッパーがEleventyのprogrammatic `watch`を起動し、静的出力とLiveReloadをloopback serverから提供する。`--host 127.0.0.1`はラッパー自身の`server.listen`へ渡され、内部portがwildcard bindにならない。`--input`にactive shadow workspace、`--production-input`にproduction content root、`--output`にOS temporary directoryを渡す。production repositoryをcwdにすることでconfigをproduction inputで解決し、`dir.includes`、`dir.layouts`、`dir.data`、passthrough assetをproduction側へ固定したまま、unsaved contentだけをshadowから読む。productionの生成出力は変更しない。CMSは`--pathprefix`やpermalinkを再実装せず、generatorが返すURLをそのままproxyする。
+Local Live PreviewではCMSのNodeラッパーがEleventyのprogrammatic `watch`を起動し、静的出力とLiveReloadをloopback serverから提供する。`--host 127.0.0.1`はラッパー自身の`server.listen`へ渡され、内部portがwildcard bindにならない。temporary project-root overlayでは既存のproject entryをproductionへ参照させ、`content_dir`だけactive shadow workspace、`public_dir`だけtemporary real directoryへ置換する。これにより`getFilteredByGlob("src/posts/**")`、passthrough、pluginのproject-root相対pathをEleventy自身の意味論で処理し、productionの生成出力は変更しない。CMSは`--pathprefix`やpermalinkを再実装せず、generatorが返すURLをそのままproxyする。
 
 URL解決は同じラッパーのJSONモードでprogrammatic `toJSON()`を実行する。返却metadataの`inputPath`が選択記事に一致するentryから`url`を取得し、CMSはoriginだけをLocal Preview originへ書き換える。`permalink`、Data Cascade、computed data、paginationの計算はEleventyが担当する。
 

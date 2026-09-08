@@ -87,6 +87,10 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 	}
 	resolverRuntime := runtime
 	resolverRuntime.ContentDir = workspace.ContentDir
+	if workspace.ProjectDir != "" {
+		resolverRuntime.RepoPath = workspace.ProjectDir
+		resolverRuntime.LocalPreviewProjectDir = workspace.ProjectDir
+	}
 	articleURL, err := dependencies.resolveArticleURL(c.Request.Context(), resolverRuntime, workspace, req.Path)
 	if err != nil {
 		ErrorInternal(c, "Failed to resolve Local Live Preview article URL")

@@ -84,8 +84,7 @@ func TestEleventyLocalPreviewArgs(t *testing.T) {
 	want := []string{
 		"node", scriptPath,
 		"--serve",
-		"--input", runtime.ContentDir,
-		"--production-input", filepath.Join(repo, "content"),
+		"--input", "content",
 		"--output", outputDir,
 		"--port", "14123",
 		"--host", LocalPreviewBindAddress,
@@ -122,6 +121,9 @@ func TestEleventyNodeCommandArgsUsesDetectedPackageManager(t *testing.T) {
 
 func TestEleventyLocalPreviewCommandUsesDetectedPackageManagerAndLoopbackServer(t *testing.T) {
 	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "content"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"devDependencies":{"@11ty/eleventy":"^3.0.0"}}`), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +134,7 @@ func TestEleventyLocalPreviewCommandUsesDetectedPackageManagerAndLoopbackServer(
 		ID:                   "daily-blog",
 		RepoPath:             repo,
 		Generator:            "eleventy",
-		ContentDir:           filepath.Join(t.TempDir(), "shadow", "content"),
+		ContentDir:           "content",
 		ProductionContentDir: "content",
 	}
 	cleanup := localPreviewProcessCleanup(runtime)
@@ -143,10 +145,13 @@ func TestEleventyLocalPreviewCommandUsesDetectedPackageManagerAndLoopbackServer(
 		t.Fatalf("eleventyLocalPreviewCommand() error = %v", err)
 	}
 	joined := strings.Join(cmd.Args, " ")
-	for _, want := range []string{"npm", "exec", "--", "node", "eleventy-local-preview.cjs", "--serve", "--input", runtime.ContentDir, "--production-input", filepath.Join(repo, "content"), "--output", "--port", "14123", "--host", LocalPreviewBindAddress} {
+	for _, want := range []string{"npm", "exec", "--", "node", "eleventy-local-preview.cjs", "--serve", "--input", "content", "--output", "--port", "14123", "--host", LocalPreviewBindAddress} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("command args = %q, missing %q", joined, want)
 		}
+	}
+	if cmd.Dir == repo || !strings.Contains(cmd.Dir, "hugo-cms-local-preview") {
+		t.Fatalf("command dir = %q, want an isolated Eleventy project root", cmd.Dir)
 	}
 }
 

@@ -33,12 +33,16 @@ func LocalPreviewIngress(manager *services.LocalPreviewManager) gin.HandlerFunc 
 
 		runtime := config.NewSiteRuntime(site)
 		// Phase 3 keeps unsaved editor content outside the production working
-		// tree. If this site has an active shadow workspace, point the selected
-		// generator's input at it while retaining the production content root for
-		// configuration-relative includes, layouts and data.
+		// tree. Eleventy receives the workspace's project-root overlay so config,
+		// collections, passthrough and plugins keep their normal project-relative
+		// semantics.
 		if workspaceManager, workspaceErr := services.DefaultLocalPreviewWorkspaceManager(); workspaceErr == nil {
 			if workspace, ok := workspaceManager.Active(site.ID); ok {
 				runtime.ContentDir = workspace.ContentDir
+				if workspace.ProjectDir != "" {
+					runtime.RepoPath = workspace.ProjectDir
+					runtime.LocalPreviewProjectDir = workspace.ProjectDir
+				}
 			}
 		} else {
 			slog.Warn("Local preview shadow workspace unavailable; serving saved content", "site", site.ID, "error", workspaceErr)

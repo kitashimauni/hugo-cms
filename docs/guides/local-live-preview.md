@@ -93,21 +93,21 @@ hugo server
 
 CMS shutdown開始後は新規preview processを起動せず、HTTP serverをdrainしてからchild processを停止します。
 
-Eleventy siteでは、対象siteのlock fileから検出したpackage manager経由で次のように起動します。
+Eleventy siteでは、対象siteのlock fileから検出したpackage manager経由で、production repositoryを元にしたtemporary project-root overlayをcwdとして次のように起動します。
 
 ```text
 <package-manager> exec node <CMS>/scripts/eleventy-local-preview.cjs
   --serve
-  --input <shadow-content-dir>
-  --production-input <repository-content-dir>
-  --output <temporary-preview-output-dir>
+  --input <project-relative-content-dir>
+  --output <temporary-project-public-dir>
   --port <internal-port>
   --host 127.0.0.1
 ```
 
-CMSのNodeラッパーはproduction repositoryをcwdにしてEleventyのprogrammatic `watch`を実行し、生成物をOS temporary directoryへ分離します。HTTP配信とLiveReload WebSocketはCMS側のloopback serverが担当し、実際のlistenerを`127.0.0.1`へ限定します。Eleventy標準Dev Serverの未指定hostや`HOST`環境変数には依存しません。
+CMSのNodeラッパーはtemporary project-root overlayをcwdにしてEleventyのprogrammatic `watch`を実行します。overlayでは`content_dir`をshadow workspaceへ、`public_dir`をtemporary outputへ置き換え、package.json、node_modules、config、includes/layouts/data、その他のproject-root相対パスはproduction repositoryを参照します。HTTP配信とLiveReload WebSocketはCMS側のloopback serverが担当し、実際のlistenerを`127.0.0.1`へ限定します。Eleventy標準Dev Serverの未指定hostや`HOST`環境変数には依存しません。
 
-Eleventy設定はproduction inputで一度解決し、`dir.includes`、`dir.layouts`、`dir.data`とpassthrough copyの基準をproduction repositoryに固定したうえで、inputだけをshadow directoryへ切り替えます。`../_includes`のようなinput外の相対設定、input配下のdirectory data、passthrough/static assetもproduction側を参照します。URL resolverも同じラッパーのJSONモードを使うため、`--serve`と同じdirectory解決条件になります。
+Eleventy設定はoverlayのproject rootで通常どおり解決します。そのため`getFilteredByGlob("src/posts/**")`、`addPassthroughCopy("src/images")`、pluginの`outputDir: "./public/img/"`のようなproject-root相対指定も、CMS側で解析・推定せずpreview側のcontent/publicを参照します。URL resolverも同じoverlayとラッパーのJSONモードを使うため、`--serve`と同じdirectory解決条件になります。
+repo外のabsolute pathや環境変数で指定された外部pathはこのfilesystem overlayの保証対象外です。
 
 ## Reverse proxy / LiveReload
 
@@ -138,7 +138,7 @@ Editor
   -> rebuild / LiveReload
 ```
 
-generatorの作業ディレクトリは元repositoryのままです。Hugoは`--contentDir`、Eleventyはproduction inputで解決済みのinclude/layout/dataを保持したまま`--input`だけshadow directoryのabsolute pathへ切り替えます。theme/layout/config/data/static/assets/modulesなどgeneratorが管理する規則は元repoから読み込み、Eleventyの生成出力はtemporary directoryへ分離します。
+generatorの作業ディレクトリは、Hugoでは元repository、Eleventyでは一時project-root overlayです。Hugoは`--contentDir`をshadowへ差し替え、Eleventyはproject-relativeな`--input`と`--output`を使います。theme/layout/config/data/static/assets/modulesなどgeneratorが管理する規則は、それぞれ元repoまたはoverlay内のproduction referenceから読み込み、Eleventyの生成出力はtemporary directoryへ分離します。
 
 既存の3秒autosaveは保存機能として残りますが、Local Previewの250ms update経路はproduction working tree/Git index/refへ書き込みません。
 

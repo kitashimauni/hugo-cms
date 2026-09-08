@@ -42,8 +42,8 @@ function parseArguments(argv) {
     }
     throw new Error(`Unknown Eleventy local preview argument: ${argument}`);
   }
-  if (!options.input || !options.productionInput) {
-    throw new Error("--input and --production-input are required");
+  if (!options.input) {
+    throw new Error("--input is required");
   }
   if (!options.json && (!options.output || !options.port || !options.host)) {
     throw new Error("--output, --port and --host are required for local preview serving");
@@ -51,28 +51,13 @@ function parseArguments(argv) {
   return options;
 }
 
-function relativeDirectory(from, target) {
-  const relative = path.relative(path.resolve(from), path.resolve(target));
-  return relative || ".";
-}
-
 function configureProjectDirectories(eleventyConfig, options, notify) {
   eleventyConfig.userConfig.on("eleventy.beforeConfig", () => {
     const directories = eleventyConfig.directories;
-    const productionInput = directories.input;
-    const productionData = directories.data;
-    const productionIncludes = directories.includes;
-    const productionLayouts = directories.layouts;
-
-    // Read the user's configuration against the production repository first,
-    // then replace only the input/output roots. Rebased directory values keep
-    // ../_includes, global data and layout paths anchored to the repository.
+    // The process cwd is a temporary project-root overlay. Keep Eleventy's
+    // normal project-relative resolution intact and replace only the two CMS
+    // controlled roots: content input and generated public output.
     directories.setInput(options.input);
-    directories.setData(relativeDirectory(options.input, productionData));
-    directories.setIncludes(relativeDirectory(options.input, productionIncludes));
-    if (productionLayouts) {
-      directories.setLayouts(relativeDirectory(options.input, productionLayouts));
-    }
     directories.setOutput(options.output);
 
   });
@@ -269,7 +254,7 @@ async function main(argv = process.argv.slice(2)) {
   let server;
   let stopping = false;
   const notify = () => server?.broadcast({ type: "eleventy.reload" });
-  const eleventy = new Eleventy(options.productionInput, options.output, {
+  const eleventy = new Eleventy(options.input, options.output, {
     source: "script",
     runMode: options.json ? "build" : "serve",
     quietMode: options.json,
@@ -311,5 +296,4 @@ module.exports = {
   findOutputFile,
   listen,
   parseArguments,
-  relativeDirectory,
 };
