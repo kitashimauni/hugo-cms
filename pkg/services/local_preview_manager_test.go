@@ -66,8 +66,8 @@ func TestHugoLocalPreviewArgsRejectsURLPort(t *testing.T) {
 }
 
 func TestEleventyLocalPreviewArgs(t *testing.T) {
-	runtime := config.SiteRuntime{ContentDir: `C:\preview\tech\content`}
-	outputDir := `C:\Temp\hugo-cms-local-preview\output`
+	runtime := config.SiteRuntime{ContentDir: filepath.Join(t.TempDir(), "content")}
+	outputDir := filepath.Join(t.TempDir(), "hugo-cms-local-preview", "output")
 	got, err := eleventyLocalPreviewArgs(runtime, 14123, outputDir)
 	if err != nil {
 		t.Fatalf("eleventyLocalPreviewArgs() error = %v", err)

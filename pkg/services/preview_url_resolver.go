@@ -367,11 +367,12 @@ func eleventyInputPathMatches(inputDir, articlePath, listedPath string) bool {
 	if inputDir == "" {
 		return false
 	}
-	inputBase := normalizePreviewPath(filepath.Base(filepath.Clean(inputDir)))
+	normalizedInputDir := normalizePreviewPath(inputDir)
+	inputBase := path.Base(normalizedInputDir)
 	if inputBase != "" && (candidate == inputBase+"/"+target || strings.HasSuffix(candidate, "/"+inputBase+"/"+target)) {
 		return true
 	}
-	expected := normalizePreviewPath(filepath.Join(inputDir, filepath.FromSlash(articlePath)))
+	expected := path.Join(normalizedInputDir, target)
 	return expected != "" && candidate == expected
 }
 
