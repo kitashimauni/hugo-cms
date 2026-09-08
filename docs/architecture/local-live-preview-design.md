@@ -94,8 +94,11 @@ hugo server
   --buildFuture
   --buildExpired
   --watch
+  --navigateToChanged
   --noHTTPCache
 ```
+
+記事選択時の初回起動では、shadow workspaceへ記事を同期してからHugoへ最初のrequestを送り、ready後に同じ記事を一度だけ再同期する。これにより、Hugo processが起動済みでない場合も`--navigateToChanged`が選択記事の実ページへ遷移できる。以降の同一記事の編集はLiveReloadを利用し、CMSはpermalinkやslugを再実装しない。
 
 ## Reverse proxy / LiveReload
 
@@ -214,7 +217,9 @@ release時はHugo process停止後にworkspaceを削除する。active shadow se
 
 - Local Live Previewを開く/新規tab導線（埋め込みを主導線、新規tabをfallback）
 - desktopの編集+埋め込みpreview並列表示と狭い画面での上下配置
-- iframe loading、応答未確認のbest-effort表示、新規tab fallback。preview側が`homecms-local-preview-ready`の`postMessage`を送る場合は明示的なready通知として扱う
+- iframe loading、応答未確認のbest-effort表示、新規tab fallback。preview側がCMS originをtarget originに指定して`homecms-local-preview-ready`の`postMessage`を送る場合は明示的なready通知として扱う
+- 記事選択時のHugo `--navigateToChanged`による実ページ追従と初回ready後の一度だけの再同期
+- Local Preview有効siteの`Edit` / `Preview` / `Split`統合。無効siteではMarkdown Previewを維持
 - starting / ready / failed / conflict / stale状態表示
 - Local Previewの明示停止とstale session recovery/lease方針
 - private network/Tailscale運用例

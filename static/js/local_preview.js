@@ -10,6 +10,14 @@ export function shouldAutoShowEmbeddedLocalPreview({ status, sessionOwned, hasCu
     return hasCurrentPath && sessionOwned === true && !dismissed && (status === 'starting' || status === 'ready');
 }
 
+export function shouldResyncLocalPreviewAfterInitialLoad({ pending, enabled, hasCurrentPath } = {}) {
+    return pending === true && enabled === true && hasCurrentPath === true;
+}
+
+export function shouldUseLocalPreviewSplitDefault({ enabled, narrowViewport } = {}) {
+    return enabled === true && narrowViewport !== true;
+}
+
 export function createLocalPreviewFrameController({
     getURL,
     wrapper,
