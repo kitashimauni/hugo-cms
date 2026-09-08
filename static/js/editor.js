@@ -26,6 +26,11 @@ export function getCurrentPath() {
     return currentPath;
 }
 
+export function getCurrentLocalPreviewFrontMatterKey() {
+    if (!currentPath) return "";
+    return JSON.stringify(getPayload().frontmatter ?? null);
+}
+
 function draftStorageKey(siteID, path) {
     return `hugo-cms:draft:${siteID}:${path}`;
 }

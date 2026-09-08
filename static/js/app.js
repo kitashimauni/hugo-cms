@@ -31,7 +31,8 @@ let localPreviewFrameController = null;
 let localPreviewArticleURL = "";
 let localPreviewURLResolutionGeneration = 0;
 let localPreviewFrontMatterKey = "";
-let localPreviewHasFrontMatterKey = false;
+let localPreviewArticleURLKey = "";
+let localPreviewURLResolution = null;
 
 const LOCAL_PREVIEW_POLL_MS = 3000;
 const LOCAL_PREVIEW_HEARTBEAT_MS = 30000;
@@ -130,13 +131,24 @@ async function init() {
     console.log("Hugo CMS Initialized");
 }
 
+function cancelLocalPreviewURLResolution() {
+    const resolution = localPreviewURLResolution;
+    localPreviewURLResolution = null;
+    resolution?.controller.abort();
+}
+
+function resetLocalPreviewArticleURL() {
+    cancelLocalPreviewURLResolution();
+    localPreviewURLResolutionGeneration += 1;
+    localPreviewArticleURL = "";
+    localPreviewArticleURLKey = "";
+    localPreviewFrontMatterKey = "";
+}
+
 async function loadSiteData() {
     stopLocalPreviewMonitoring();
     localPreviewSessionID = "";
-    localPreviewArticleURL = "";
-    localPreviewURLResolutionGeneration += 1;
-    localPreviewFrontMatterKey = "";
-    localPreviewHasFrontMatterKey = false;
+    resetLocalPreviewArticleURL();
     localPreviewState = null;
 
     cmsConfig = await API.fetchConfig();
@@ -219,10 +231,7 @@ async function loadFile(path) {
     }
 
     localPreviewSessionID = "";
-    localPreviewArticleURL = "";
-    localPreviewURLResolutionGeneration += 1;
-    localPreviewFrontMatterKey = "";
-    localPreviewHasFrontMatterKey = false;
+    resetLocalPreviewArticleURL();
     if (localPreviewEnabled) {
         localPreviewFrameController?.resetDismissed();
         updateLocalPreviewAvailability();
@@ -232,7 +241,7 @@ async function loadFile(path) {
         }) ? 'split' : 'edit');
         try {
             await ensureLocalPreviewSession();
-            const articleURL = await resolveLocalPreviewArticleURL();
+            const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
             if (Editor.getCurrentPath() === path && !articleURL) {
                 throw new Error('generatorから記事URLを取得できませんでした');
             }
@@ -368,48 +377,101 @@ function isLocalPreviewArticleURL(value) {
     }
 }
 
-async function resolveLocalPreviewArticleURL() {
+function localPreviewURLResolutionKey(frontMatterKey) {
+    return [API.getCurrentSite(), localPreviewSessionID, Editor.getCurrentPath(), frontMatterKey || ""].join("\u0000");
+}
+
+function localPreviewResolutionAbortError() {
+    const error = new Error('Local Preview URL resolution was cancelled');
+    error.name = 'AbortError';
+    return error;
+}
+
+function waitForLocalPreviewRetry(delay, signal) {
+    return new Promise((resolve, reject) => {
+        if (signal.aborted) {
+            reject(localPreviewResolutionAbortError());
+            return;
+        }
+        let timer = setTimeout(() => {
+            signal.removeEventListener('abort', cancel);
+            resolve();
+        }, delay);
+        function cancel() {
+            clearTimeout(timer);
+            timer = null;
+            signal.removeEventListener('abort', cancel);
+            reject(localPreviewResolutionAbortError());
+        }
+        signal.addEventListener('abort', cancel, { once: true });
+    });
+}
+
+function resolveLocalPreviewArticleURL(frontMatterKey = localPreviewFrontMatterKey) {
     if (!localPreviewEnabled || !Editor.getCurrentPath() || !localPreviewSessionID) return null;
     const requestPath = Editor.getCurrentPath();
     const requestSessionID = localPreviewSessionID;
+    const requestKey = localPreviewURLResolutionKey(frontMatterKey);
+    if (localPreviewURLResolution?.key === requestKey) return localPreviewURLResolution.promise;
+
+    cancelLocalPreviewURLResolution();
+    localPreviewURLResolutionGeneration += 1;
     const requestGeneration = localPreviewURLResolutionGeneration;
-    for (let attempt = 1; attempt <= LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS; attempt++) {
-        if (
-            Editor.getCurrentPath() !== requestPath ||
-            localPreviewSessionID !== requestSessionID ||
-            localPreviewURLResolutionGeneration !== requestGeneration
-        ) return null;
-        try {
-            const result = await API.resolveLocalPreviewArticleURL(requestSessionID, requestPath);
-            const articleURL = UI.safeExternalURL(result?.article_url || "");
-            if (!isLocalPreviewArticleURL(articleURL)) throw new Error('generator returned an invalid local preview URL');
+    const controller = new AbortController();
+
+    const resolution = {
+        controller,
+        key: requestKey,
+        promise: null,
+    };
+    resolution.promise = (async () => {
+        for (let attempt = 1; attempt <= LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS; attempt++) {
+            if (controller.signal.aborted) throw localPreviewResolutionAbortError();
             if (
                 Editor.getCurrentPath() !== requestPath ||
                 localPreviewSessionID !== requestSessionID ||
                 localPreviewURLResolutionGeneration !== requestGeneration
             ) return null;
-            localPreviewArticleURL = articleURL;
-            return articleURL;
-        } catch (error) {
-            if (!shouldRetryLocalPreviewNavigation({ error, attempt })) throw error;
-            await new Promise(resolve => setTimeout(resolve, localPreviewNavigationRetryDelay(attempt)));
+            try {
+                const result = await API.resolveLocalPreviewArticleURL(requestSessionID, requestPath, controller.signal);
+                const articleURL = UI.safeExternalURL(result?.article_url || "");
+                if (!isLocalPreviewArticleURL(articleURL)) throw new Error('generator returned an invalid local preview URL');
+                if (
+                    Editor.getCurrentPath() !== requestPath ||
+                    localPreviewSessionID !== requestSessionID ||
+                    localPreviewURLResolutionGeneration !== requestGeneration
+                ) return null;
+                localPreviewArticleURL = articleURL;
+                localPreviewArticleURLKey = requestKey;
+                return articleURL;
+            } catch (error) {
+                if (error?.name === 'AbortError') throw error;
+                if (!shouldRetryLocalPreviewNavigation({ error, attempt })) throw error;
+                await waitForLocalPreviewRetry(localPreviewNavigationRetryDelay(attempt), controller.signal);
+            }
         }
-    }
-    return null;
+        return null;
+    })();
+    localPreviewURLResolution = resolution;
+    resolution.promise.then(
+        () => { if (localPreviewURLResolution === resolution) localPreviewURLResolution = null; },
+        () => { if (localPreviewURLResolution === resolution) localPreviewURLResolution = null; },
+    );
+    return resolution.promise;
 }
 
 async function refreshLocalPreviewArticleURL(updateResult, frontMatterKey = "") {
     if (updateResult?.session_id) localPreviewSessionID = updateResult.session_id;
-    if (localPreviewHasFrontMatterKey && localPreviewFrontMatterKey === frontMatterKey && localPreviewArticleURL) {
+    const requestKey = localPreviewURLResolutionKey(frontMatterKey);
+    if (localPreviewArticleURL && localPreviewArticleURLKey === requestKey) {
         return localPreviewArticleURL;
     }
     localPreviewFrontMatterKey = frontMatterKey;
-    localPreviewHasFrontMatterKey = true;
-    localPreviewURLResolutionGeneration += 1;
     localPreviewArticleURL = "";
+    localPreviewArticleURLKey = "";
     if (!localPreviewEnabled || !Editor.getCurrentPath()) return null;
     try {
-        const articleURL = await resolveLocalPreviewArticleURL();
+        const articleURL = await resolveLocalPreviewArticleURL(frontMatterKey);
         if (articleURL && Editor.getCurrentPath() && !localPreviewFrameController?.isDismissed()) {
             showEmbeddedLocalPreview();
         }
@@ -569,7 +631,7 @@ async function openLocalLivePreview() {
     try {
         if (Editor.getCurrentPath()) {
             await ensureLocalPreviewSession();
-            const articleURL = await resolveLocalPreviewArticleURL();
+            const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
             if (!articleURL) throw new Error('generatorから記事URLを取得できませんでした');
         }
         const url = currentLocalPreviewURL();
@@ -597,7 +659,7 @@ async function toggleEmbeddedLocalPreview() {
         localPreviewFrameController?.resetDismissed();
         if (Editor.getCurrentPath()) {
             await ensureLocalPreviewSession();
-            const articleURL = await resolveLocalPreviewArticleURL();
+            const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
             if (!articleURL) throw new Error('generatorから記事URLを取得できませんでした');
         }
         showEmbeddedLocalPreview({ reload: true });
@@ -614,10 +676,7 @@ async function stopLocalLivePreview() {
     try {
         const released = await Editor.releaseLocalLivePreview();
         localPreviewSessionID = "";
-        localPreviewArticleURL = "";
-        localPreviewURLResolutionGeneration += 1;
-        localPreviewFrontMatterKey = "";
-        localPreviewHasFrontMatterKey = false;
+        resetLocalPreviewArticleURL();
         if (!released) await API.stopLocalPreviewContent("");
         closeEmbeddedLocalPreview();
         UI.showToast('Local Live Previewを停止しました', 'success');
@@ -636,14 +695,11 @@ async function reclaimLocalLivePreview() {
     try {
         await API.reclaimStaleLocalPreview();
         localPreviewSessionID = "";
-        localPreviewArticleURL = "";
-        localPreviewURLResolutionGeneration += 1;
-        localPreviewFrontMatterKey = "";
-        localPreviewHasFrontMatterKey = false;
+        resetLocalPreviewArticleURL();
         localPreviewFrameController?.resetDismissed();
         if (Editor.getCurrentPath()) {
             await ensureLocalPreviewSession();
-            const articleURL = await resolveLocalPreviewArticleURL();
+            const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
             if (!articleURL) throw new Error('generatorから記事URLを取得できませんでした');
             showEmbeddedLocalPreview({ reload: true });
         }

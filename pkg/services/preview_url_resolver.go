@@ -94,6 +94,7 @@ func hugoListAllArgs(runtime config.SiteRuntime, previewURL string) []string {
 		"list",
 		"all",
 		"--source", ".",
+		"--environment", localPreviewHugoEnvironment,
 		"--contentDir", runtime.ContentDir,
 		"--baseURL", previewURL,
 		"--noBuildLock",

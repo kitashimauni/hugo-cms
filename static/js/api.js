@@ -247,14 +247,15 @@ export async function updateLocalPreviewContent(payload, draftID, revision, sign
     return await res.json();
 }
 
-export async function resolveLocalPreviewArticleURL(draftID, path) {
+export async function resolveLocalPreviewArticleURL(draftID, path, signal) {
     const res = await fetchWithCSRF(withSite('/admin/api/preview/local/navigate'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             ...siteHeaders()
         },
-        body: JSON.stringify({ draft_id: draftID, path })
+        body: JSON.stringify({ draft_id: draftID, path }),
+        signal
     });
     if (!res.ok) throw await responseError(res, "Local Live Preview URL resolution failed");
     return await res.json();

@@ -170,7 +170,7 @@ Local Live Previewが有効なsiteではheaderのview切替を次のように扱
 
 記事選択時はdesktopでは`Split`を初期viewにし、generatorが解決した記事ページを表示します。CMSは`slug`、`url`、permalink、page bundleの規則を推測せず、generatorのURL resolverへ解決を委譲します。Local Live Previewが無効なsiteでは、従来どおり`Preview`と`Split`の右側に簡易Markdown Previewを表示します。
 
-記事選択直後の初回表示では、現在の記事をshadow workspaceへ反映した後、serverが同じworkspaceを使ってHugo `list all`を実行し、選択記事の`permalink`を取得します。取得したURLはpath、query、fragmentを保持したままLocal Preview originへ変換し、iframeと新規タブへ直接設定します。これにより、記事を編集しなくてもHugo自身がslug、`url`、permalink、page bundle、languageの実ページURLを解決します。通常の本文編集ではiframeの現在URLを維持してLiveReloadを利用し、URLに影響するfront matter変更時だけ再解決します。
+記事選択直後の初回表示では、現在の記事をshadow workspaceへ反映した後、serverと同じ`development` environmentでHugo `list all`を実行し、選択記事の`permalink`を取得します。取得したURLはpath、query、fragmentを保持したままLocal Preview originへ変換し、iframeと新規タブへ直接設定します。これにより、記事を編集しなくてもHugo自身がslug、`url`、permalink、page bundle、languageの実ページURLを解決します。通常の本文編集ではiframeの現在URLを維持してLiveReloadを利用し、URLに影響するfront matter変更時だけ再解決します。
 
 初回URL解決のnetwork error、408/425/429、5xxは250ms・750msのbackoffで最大3試行します。409（別session、stale、記事不一致）やその他の4xxは再試行せず、通常のsession recovery表示へ委譲します。URLを解決できない場合はpreview rootへフォールバックせず、エラー状態を表示します。
 

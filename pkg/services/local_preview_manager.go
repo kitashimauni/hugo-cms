@@ -22,6 +22,7 @@ const (
 	defaultLocalPreviewProbeInterval  = 50 * time.Millisecond
 	defaultLocalPreviewStartAttempts  = 3
 	localPreviewStderrLimit           = 64 << 10
+	localPreviewHugoEnvironment       = "development"
 )
 
 var errLocalPreviewShuttingDown = errors.New("local preview manager is shutting down")
@@ -591,6 +592,7 @@ func hugoLocalPreviewArgs(runtime config.SiteRuntime, port int, previewURL strin
 	return []string{
 		"server",
 		"--source", ".",
+		"--environment", localPreviewHugoEnvironment,
 		"--contentDir", runtime.ContentDir,
 		"--bind", LocalPreviewBindAddress,
 		"--port", strconv.Itoa(port),
