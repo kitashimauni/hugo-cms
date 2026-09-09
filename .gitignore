@@ -14,6 +14,7 @@ hugo-cms.exe
 # OS Specific
 .DS_Store
 Thumbs.db
+node_modules/
 
 # Agent temp
 .gemini/

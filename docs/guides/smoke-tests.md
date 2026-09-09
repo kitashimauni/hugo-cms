@@ -115,6 +115,8 @@ sites:
 - 記事を保存できる
 - Buildがlockfileに対応するpackage manager経由で実行される
 - Dockerでは`tool-bootstrap`がlockfileに対応するfrozen installを完了してから明示Buildを実行できる
+- Local Live Previewの`--json` URL解決と`--serve` LiveReloadが、実際のEleventy 3.xで動作する
+- Local Live Previewの生成物がproduction repositoryの`public_dir`を変更しない
 
 ## 5. Docker
 

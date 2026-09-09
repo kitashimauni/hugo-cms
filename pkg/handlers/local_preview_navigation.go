@@ -4,6 +4,7 @@ import (
 	"context"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/services"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -94,6 +95,7 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 	}
 	articleURL, err := dependencies.resolveArticleURL(c.Request.Context(), resolverRuntime, workspace, req.Path)
 	if err != nil {
+		slog.Error("Failed to resolve Local Live Preview article URL", "site", runtime.ID, "article_path", req.Path, "error", err)
 		ErrorInternal(c, "Failed to resolve Local Live Preview article URL")
 		return
 	}

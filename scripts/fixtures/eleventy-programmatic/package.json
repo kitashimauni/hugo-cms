@@ -1,0 +1,8 @@
+{
+  "name": "hugo-cms-eleventy-programmatic-fixture",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@11ty/eleventy": "3.1.2"
+  }
+}

@@ -3,6 +3,8 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const childProcess = require("node:child_process");
+const http = require("node:http");
+const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -15,28 +17,116 @@ const {
   parseArguments,
 } = require("./eleventy-local-preview.cjs");
 
-test("keeps Eleventy directories project-root relative", () => {
+const integrationFixture = path.join(__dirname, "fixtures", "eleventy-programmatic");
+
+function hasRealEleventy() {
+  try {
+    require.resolve("@11ty/eleventy", { paths: [integrationFixture] });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function createEleventyFixture() {
+  const project = fs.mkdtempSync(path.join(integrationFixture, ".tmp-"));
+  const input = path.join(project, "src");
+  const output = path.join(project, "public");
+  fs.mkdirSync(path.join(input, "posts"), { recursive: true });
+  fs.writeFileSync(path.join(project, "package.json"), '{"private":true}');
+  fs.writeFileSync(
+    path.join(input, "posts", "one.md"),
+    ["---", "title: One", "permalink: /custom/one/", "---", "", "# {{ title }}", ""].join("\n"),
+  );
+  return { project, input, output, article: path.join(input, "posts", "one.md") };
+}
+
+function removeEleventyFixture(fixture) {
+  fs.rmSync(fixture.project, { recursive: true, force: true });
+}
+
+function waitForExit(child) {
+  if (child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => child.once("exit", resolve));
+}
+
+function waitForHTTP(port, pathname) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + 15000;
+    const attempt = () => {
+      const request = http.get({ host: "127.0.0.1", port, path: pathname }, (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => {
+          if (response.statusCode === 200) {
+            resolve({ statusCode: response.statusCode, body: Buffer.concat(chunks).toString("utf8") });
+            return;
+          }
+          retry();
+        });
+      });
+      request.on("error", retry);
+      request.setTimeout(500, () => request.destroy());
+    };
+    const retry = () => {
+      if (Date.now() >= deadline) {
+        reject(new Error(`Timed out waiting for Eleventy preview at ${pathname}`));
+        return;
+      }
+      setTimeout(attempt, 100);
+    };
+    attempt();
+  });
+}
+
+function availablePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const port = server.address().port;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+function connectReloadSocket(port) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    const key = Buffer.from("homecms-eleventy-test").toString("base64");
+    let response = "";
+    const onData = (chunk) => {
+      response += chunk.toString("utf8");
+      if (response.includes("101 Switching Protocols")) {
+        socket.off("data", onData);
+        resolve(socket);
+      }
+    };
+    socket.on("connect", () => {
+      socket.write([
+        "GET /__hugo_cms_live_reload HTTP/1.1",
+        "Host: 127.0.0.1",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Key: ${key}`,
+        "Sec-WebSocket-Version: 13",
+        "\r\n",
+      ].join("\r\n"));
+    });
+    socket.on("data", onData);
+    socket.once("error", reject);
+    socket.once("close", () => reject(new Error("Eleventy LiveReload socket closed before handshake")));
+  });
+}
+
+test("registers Eleventy hooks on the Programmatic API UserConfig", () => {
   const handlers = {};
-  const directories = {
-    input: "/production/src",
-    data: "/production/_data",
-    includes: "/production/_includes",
-    layouts: "/production/_layouts",
-    output: "/production/public",
-    setInput(value) { this.input = value; },
-    setOutput(value) { this.output = value; },
-  };
   configureProjectDirectories(
-    { directories, userConfig: { on(name, callback) { handlers[name] = callback; } } },
-    { input: "src", output: "/preview/public", json: true },
+    { on(name, callback) { handlers[name] = callback; } },
+    { json: false },
     () => {},
   );
-  handlers["eleventy.beforeConfig"]();
-  assert.equal(directories.input, "src");
-  assert.equal(directories.data, "/production/_data");
-  assert.equal(directories.includes, "/production/_includes");
-  assert.equal(directories.layouts, "/production/_layouts");
-  assert.equal(directories.output, "/preview/public");
+  assert.equal(typeof handlers["eleventy.after"], "function");
 });
 
 test("serves output index paths without allowing traversal", () => {
@@ -90,7 +180,6 @@ test("uses the project-root overlay in JSON mode", () => {
     const path = require("node:path");
     module.exports = class FakeEleventy {
       constructor(input, output, options) {
-        const handlers = {};
         const root = process.cwd();
         const directories = {
           input: path.resolve(root, input),
@@ -98,14 +187,8 @@ test("uses the project-root overlay in JSON mode", () => {
           includes: path.join(root, "_includes"),
           layouts: path.join(root, "_layouts"),
           output,
-          setInput(value) { this.input = path.resolve(root, value); },
-          setOutput(value) { this.output = value; },
         };
-        options.config({
-          directories,
-          userConfig: { on(name, callback) { handlers[name] = callback; } },
-        });
-        handlers["eleventy.beforeConfig"]();
+        options.config({ on() {} });
         this.directories = directories;
       }
       async toJSON() {
@@ -140,5 +223,67 @@ test("uses the project-root overlay in JSON mode", () => {
     assert.equal(entry.outputPath, output);
   } finally {
     fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test("resolves a real Eleventy 3.x project in JSON mode", { skip: !hasRealEleventy() }, () => {
+  const fixture = createEleventyFixture();
+  try {
+    const script = path.resolve(__dirname, "eleventy-local-preview.cjs");
+    const stdout = childProcess.execFileSync(process.execPath, [
+      script,
+      "--json",
+      "--input", "src",
+      "--output", fixture.output,
+    ], { cwd: fixture.project, encoding: "utf8" });
+    const entries = JSON.parse(stdout);
+    const entry = entries.find((candidate) => path.resolve(fixture.project, candidate.inputPath) === fixture.article);
+    assert.ok(entry, `Eleventy did not return metadata for ${fixture.article}`);
+    assert.equal(entry.url, "/custom/one/");
+  } finally {
+    removeEleventyFixture(fixture);
+  }
+});
+
+test("starts real Eleventy serve and broadcasts LiveReload", { skip: !hasRealEleventy() }, async () => {
+  const fixture = createEleventyFixture();
+  let child;
+  let reloadSocket;
+  try {
+    const port = await availablePort();
+    const script = path.resolve(__dirname, "eleventy-local-preview.cjs");
+    child = childProcess.spawn(process.execPath, [
+      script,
+      "--serve",
+      "--input", "src",
+      "--output", fixture.output,
+      "--port", String(port),
+      "--host", "127.0.0.1",
+    ], { cwd: fixture.project, stdio: ["ignore", "pipe", "pipe"] });
+    const page = await waitForHTTP(port, "/custom/one/");
+    assert.match(page.body, /__hugo_cms_reload\.js/);
+    reloadSocket = await connectReloadSocket(port);
+    const reload = new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error("Timed out waiting for Eleventy LiveReload")), 15000);
+      reloadSocket.on("data", (chunk) => {
+        if (chunk.toString("utf8").includes('"type":"eleventy.reload"')) {
+          clearTimeout(deadline);
+          resolve();
+        }
+      });
+      reloadSocket.once("error", reject);
+    });
+    fs.writeFileSync(
+      fixture.article,
+      ["---", "title: Changed", "permalink: /custom/one/", "---", "", "# {{ title }}", ""].join("\n"),
+    );
+    await reload;
+  } finally {
+    reloadSocket?.destroy();
+    if (child) {
+      child.kill();
+      await waitForExit(child);
+    }
+    removeEleventyFixture(fixture);
   }
 });

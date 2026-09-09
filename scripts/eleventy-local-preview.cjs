@@ -52,18 +52,8 @@ function parseArguments(argv) {
 }
 
 function configureProjectDirectories(eleventyConfig, options, notify) {
-  eleventyConfig.userConfig.on("eleventy.beforeConfig", () => {
-    const directories = eleventyConfig.directories;
-    // The process cwd is a temporary project-root overlay. Keep Eleventy's
-    // normal project-relative resolution intact and replace only the two CMS
-    // controlled roots: content input and generated public output.
-    directories.setInput(options.input);
-    directories.setOutput(options.output);
-
-  });
-
   if (!options.json) {
-    eleventyConfig.userConfig.on("eleventy.after", notify);
+    eleventyConfig.on("eleventy.after", notify);
   }
 }
 
