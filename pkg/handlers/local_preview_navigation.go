@@ -30,7 +30,7 @@ type localPreviewNavigationDependencies struct {
 // configured generator and returns the URL to open in the local preview.
 func NavigateLocalPreview(c *gin.Context) {
 	navigateLocalPreview(c, localPreviewNavigationDependencies{
-		resolveArticleURL: services.ResolvePreviewArticleURL,
+		resolveArticleURL: services.DefaultLocalPreviewManager().ResolveArticleURL,
 	})
 }
 

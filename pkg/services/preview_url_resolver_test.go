@@ -3,9 +3,13 @@ package services
 import (
 	"context"
 	"hugo-cms/pkg/config"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -148,6 +152,51 @@ func TestEleventyPreviewURLResolverUsesGeneratorMetadataAndLocalOrigin(t *testin
 	}
 	if got != "https://daily-blog.preview.example.com/custom/" {
 		t.Fatalf("resolved URL = %q", got)
+	}
+}
+
+func TestResolveRunningEleventyArticleURLWaitsForMetadataAndRewritesOrigin(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != eleventyLocalPreviewMetadataPath {
+			t.Fatalf("request path = %q, want %q", r.URL.Path, eleventyLocalPreviewMetadataPath)
+		}
+		if got := r.URL.Query().Get("path"); got != "posts/one.md" {
+			t.Fatalf("article path query = %q", got)
+		}
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"resolved","url":"/custom/one/?draft=1#section"}`))
+	}))
+	defer server.Close()
+
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{
+		ID:           "daily-blog",
+		Generator:    "eleventy",
+		LocalPreview: config.LocalPreviewConfig{URL: "https://daily.preview.example.com/base/"},
+	}
+
+	got, err := resolveRunningEleventyArticleURL(context.Background(), runtime, port, "posts/one.md")
+	if err != nil {
+		t.Fatalf("resolveRunningEleventyArticleURL() error = %v", err)
+	}
+	if got != "https://daily.preview.example.com/custom/one/?draft=1#section" {
+		t.Fatalf("resolved URL = %q", got)
+	}
+	if attempts < 2 {
+		t.Fatalf("metadata requests = %d, want at least 2", attempts)
 	}
 }
 

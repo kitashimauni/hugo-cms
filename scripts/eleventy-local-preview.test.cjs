@@ -74,6 +74,43 @@ function waitForHTTP(port, pathname) {
   });
 }
 
+function requestHTTP(port, pathname) {
+  return new Promise((resolve, reject) => {
+    const request = http.get({ host: "127.0.0.1", port, path: pathname }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => resolve({
+        statusCode: response.statusCode,
+        body: Buffer.concat(chunks).toString("utf8"),
+      }));
+    });
+    request.on("error", reject);
+  });
+}
+
+function waitForHTTPStatus(port, pathname, statusCode) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + 15000;
+    const attempt = async () => {
+      try {
+        const response = await requestHTTP(port, pathname);
+        if (response.statusCode === statusCode) {
+          resolve(response);
+          return;
+        }
+      } catch (_) {
+        // The loopback listener may not have started yet.
+      }
+      if (Date.now() >= deadline) {
+        reject(new Error(`Timed out waiting for HTTP ${statusCode} at ${pathname}`));
+        return;
+      }
+      setTimeout(attempt, 100);
+    };
+    attempt();
+  });
+}
+
 function availablePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -304,9 +341,18 @@ test("starts real Eleventy serve and broadcasts LiveReload", { skip: !hasRealEle
       "--output", fixture.output,
       "--port", String(port),
       "--host", "127.0.0.1",
-    ], { cwd: fixture.project, stdio: ["ignore", "pipe", "pipe"] });
+    ], {
+      cwd: fixture.project,
+      env: { ...process.env, ELEVENTY_FIXTURE_SLOW_BUILD: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const building = await waitForHTTPStatus(port, "/__hugo_cms_ready", 503);
+    assert.equal(JSON.parse(building.body).status, "building");
     const page = await waitForHTTP(port, "/custom/one/");
     assert.match(page.body, /__hugo_cms_reload\.js/);
+    const metadata = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    assert.equal(metadata.statusCode, 200);
+    assert.equal(JSON.parse(metadata.body).url, "/custom/one/");
     reloadSocket = await connectReloadSocket(port);
     const reload = new Promise((resolve, reject) => {
       const deadline = setTimeout(() => reject(new Error("Timed out waiting for Eleventy LiveReload")), 15000);
@@ -320,9 +366,12 @@ test("starts real Eleventy serve and broadcasts LiveReload", { skip: !hasRealEle
     });
     fs.writeFileSync(
       fixture.article,
-      ["---", "title: Changed", "permalink: /custom/one/", "---", "", "# {{ title }}", ""].join("\n"),
+      ["---", "title: Changed", "permalink: /custom/changed/", "---", "", "# {{ title }}", ""].join("\n"),
     );
     await reload;
+    const updatedMetadata = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    assert.equal(updatedMetadata.statusCode, 200);
+    assert.equal(JSON.parse(updatedMetadata.body).url, "/custom/changed/");
   } finally {
     reloadSocket?.destroy();
     if (child) {

@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"hugo-cms/pkg/config"
 	"io"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -290,6 +293,86 @@ func (resolver *eleventyPreviewURLResolver) ResolveArticleURL(ctx context.Contex
 		return "", err
 	}
 	return localPreviewArticleURL(previewURL, resolvedURL)
+}
+
+type eleventyRunningMetadata struct {
+	URL string `json:"url"`
+}
+
+// resolveRunningEleventyArticleURL reads the URL map exposed by the running
+// Eleventy helper. A 503 means the watcher is still building (or rebuilding),
+// so the request waits for the next completed build instead of starting a
+// second Eleventy process.
+func resolveRunningEleventyArticleURL(ctx context.Context, runtime config.SiteRuntime, port int, articlePath string) (string, error) {
+	previewURL, err := localPreviewResolverURL(runtime)
+	if err != nil {
+		return "", err
+	}
+	articlePath = filepath.Clean(strings.TrimSpace(articlePath))
+	if articlePath == "." || filepath.IsAbs(articlePath) {
+		return "", fmt.Errorf("invalid preview article path")
+	}
+	if port < 1 || port > 65535 {
+		return "", fmt.Errorf("invalid local preview port %d", port)
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, previewURLResolveTimeout)
+	defer cancel()
+
+	endpoint := url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort(LocalPreviewBindAddress, strconv.Itoa(port)),
+		Path:   eleventyLocalPreviewMetadataPath,
+	}
+	query := endpoint.Query()
+	query.Set("path", filepath.ToSlash(articlePath))
+	endpoint.RawQuery = query.Encode()
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	ticker := time.NewTicker(defaultLocalPreviewProbeInterval)
+	defer ticker.Stop()
+
+	for {
+		request, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+		if requestErr == nil {
+			response, requestErr := client.Do(request)
+			if requestErr == nil {
+				switch response.StatusCode {
+				case http.StatusOK:
+					var metadata eleventyRunningMetadata
+					decodeErr := json.NewDecoder(response.Body).Decode(&metadata)
+					_ = response.Body.Close()
+					if decodeErr != nil {
+						return "", fmt.Errorf("decode Eleventy metadata: %w", decodeErr)
+					}
+					if strings.TrimSpace(metadata.URL) == "" {
+						return "", fmt.Errorf("Eleventy metadata did not provide a URL for article %q", articlePath)
+					}
+					return localPreviewArticleURL(previewURL, metadata.URL)
+				case http.StatusNotFound:
+					_ = response.Body.Close()
+					return "", fmt.Errorf("eleventy did not resolve article %q", articlePath)
+				case http.StatusServiceUnavailable:
+					_ = response.Body.Close()
+				default:
+					status := response.Status
+					_ = response.Body.Close()
+					return "", fmt.Errorf("Eleventy metadata endpoint returned %s", status)
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			if ctx.Err() == context.DeadlineExceeded {
+				return "", fmt.Errorf("eleventy running preview URL resolution timed out after %s", previewURLResolveTimeout)
+			}
+			return "", ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func runEleventyJSON(ctx context.Context, runtime config.SiteRuntime) ([]byte, error) {

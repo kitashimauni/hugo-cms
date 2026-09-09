@@ -111,9 +111,9 @@ Eleventyは対象siteのpackage managerを再利用し、production repository�
   --host 127.0.0.1
 ```
 
-CMSのNodeラッパーはEleventyのprogrammatic `watch`で再ビルドし、CMS側のHTTP/LiveReload WebSocket serverを実際に`127.0.0.1`へbindする。Eleventy標準Dev Serverのhost省略時のbind挙動や`HOST`環境変数には依存しない。出力ディレクトリはproductionの`public`/`_site`を上書きせず、停止時にtemporary outputを削除する。
+CMSのNodeラッパーはEleventyのprogrammatic `watch`で再ビルドし、Eleventyの初回build前にCMS側のHTTP/LiveReload WebSocket serverを`127.0.0.1`へbindする。`/__hugo_cms_ready`は初回build中に503、build完了後に200を返す。Eleventy標準Dev Serverのhost省略時のbind挙動や`HOST`環境変数には依存しない。出力ディレクトリはproductionの`public`/`_site`を上書きせず、停止時にtemporary outputを削除する。
 
-記事選択時の初回起動では、shadow workspaceを含むtemporary project-root overlayをgeneratorの入力として使う。CMSはgeneratorに依存しない`PreviewURLResolver`契約を介して解決する。Hugo実装はserverと同じ`--environment development`を指定し、`HUGO_CONTENTDIR`と`HUGO_BASEURL`のenvironment variableでshadow contentとLocal Preview URLをoverrideし、`--noBuildLock`を渡す。Eleventy実装はserve時と同じdirectory構成を持つresolver専用project-root overlay/outputでJSONモードを実行し、稼働中previewの`public`を共有・resetせず、Eleventyが返す`inputPath`と`url`を対応づける。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalink、slug、Data Cascade、paginationを再実装しない。以降の同一記事の編集はgeneratorのwatch/live reloadを利用する。
+記事選択時の初回起動では、shadow workspaceを含むtemporary project-root overlayをgeneratorの入力として使う。CMSはgeneratorに依存しないURL解決契約を介して解決する。Hugo実装はserverと同じ`--environment development`を指定し、`HUGO_CONTENTDIR`と`HUGO_BASEURL`のenvironment variableでshadow contentとLocal Preview URLをoverrideし、`--noBuildLock`を渡す。Eleventy実装は稼働中wrapperが`eleventy.after`の結果から作る`inputPath -> url` mapを`/__hugo_cms_metadata`で公開し、CMSは同じprocessへ問い合わせる。build中はreadinessとmetadataを未完了として扱い、watch rebuild完了ごとにmapを置き換えるため、通常経路でresolver専用のJSON full buildやpreview outputの共有・resetは行わない。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalink、slug、Data Cascade、paginationを再実装しない。以降の同一記事の編集はgeneratorのwatch/live reloadを利用する。
 
 ## Reverse proxy / LiveReload
 
@@ -230,7 +230,7 @@ POST /admin/api/preview/local
 POST /admin/api/preview/local/navigate
 ```
 
-記事選択時にCMSが`draft_id`と記事pathを`/admin/api/preview/local/navigate`へ送り、serverはactive sessionの所有者・記事pathを検証する。検証後、`PreviewURLResolver`がshadow workspaceを使ってgeneratorへURL解決を依頼し、`article_url`を返す。Hugo実装は`hugo list all`の`path`と`permalink`を対応づけ、production originではなくLocal Preview originを返す。この処理はproduction content、Git、editor revisionを変更しない。network error、408/425/429、5xxに限ってclientが250ms・750msのbackoffで最大3回まで再試行し、409やその他の4xxは再試行しない。通常の本文編集はLiveReloadを利用し、URL関連front matter変更時は再解決する。解決失敗時はpreview rootへ黙ってフォールバックしない。
+記事選択時にCMSが`draft_id`と記事pathを`/admin/api/preview/local/navigate`へ送り、serverはactive sessionの所有者・記事pathを検証する。検証後、Hugoは`hugo list all`、Eleventyは稼働中wrapperの`/__hugo_cms_metadata`へ問い合わせて`article_url`を返す。Eleventyがbuild中ならmap更新まで待ち、初回起動も同じprocessのreadinessを待つ。この処理はproduction content、Git、editor revisionを変更しない。network error、408/425/429、5xxに限ってclientが250ms・750msのbackoffで最大3回まで再試行し、409やその他の4xxは再試行しない。通常の本文編集はLiveReloadを利用し、URL関連front matter変更時は再解決する。解決失敗時はpreview rootへ黙ってフォールバックしない。
 
 ### release
 
