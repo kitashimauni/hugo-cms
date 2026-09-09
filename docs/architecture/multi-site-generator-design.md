@@ -166,7 +166,7 @@ type PreviewURLResolver interface {
 }
 ```
 
-CMSはURL規則を再実装せず、generatorが返すURLのoriginだけをLocal Preview originへ変換する。Hugoでは`hugo list all`を使い、Eleventyなど他generatorのresolverは個別Issueで追加する。
+CMSはURL規則を再実装せず、generatorが返すURLのoriginだけをLocal Preview originへ変換する。Hugoでは`hugo list all`、Eleventyではラッパーのprogrammatic `toJSON()`が返すgenerator metadataを使う。どちらもactive shadow workspaceを入力にし、保存前のFront Matterを含むgenerator自身のURL規則を利用する。
 
 ### Runtime Runner
 
@@ -181,7 +181,7 @@ CMSはURL規則を再実装せず、generatorが返すURLのoriginだけをLocal
 
 未登録の任意コマンドをリポジトリ設定から直接実行してはならない。標準アダプターで対応できないサイト向けのカスタムコマンドは、管理者の明示承認と隔離環境を必須とする。
 
-generator processの作業ディレクトリは`cmd.Dir=repo_path`で一度だけ固定する。relativeな`repo_path`を子process内で再解決しないよう、miseは`mise exec -C . -- ...`、Hugoは`--source .`で実行する。Eleventyのpackage managerとHugoの`new content`も同じ作業ディレクトリを使う。
+generator processの作業ディレクトリは`cmd.Dir=repo_path`で一度だけ固定する。relativeな`repo_path`を子process内で再解決しないよう、miseは`mise exec -C . -- ...`、Hugoは`--source .`で実行する。EleventyのLocal Previewだけは、production repositoryを元にしたtemporary project-root overlayを`cmd.Dir`として使い、package managerとCMS helperを同じ作業ディレクトリから起動する。
 
 ### Preview Process Supervisor
 
@@ -205,12 +205,12 @@ flowchart LR
     Proxy --> Registry["Site Registry"]
     Registry --> Manager["Preview Manager"]
     Manager --> HugoProc["Hugo server (site A)"]
-    Manager --> EleventyProc["Eleventy --serve (site B)"]
+    Manager --> EleventyProc["Eleventy watch + loopback server (site B)"]
 ```
 
 preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:<preview-port>`をブラウザへ露出しないことで、previewプロセスのbind先をローカルに閉じ込めやすくする。
 
-すべてのGenerator Adapterはpreview processを`SiteRuntime.PreviewURL`配下へmountする。Hugoは`--baseURL`、Eleventyは`--pathprefix`を使用する。proxyは外向きrequestのpath、`RawPath`、queryを再構築せず上流へ渡す。これにより、サイト固有のsection、permalink、percent-encodingをproxyが推測せず、新しいadapterも同じroute契約で追加できる。
+すべてのGenerator Adapterはpreview processを`SiteRuntime.PreviewURL`へproxyする。Hugoは`--baseURL`を使い、Eleventyはgeneratorのdev serverが返すroot-relative pathをそのまま配信する。proxyは外向きrequestのpath、`RawPath`、queryを再構築せず上流へ渡す。これにより、サイト固有のsection、permalink、percent-encodingをproxyが推測せず、新しいadapterも同じroute契約で追加できる。
 
 ### Site Runtime Bridge
 
@@ -235,9 +235,9 @@ preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:
 | 標準コンテンツ | `content` | サイト設定による |
 | 標準出力 | `public` | `_site` |
 | メディア | `static`、Page Bundle等 | Passthrough Copy等 |
-| プレビュー | `hugo server` | `eleventy --serve` |
+| プレビュー | `hugo server` | CMS loopback server + Eleventy programmatic `watch` |
 | Front Matter | YAML、TOML、JSON | YAML、JSON、JavaScript等 |
-| URL決定 | slug、permalink、Page Kind等 | permalink、Data Cascade等 |
+| URL決定 | slug、permalink、Page Kind等 | permalink、Data Cascade、pagination等 |
 
 ### Hugo Adapter
 
@@ -280,13 +280,20 @@ Eleventyはサイトの`package.json`にローカル依存関係として追加�
 標準的なプレビューコマンド:
 
 ```text
-mise exec -C <repository> -- npm run cms:preview -- --port=<allocated-port>
+mise exec -C <repository> -- npm exec -- node <CMS>/scripts/eleventy-local-preview.cjs \
+  --serve --input <project-relative-content-dir> \
+  --output <temporary-project-public-dir> --port=<allocated-port> \
+  --host 127.0.0.1
 ```
 
-Eleventyは入力・出力ディレクトリをサイト設定で変更でき、`--serve`と`--port`を提供している。previewでは`--pathprefix SiteRuntime.PreviewURL`も渡し、Hugoと同じ認証付きpreview route配下へmountする。
+Local Live PreviewではCMSのNodeラッパーがEleventyのprogrammatic `watch`を起動し、静的出力とLiveReloadをloopback serverから提供する。`--host 127.0.0.1`はラッパー自身の`server.listen`へ渡され、内部portがwildcard bindにならない。temporary project-root overlayでは既存のproject entryをproductionへ参照させ、`content_dir`だけactive shadow workspace、`public_dir`だけtemporary real directoryへ置換する。これにより`getFilteredByGlob("src/posts/**")`、passthrough、pluginのproject-root相対pathをEleventy自身の意味論で処理し、productionの生成出力は変更しない。URL resolverは同じdirectory構成の専用overlay/outputを使うため、稼働中previewのpublicを削除・共有しない。CMSは`--pathprefix`やpermalinkを再実装せず、generatorが返すURLをそのままproxyする。
+
+URL解決は同じラッパーのJSONモードでprogrammatic `toJSON()`を実行する。返却metadataの`inputPath`が選択記事に一致するentryから`url`を取得し、CMSはoriginだけをLocal Preview originへ書き換える。`permalink`、Data Cascade、computed data、paginationの計算はEleventyが担当する。
 
 - <https://www.11ty.dev/docs/usage/>
 - <https://www.11ty.dev/docs/config/>
+- <https://www.11ty.dev/docs/programmatic/>
+- <https://www.11ty.dev/docs/permalinks/>
 
 依存関係の取得はHTTPリクエスト処理中やapp起動時に行わない。Docker構成では管理者が`HUGO_CMS_REPOS`へUnixの`:`区切りで明示したrepoだけを、`docker compose --profile tools run --rm tool-bootstrap`で準備する。bootstrapはmise toolchainを導入したあと、lockfileに応じてnpm、pnpm、yarn、bunのfrozen installを実行し、成功した環境だけをプレビューへ使用する。
 
@@ -330,7 +337,7 @@ MarkdownのファイルパスからURLを文字列置換する現在の方式は
 1. コレクション設定の明示的なURLテンプレート
 2. Front Matterの`url`または`permalink`
 3. Generator Adapterによる解決
-4. 解決不能時はサイトルートを表示
+4. 解決不能時はサイトルートへフォールバックせずエラーを表示
 
 ## ジェネレーター判定
 

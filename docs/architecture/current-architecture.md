@@ -138,7 +138,7 @@ GIT_TOKEN=xxx
 
 `GeneratorAdapter`がプレビュー起動・停止・再起動、ビルド、コンテンツ作成を抽象化する。`SITE_GENERATOR`またはSite Registryのdefault site設定から`HugoAdapter`または`EleventyAdapter`を選択する。従来の関数名は互換ラッパーとして維持している。
 
-各Adapterはpreview serverを`SiteRuntime.PreviewURL`配下へmountする。Hugoは`--baseURL`、Eleventyは`--pathprefix`を使い、HTTP proxyは認証付きpreview pathとそのencoding/queryを維持したまま上流へ転送する。
+各Adapterはpreview serverを`SiteRuntime.PreviewURL`へproxyする。Hugoは`--baseURL`を使い、Eleventyはdev serverが返すroot-relative URLを使う。HTTP proxyは認証付きpreviewのpathとそのencoding/queryを維持したまま上流へ転送する。
 
 `ProcessManager`はプロセス終了を明示的に待ち、世代の異なる監視処理が新しいプロセス状態を消去しないよう管理する。
 

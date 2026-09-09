@@ -8,29 +8,38 @@ import "path/filepath"
 // process settings that are currently global, so services can gradually accept
 // explicit runtime data instead of reading mutable package globals.
 type SiteRuntime struct {
-	ID                     string
-	Name                   string
-	RepoPath               string
-	Generator              string
-	Runtime                string
-	ContentDir             string
-	StaticDir              string
-	PublicDir              string
-	PublicPath             string
-	PreviewURL             string
-	HugoServerPort         string
-	HugoServerBind         string
-	ArticleMediaDir        string
-	StaticMediaDir         string
-	SnippetPaths           []string
-	AppURL                 string
-	GitUserEmail           string
-	GitUserName            string
-	GitBranch              string
-	GitRemote              string
-	MarkdownPreviewEnabled bool
-	LocalPreview           LocalPreviewConfig
-	PreviewDeployment      DeploymentPreviewConfig
+	ID         string
+	Name       string
+	RepoPath   string
+	Generator  string
+	Runtime    string
+	ContentDir string
+	// ProductionContentDir remains the repository-relative content directory
+	// when ContentDir is temporarily replaced by a local-preview shadow path.
+	ProductionContentDir string
+	// LocalPreviewProjectDir is an ephemeral project root used by a generator's
+	// local preview. It is intentionally transient and is never persisted.
+	LocalPreviewProjectDir string
+	// LocalPreviewSourceRepoPath keeps the production repository path when
+	// RepoPath is temporarily replaced by a local-preview project overlay.
+	LocalPreviewSourceRepoPath string
+	StaticDir                  string
+	PublicDir                  string
+	PublicPath                 string
+	PreviewURL                 string
+	HugoServerPort             string
+	HugoServerBind             string
+	ArticleMediaDir            string
+	StaticMediaDir             string
+	SnippetPaths               []string
+	AppURL                     string
+	GitUserEmail               string
+	GitUserName                string
+	GitBranch                  string
+	GitRemote                  string
+	MarkdownPreviewEnabled     bool
+	LocalPreview               LocalPreviewConfig
+	PreviewDeployment          DeploymentPreviewConfig
 }
 
 func NewSiteRuntime(site SiteConfig) SiteRuntime {
@@ -41,6 +50,7 @@ func NewSiteRuntime(site SiteConfig) SiteRuntime {
 		Generator:              site.Generator,
 		Runtime:                site.Runtime,
 		ContentDir:             site.ContentDir,
+		ProductionContentDir:   site.ContentDir,
 		StaticDir:              site.StaticDir,
 		PublicDir:              site.PublicDir,
 		PublicPath:             filepath.Join(site.RepoPath, site.PublicDir),
@@ -76,6 +86,7 @@ func CurrentSiteRuntime() SiteRuntime {
 		Generator:              SiteGenerator,
 		Runtime:                GeneratorRuntime,
 		ContentDir:             ContentDir,
+		ProductionContentDir:   ContentDir,
 		StaticDir:              StaticDir,
 		PublicDir:              PublicDir,
 		PublicPath:             PublicPath,

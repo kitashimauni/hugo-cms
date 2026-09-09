@@ -43,11 +43,6 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 		ErrorConflict(c, "Local Live Preview is disabled for this site")
 		return
 	}
-	if generator := strings.TrimSpace(runtime.Generator); generator != "" && !strings.EqualFold(generator, "hugo") {
-		ErrorConflict(c, "Local Live Preview currently supports Hugo only")
-		return
-	}
-
 	var req localPreviewNavigateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		ErrorBadRequest(c, "Invalid JSON")
@@ -92,6 +87,11 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 	}
 	resolverRuntime := runtime
 	resolverRuntime.ContentDir = workspace.ContentDir
+	if workspace.ProjectDir != "" {
+		resolverRuntime.LocalPreviewSourceRepoPath = resolverRuntime.RepoPath
+		resolverRuntime.RepoPath = workspace.ProjectDir
+		resolverRuntime.LocalPreviewProjectDir = workspace.ProjectDir
+	}
 	articleURL, err := dependencies.resolveArticleURL(c.Request.Context(), resolverRuntime, workspace, req.Path)
 	if err != nil {
 		ErrorInternal(c, "Failed to resolve Local Live Preview article URL")

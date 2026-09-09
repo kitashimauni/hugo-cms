@@ -1,6 +1,6 @@
 # Local Live Preview設定ガイド
 
-> Issue #32ではPhase 1〜4が実装済みです。session lease/recovery、status/stop APIに加え、CMS内の埋め込みpreviewを主導線とするUIを提供します。
+> Issue #32ではPhase 1〜4が実装済みです。session lease/recovery、status/stop APIに加え、CMS内の埋め込みpreviewを主導線とするUIを提供します。実blogとwildcard ingressを使った受け入れ確認はIssue #37で追跡します。
 
 ## 基本設定
 
@@ -68,9 +68,9 @@ tech.preview.example.com:evil
 
 HTTP設定ではport省略または`:80`だけを許可します。HostはSite Registry lookupにだけ使います。
 
-## Hugo process
+## Generator process
 
-最初のpreview hostname requestでHugo serverをlazy startします。
+最初のpreview hostname requestで、siteの`generator`に対応した開発サーバーをlazy startします。現在はHugoとEleventyに対応しています。
 
 ```text
 hugo server
@@ -92,6 +92,22 @@ hugo server
 内部portは`14100-14999`から予約します。Hugoはloopbackだけへbindし、child environmentはgenerator allowlistを使います。
 
 CMS shutdown開始後は新規preview processを起動せず、HTTP serverをdrainしてからchild processを停止します。
+
+Eleventy siteでは、対象siteのlock fileから検出したpackage manager経由で、production repositoryを元にしたtemporary project-root overlayをcwdとして次のように起動します。
+
+```text
+<package-manager> exec node <CMS>/scripts/eleventy-local-preview.cjs
+  --serve
+  --input <project-relative-content-dir>
+  --output <temporary-project-public-dir>
+  --port <internal-port>
+  --host 127.0.0.1
+```
+
+CMSのNodeラッパーはtemporary project-root overlayをcwdにしてEleventyのprogrammatic `watch`を実行します。overlayでは`content_dir`をshadow workspaceへ、`public_dir`をtemporary outputへ置き換え、package.json、node_modules、config、includes/layouts/data、その他のproject-root相対パスはproduction repositoryを参照します。HTTP配信とLiveReload WebSocketはCMS側のloopback serverが担当し、実際のlistenerを`127.0.0.1`へ限定します。Eleventy標準Dev Serverの未指定hostや`HOST`環境変数には依存しません。
+
+Eleventy設定はoverlayのproject rootで通常どおり解決します。そのため`getFilteredByGlob("src/posts/**")`、`addPassthroughCopy("src/images")`、pluginの`outputDir: "./public/img/"`のようなproject-root相対指定も、CMS側で解析・推定せずpreview側のcontent/publicを参照します。URL resolverも同じ構成の専用temporary overlay/outputとラッパーのJSONモードを使うため、`--serve`と同じdirectory解決条件を保ちつつ、稼働中previewの`public`を削除・共有しません。
+repo外のabsolute pathや環境変数で指定された外部pathはこのfilesystem overlayの保証対象外です。
 
 ## Reverse proxy / LiveReload
 
@@ -118,11 +134,11 @@ POST /admin/api/preview/local
 Editor
   -> 250ms debounce
   -> shadow content workspace
-  -> Hugo watcher
+  -> generator watcher
   -> rebuild / LiveReload
 ```
 
-Hugoのsource rootは元repositoryのままです。theme/layout/config/static/assets/modulesは元repoを利用し、`--contentDir`だけshadow directoryのabsolute pathへ切り替えます。
+generatorの作業ディレクトリは、Hugoでは元repository、Eleventyでは一時project-root overlayです。Hugoは`--contentDir`をshadowへ差し替え、Eleventyはproject-relativeな`--input`と`--output`を使います。theme/layout/config/data/static/assets/modulesなどgeneratorが管理する規則は、それぞれ元repoまたはoverlay内のproduction referenceから読み込み、Eleventyの生成出力はtemporary directoryへ分離します。
 
 既存の3秒autosaveは保存機能として残りますが、Local Previewの250ms update経路はproduction working tree/Git index/refへ書き込みません。
 
@@ -149,7 +165,7 @@ Local Preview ownership IDはbrowser document/tabのmemory上だけに保持し�
 - stale workspaceは明示的なreclaim APIでCMS再起動なしに回収可能
 - liveなsessionはreclaimできない
 
-recovery時もHugo processを先にstopしてからshadow workspaceを削除します。
+recovery時もgenerator processを先にstopしてからshadow workspaceを削除します。
 
 ## UI
 
@@ -170,7 +186,7 @@ Local Live Previewが有効なsiteではheaderのview切替を次のように扱
 
 記事選択時はdesktopでは`Split`を初期viewにし、generatorが解決した記事ページを表示します。CMSは`slug`、`url`、permalink、page bundleの規則を推測せず、generatorのURL resolverへ解決を委譲します。Local Live Previewが無効なsiteでは、従来どおり`Preview`と`Split`の右側に簡易Markdown Previewを表示します。
 
-記事選択直後の初回表示では、現在の記事をshadow workspaceへ反映した後、serverと同じ`development` environmentでHugo `list all`を実行し、選択記事の`permalink`を取得します。取得したURLはpath、query、fragmentを保持したままLocal Preview originへ変換し、iframeと新規タブへ直接設定します。これにより、記事を編集しなくてもHugo自身がslug、`url`、permalink、page bundle、languageの実ページURLを解決します。通常の本文編集ではiframeの現在URLを維持してLiveReloadを利用し、URLに影響するfront matter変更時だけ再解決します。
+記事選択直後の初回表示では、現在の記事をshadow workspaceへ反映した後、generator自身のURL解決結果を取得します。Hugoは`hugo list all`の`permalink`、Eleventyはラッパーのprogrammatic `toJSON()`が返す`inputPath`/`url` metadataを使います。取得したURLはpath、query、fragmentを保持したままLocal Preview originへ変換し、iframeと新規タブへ直接設定します。CMSはslug、`url`、permalink、page bundle、Data Cascade、paginationなどの規則を再実装しません。通常の本文編集ではiframeの現在URLを維持してgeneratorのwatch/live reloadを利用し、URLに影響するfront matter変更時だけ再解決します。
 
 初回URL解決のnetwork error、408/425/429、5xxは250ms・750msのbackoffで最大3試行します。409（別session、stale、記事不一致）やその他の4xxは再試行せず、通常のsession recovery表示へ委譲します。URLを解決できない場合はpreview rootへフォールバックせず、エラー状態を表示します。
 
@@ -199,11 +215,11 @@ CMS側iframeにはsandboxを付け、top-level navigation等を許可しませ�
 article/site切替時はin-flight update完了を待ってsessionをreleaseします。
 
 ```text
-Hugo process stop
+generator process stop
   -> shadow workspace delete
 ```
 
-CMS shutdownでもHugo child停止後にtemporary workspaceを削除します。workspaceは`PREVIEW_STATE_DIR`へ永続化しません。
+CMS shutdownでもgenerator child停止後にtemporary workspaceとEleventy temporary outputを削除します。workspaceは`PREVIEW_STATE_DIR`へ永続化しません。
 
 ## Hugo Modules
 

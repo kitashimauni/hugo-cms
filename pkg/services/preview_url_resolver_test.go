@@ -3,20 +3,21 @@ package services
 import (
 	"context"
 	"hugo-cms/pkg/config"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
 
-func TestNewPreviewURLResolverSupportsHugoOnly(t *testing.T) {
-	resolver, err := NewPreviewURLResolver("hugo")
-	if err != nil {
-		t.Fatalf("NewPreviewURLResolver(hugo) error = %v", err)
-	}
-	if resolver == nil {
-		t.Fatal("NewPreviewURLResolver(hugo) returned nil")
-	}
-	if _, err := NewPreviewURLResolver("eleventy"); err == nil {
-		t.Fatal("NewPreviewURLResolver(eleventy) should require a dedicated resolver")
+func TestNewPreviewURLResolverSupportsConfiguredGenerators(t *testing.T) {
+	for _, generator := range []string{"hugo", "eleventy", "11ty"} {
+		resolver, err := NewPreviewURLResolver(generator)
+		if err != nil {
+			t.Fatalf("NewPreviewURLResolver(%q) error = %v", generator, err)
+		}
+		if resolver == nil {
+			t.Fatalf("NewPreviewURLResolver(%q) returned nil", generator)
+		}
 	}
 }
 
@@ -113,6 +114,117 @@ func TestHugoPreviewURLResolverRejectsMismatchedArticle(t *testing.T) {
 		return nil, nil
 	}}
 	runtime := config.SiteRuntime{ID: "tech", ContentDir: "/tmp/content", LocalPreview: config.LocalPreviewConfig{URL: "https://tech.preview.example.com/"}}
+	workspace := LocalPreviewWorkspace{ArticlePath: "posts/one.md", ContentDir: "/tmp/content"}
+	if _, err := resolver.ResolveArticleURL(context.Background(), runtime, workspace, "posts/two.md"); err == nil {
+		t.Fatal("ResolveArticleURL() should reject a mismatched article")
+	}
+}
+
+func TestEleventyPreviewURLResolverUsesGeneratorMetadataAndLocalOrigin(t *testing.T) {
+	runtime := config.SiteRuntime{
+		ID:           "daily-blog",
+		RepoPath:     "/repo",
+		ContentDir:   "/tmp/shadow/daily-blog/content",
+		Generator:    "eleventy",
+		LocalPreview: config.LocalPreviewConfig{URL: "https://daily-blog.preview.example.com/preview/"},
+	}
+	workspace := LocalPreviewWorkspace{
+		SiteID:      runtime.ID,
+		DraftID:     "draft-1",
+		ArticlePath: "posts/one.md",
+		ContentDir:  runtime.ContentDir,
+		Revision:    3,
+	}
+	resolver := &eleventyPreviewURLResolver{run: func(_ context.Context, got config.SiteRuntime) ([]byte, error) {
+		if got.ContentDir != workspace.ContentDir {
+			t.Fatalf("resolver content directory = %q, want %q", got.ContentDir, workspace.ContentDir)
+		}
+		return []byte(`[{"inputPath":"/tmp/shadow/daily-blog/content/posts/one.md","outputPath":"/tmp/output/custom/index.html","url":"https://production.example.com/custom/"}]`), nil
+	}}
+
+	got, err := resolver.ResolveArticleURL(context.Background(), runtime, workspace, workspace.ArticlePath)
+	if err != nil {
+		t.Fatalf("ResolveArticleURL() error = %v", err)
+	}
+	if got != "https://daily-blog.preview.example.com/custom/" {
+		t.Fatalf("resolved URL = %q", got)
+	}
+}
+
+func TestEleventyResolverUsesDedicatedProjectAndOutput(t *testing.T) {
+	production := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(production, "src", "posts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(production, "public"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(production, "src", "posts", "one.md"), []byte("production"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	shadow := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(shadow, "posts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shadow, "posts", "one.md"), []byte("draft"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	liveProject := t.TempDir()
+	if err := createEleventyLocalPreviewProjectOverlay(production, liveProject, "src", "public", shadow); err != nil {
+		t.Fatalf("create live overlay: %v", err)
+	}
+	liveOutput := filepath.Join(liveProject, "public")
+	if err := os.WriteFile(filepath.Join(liveOutput, "existing.html"), []byte("live"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := config.SiteRuntime{
+		RepoPath:                   liveProject,
+		ContentDir:                 filepath.Join(liveProject, "src"),
+		ProductionContentDir:       "src",
+		PublicDir:                  "public",
+		LocalPreviewProjectDir:     liveProject,
+		LocalPreviewSourceRepoPath: production,
+	}
+	resolverProject, resolverOutput, cleanup, err := prepareEleventyResolverProject(runtime)
+	if err != nil {
+		t.Fatalf("prepareEleventyResolverProject() error = %v", err)
+	}
+	defer cleanup()
+	if resolverProject == liveProject || resolverOutput == liveOutput {
+		t.Fatalf("resolver reused live project/output: project=%q output=%q", resolverProject, resolverOutput)
+	}
+	if _, err := os.Stat(filepath.Join(liveOutput, "existing.html")); err != nil {
+		t.Fatalf("live output was removed by resolver preparation: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(resolverOutput, "resolved.html"), []byte("resolver"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(liveOutput, "resolved.html")); !os.IsNotExist(err) {
+		t.Fatalf("resolver output leaked into live output: %v", err)
+	}
+}
+
+func TestParseEleventyJSONMatchesRelativeInputAndDataPageURL(t *testing.T) {
+	runtime := config.SiteRuntime{ContentDir: `C:\preview\daily-blog\content`}
+	output := []byte(`[{"inputPath":"content/posts/one.md","data":{"page":{"url":"/posts/one/"}}}]`)
+	got, err := parseEleventyJSON(output, runtime, "posts/one.md")
+	if err != nil {
+		t.Fatalf("parseEleventyJSON() error = %v", err)
+	}
+	if got != "/posts/one/" {
+		t.Fatalf("parseEleventyJSON() = %q", got)
+	}
+}
+
+func TestEleventyPreviewURLResolverRejectsMismatchedArticle(t *testing.T) {
+	resolver := &eleventyPreviewURLResolver{run: func(context.Context, config.SiteRuntime) ([]byte, error) {
+		t.Fatal("Eleventy should not run for a mismatched article")
+		return nil, nil
+	}}
+	runtime := config.SiteRuntime{ID: "daily-blog", ContentDir: "/tmp/content", LocalPreview: config.LocalPreviewConfig{URL: "https://daily-blog.preview.example.com/"}}
 	workspace := LocalPreviewWorkspace{ArticlePath: "posts/one.md", ContentDir: "/tmp/content"}
 	if _, err := resolver.ResolveArticleURL(context.Background(), runtime, workspace, "posts/two.md"); err == nil {
 		t.Fatal("ResolveArticleURL() should reject a mismatched article")

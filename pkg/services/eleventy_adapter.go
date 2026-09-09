@@ -19,6 +19,21 @@ type eleventyPackageManager struct {
 	Args []string
 }
 
+func eleventyNodeCommandArgs(pm eleventyPackageManager, scriptPath string, args ...string) []string {
+	var commandArgs []string
+	switch pm.Name {
+	case "npm":
+		commandArgs = []string{"exec", "--", "node", scriptPath}
+	case "pnpm", "yarn":
+		commandArgs = []string{"exec", "node", scriptPath}
+	case "bun":
+		commandArgs = []string{"run", "node", scriptPath}
+	default:
+		commandArgs = []string{"node", scriptPath}
+	}
+	return append(commandArgs, args...)
+}
+
 func NewEleventyAdapter() *EleventyAdapter {
 	return &EleventyAdapter{}
 }

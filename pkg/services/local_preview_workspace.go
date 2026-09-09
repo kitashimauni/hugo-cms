@@ -32,6 +32,7 @@ type LocalPreviewWorkspace struct {
 	DraftID     string
 	ArticlePath string
 	ContentDir  string
+	ProjectDir  string
 	Revision    uint64
 	LastSeenAt  time.Time
 }
@@ -50,10 +51,10 @@ type localPreviewReclaimState struct {
 	token   uint64
 }
 
-// LocalPreviewWorkspaceManager owns ephemeral shadow content directories. The
-// original repository remains the Hugo source root for configuration, theme,
-// layouts, static files and assets; only contentDir is redirected to this
-// workspace.
+// LocalPreviewWorkspaceManager owns ephemeral shadow content directories and,
+// for Eleventy, a temporary project-root overlay. Hugo keeps the original
+// repository as its generator source root; Eleventy receives production
+// project references with only content/public materialized into the overlay.
 type LocalPreviewWorkspaceManager struct {
 	root             string
 	mu               sync.Mutex
@@ -188,11 +189,28 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 		}
 	} else {
 		workspaceRoot := filepath.Join(m.root, runtime.ID, draftID)
-		contentDir := filepath.Join(workspaceRoot, "content")
 		if err := os.RemoveAll(workspaceRoot); err != nil {
 			return LocalPreviewWorkspace{}, false, false, fmt.Errorf("reset local preview workspace: %w", err)
 		}
-		if err := copyLocalPreviewContentTree(sourceContentDir, contentDir); err != nil {
+
+		contentDir := filepath.Join(workspaceRoot, "content")
+		projectDir := ""
+		if isEleventyLocalPreviewGenerator(runtime.Generator) {
+			inputDir, err := eleventyLocalPreviewInputDir(runtime)
+			if err != nil {
+				return LocalPreviewWorkspace{}, false, false, err
+			}
+			publicDir, err := eleventyLocalPreviewPublicDir(runtime)
+			if err != nil {
+				return LocalPreviewWorkspace{}, false, false, err
+			}
+			contentDir = filepath.Join(workspaceRoot, inputDir)
+			if err := createEleventyLocalPreviewProjectOverlay(runtime.RepoPath, workspaceRoot, inputDir, publicDir, sourceContentDir); err != nil {
+				_ = os.RemoveAll(workspaceRoot)
+				return LocalPreviewWorkspace{}, false, false, err
+			}
+			projectDir = workspaceRoot
+		} else if err := copyLocalPreviewContentTree(sourceContentDir, contentDir); err != nil {
 			_ = os.RemoveAll(workspaceRoot)
 			return LocalPreviewWorkspace{}, false, false, err
 		}
@@ -201,6 +219,7 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 			DraftID:     draftID,
 			ArticlePath: filepath.ToSlash(articlePath),
 			ContentDir:  contentDir,
+			ProjectDir:  projectDir,
 			LastSeenAt:  now,
 		}
 		created = true
@@ -224,7 +243,7 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 
 // Heartbeat renews a live lease without changing content. Once the lease has
 // expired, the browser must reclaim/restart instead of reviving a session whose
-// Hugo process may already be stopping.
+// generator process may already be stopping.
 func (m *LocalPreviewWorkspaceManager) Heartbeat(siteID, draftID string) (LocalPreviewWorkspace, error) {
 	if err := validateDraftID(draftID); err != nil {
 		return LocalPreviewWorkspace{}, err
@@ -266,7 +285,8 @@ func (m *LocalPreviewWorkspaceManager) Status(siteID string) (LocalPreviewWorksp
 
 // SyncContentResource mirrors a content-directory resource change made through
 // the normal CMS media API into an already-active shadow workspace. Static
-// resources do not need this because Hugo still uses the original source root.
+// resources do not need this because the generator overlay still references
+// the production static tree.
 func (m *LocalPreviewWorkspaceManager) SyncContentResource(runtime config.SiteRuntime, repoPath string, deleted bool) (bool, error) {
 	if runtime.ID == "" {
 		return false, fmt.Errorf("local preview site ID is required")
@@ -349,8 +369,8 @@ func (m *LocalPreviewWorkspaceManager) Release(siteID, draftID string) (bool, er
 // ClaimStale atomically marks an expired workspace as reclaiming. While the
 // claim is held, heartbeat/update/release/resource-sync operations for the same
 // site cannot mutate or revive the session. This claim must be acquired before
-// stopping Hugo so a racing heartbeat cannot leave a fresh session with a
-// stopped process.
+// stopping the generator so a racing heartbeat cannot leave a fresh session
+// with a stopped process.
 func (m *LocalPreviewWorkspaceManager) ClaimStale(siteID string) (LocalPreviewReclaim, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -395,8 +415,8 @@ func (m *LocalPreviewWorkspaceManager) FinishReclaim(claim LocalPreviewReclaim) 
 }
 
 // CancelReclaim releases a stale claim without removing the workspace. It is
-// used when Hugo cannot be stopped; the expired session remains stale and can
-// be reclaimed again, but it still cannot be revived by heartbeat/update.
+// used when the generator cannot be stopped; the expired session remains stale
+// and can be reclaimed again, but it still cannot be revived by heartbeat/update.
 func (m *LocalPreviewWorkspaceManager) CancelReclaim(claim LocalPreviewReclaim) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -407,7 +427,7 @@ func (m *LocalPreviewWorkspaceManager) CancelReclaim(claim LocalPreviewReclaim) 
 }
 
 // ReleaseStale atomically claims and removes an expired workspace. Callers that
-// must stop the Hugo process before deleting the workspace should use
+// must stop the generator process before deleting the workspace should use
 // ClaimStale followed by FinishReclaim instead.
 func (m *LocalPreviewWorkspaceManager) ReleaseStale(siteID string) (bool, error) {
 	claim, claimed, err := m.ClaimStale(siteID)

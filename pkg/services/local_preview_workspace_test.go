@@ -58,6 +58,66 @@ func TestLocalPreviewWorkspaceMirrorsAndUpdatesContent(t *testing.T) {
 	}
 }
 
+func TestEleventyLocalPreviewWorkspaceUsesProjectRootOverlay(t *testing.T) {
+	repo := t.TempDir()
+	for _, directory := range []string{
+		filepath.Join(repo, "src", "posts"),
+		filepath.Join(repo, "_includes"),
+		filepath.Join(repo, "_data"),
+		filepath.Join(repo, "public"),
+	} {
+		if err := os.MkdirAll(directory, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repo, "src", "posts", "one.md"), []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "_includes", "post.njk"), []byte("include"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte(`{"devDependencies":{"@11ty/eleventy":"^3.0.0"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{
+		ID:                   "daily",
+		RepoPath:             repo,
+		Generator:            "eleventy",
+		ContentDir:           "src",
+		ProductionContentDir: "src",
+		PublicDir:            "public",
+	}
+	workspace, created, applied, err := manager.Update(runtime, "draft-1", "posts/one.md", 1, []byte("draft"))
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if !created || !applied || workspace.ProjectDir == "" {
+		t.Fatalf("created=%v applied=%v project=%q", created, applied, workspace.ProjectDir)
+	}
+	if workspace.ContentDir != filepath.Join(workspace.ProjectDir, "src") {
+		t.Fatalf("content dir = %q, want project-relative src under %q", workspace.ContentDir, workspace.ProjectDir)
+	}
+	assertFileContent(t, filepath.Join(workspace.ProjectDir, "src", "posts", "one.md"), "draft")
+	assertFileContent(t, filepath.Join(workspace.ProjectDir, "_includes", "post.njk"), "include")
+	if _, err := os.Stat(filepath.Join(workspace.ProjectDir, "public", "production.html")); !os.IsNotExist(err) {
+		t.Fatalf("production public files leaked into workspace: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "src", "posts", "one.md")); err != nil {
+		t.Fatalf("production content disappeared: %v", err)
+	}
+	if _, err := manager.Release(runtime.ID, "draft-1"); err != nil {
+		t.Fatalf("Release() error = %v", err)
+	}
+}
+
 func TestLocalPreviewWorkspaceRejectsStaleRevision(t *testing.T) {
 	repo := makeLocalPreviewWorkspaceRepo(t)
 	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
