@@ -32,6 +32,19 @@ const (
 	eleventyLocalPreviewInvalidatePath = "/__hugo_cms_invalidate"
 )
 
+// IsLocalPreviewControlPath reports whether path is an internal Eleventy
+// control endpoint. These endpoints are intentionally separate from the
+// public preview content and must only be reachable through the loopback
+// connection used by the local preview manager.
+func IsLocalPreviewControlPath(path string) bool {
+	switch path {
+	case eleventyLocalPreviewReadyPath, eleventyLocalPreviewMetadataPath, eleventyLocalPreviewInvalidatePath:
+		return true
+	default:
+		return false
+	}
+}
+
 var (
 	errLocalPreviewShuttingDown         = errors.New("local preview manager is shutting down")
 	ErrLocalPreviewMetadataInvalidation = errors.New("local preview metadata invalidation failed")

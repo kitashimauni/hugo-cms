@@ -53,3 +53,75 @@ func TestLocalPreviewIngressFailsClosedForUnknownPreviewHost(t *testing.T) {
 		t.Fatalf("normal CMS host status = %d, want 200", cmsResponse.Code)
 	}
 }
+
+func TestLocalPreviewIngressHidesControlEndpoints(t *testing.T) {
+	originalDomain := config.PreviewDomain
+	originalScheme := config.PreviewScheme
+	originalSites := config.Sites
+	t.Cleanup(func() {
+		config.PreviewDomain = originalDomain
+		config.PreviewScheme = originalScheme
+		config.Sites = originalSites
+	})
+
+	config.PreviewDomain = "preview.example.com"
+	config.PreviewScheme = "https"
+	enabled := true
+	config.Sites = []config.SiteConfig{{
+		ID: "tech",
+		Preview: config.SitePreviewConfig{
+			LocalPreview: config.LocalPreviewConfig{Enabled: &enabled},
+		},
+	}}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	proxy := &localPreviewProxySpy{}
+	router.Use(localPreviewIngress(proxy))
+
+	for _, testCase := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "ready", method: http.MethodGet, path: "/__hugo_cms_ready"},
+		{name: "metadata", method: http.MethodGet, path: "/__hugo_cms_metadata?path=content/posts/one.md"},
+		{name: "invalidate", method: http.MethodPost, path: "/__hugo_cms_invalidate"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := httptest.NewRequest(testCase.method, "https://tech.preview.example.com"+testCase.path, nil)
+			request.Host = "tech.preview.example.com"
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("control endpoint status = %d, want 404", response.Code)
+			}
+		})
+	}
+	if proxy.calls != 0 {
+		t.Fatalf("control endpoint proxy calls = %d, want 0", proxy.calls)
+	}
+
+	for _, path := range []string{"/__hugo_cms_reload.js", "/__hugo_cms_live_reload"} {
+		request := httptest.NewRequest(http.MethodGet, "https://tech.preview.example.com"+path, nil)
+		request.Host = "tech.preview.example.com"
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("LiveReload path %q status = %d, want 204", path, response.Code)
+		}
+	}
+	if proxy.calls != 2 {
+		t.Fatalf("LiveReload proxy calls = %d, want 2", proxy.calls)
+	}
+}
+
+type localPreviewProxySpy struct {
+	calls int
+}
+
+func (p *localPreviewProxySpy) ProxyRuntime(w http.ResponseWriter, _ *http.Request, _ config.SiteRuntime) error {
+	p.calls++
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}

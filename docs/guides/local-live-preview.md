@@ -120,7 +120,7 @@ https://tech.preview.example.com/css/main.css
   -> http://127.0.0.1:<internal-port>/css/main.css
 ```
 
-内部upstreamを指すabsolute `Location`だけを外部preview originへ補正し、HTTP Upgradeを透過してLiveReload WebSocketを通します。
+内部upstreamを指すabsolute `Location`だけを外部preview originへ補正し、HTTP Upgradeを透過してLiveReload WebSocketを通します。Eleventyの`/__hugo_cms_ready`、`/__hugo_cms_metadata`、`/__hugo_cms_invalidate`はCMSとwrapper間のloopback専用制御endpointであり、preview hostnameからは404として遮断します。LiveReload用のpathは引き続きproxyします。
 
 ## 未保存editor内容
 
