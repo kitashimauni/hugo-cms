@@ -292,6 +292,10 @@ export function waitForLocalPreviewUpdates(pending = localPreviewInflight) {
     return Promise.allSettled(Array.from(pending));
 }
 
+export function isLocalPreviewOwnershipConflict(error) {
+    return error?.status === 409;
+}
+
 // Article switching cancels the debounce timer, so explicitly send the
 // current editor payload after the previous preview writes have settled.
 // Keeping the pending set shared lets the final wait include this flush too.
@@ -394,10 +398,23 @@ export async function loadFile(path) {
     if (switchingArticle) {
         try {
             await queueCurrentSave("Saving before article switch...");
-            await flushLocalPreviewBeforeArticleSwitch();
         } catch (e) {
             UI.showToast("Failed to prepare article before switching: " + e.message, "error");
             return;
+        }
+        try {
+            await flushLocalPreviewBeforeArticleSwitch();
+        } catch (e) {
+            // A 409 means another document owns the site's preview workspace.
+            // Preview sync is unavailable for this tab, but normal article
+            // navigation must remain available. Production save errors above
+            // are still blocking.
+            if (isLocalPreviewOwnershipConflict(e)) {
+                // Continue with the article switch without a preview flush.
+            } else {
+                UI.showToast("Failed to prepare article before switching: " + e.message, "error");
+                return;
+            }
         }
     }
     await saveQueue.catch(() => {

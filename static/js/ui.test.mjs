@@ -38,6 +38,7 @@ const {
     createLocalPreviewSessionID,
     flushLocalPreviewBeforeArticleSwitch,
     getOrCreateDraftID,
+    isLocalPreviewOwnershipConflict,
     waitForLocalPreviewUpdates,
 } = await import("./editor.js");
 const API = await import("./api.js");
@@ -381,6 +382,12 @@ describe("Local Preview destructive operations", () => {
         resolveOldUpdate();
         await switching;
         assert.deepEqual(events, ["latest payload sent", "latest payload applied"]);
+    });
+
+    it("does not block article switching on a Local Preview ownership conflict", () => {
+        assert.equal(isLocalPreviewOwnershipConflict({ status: 409 }), true);
+        assert.equal(isLocalPreviewOwnershipConflict({ status: 500 }), false);
+        assert.equal(isLocalPreviewOwnershipConflict(new Error("network failure")), false);
     });
 });
 
