@@ -67,10 +67,9 @@ type localPreviewReleaseState struct {
 	token   uint64
 }
 
-// LocalPreviewIngressLease protects a preview request from a concurrent
-// release/reclaim transition. The lease remains held through ProxyRuntime so
-// a process cannot be started with a workspace snapshot that is being
-// detached underneath it.
+// LocalPreviewIngressLease protects preview preparation from a concurrent
+// release/reclaim transition. Callers release it after the process/port and
+// proxy target are fixed, before serving a potentially long-lived stream.
 type LocalPreviewIngressLease struct {
 	gate *sync.RWMutex
 	once sync.Once
@@ -203,8 +202,8 @@ func (m *LocalPreviewWorkspaceManager) siteGate(siteID string) *sync.RWMutex {
 }
 
 // AcquireIngress returns one consistent workspace snapshot while holding the
-// site's read gate. Callers must release the returned lease after proxying the
-// request; release/reclaim claims use the corresponding write gate.
+// site's read gate. Callers must release the returned lease after preparing a
+// fixed proxy target; release/reclaim claims use the corresponding write gate.
 func (m *LocalPreviewWorkspaceManager) AcquireIngress(siteID string) (LocalPreviewIngressLease, LocalPreviewWorkspace, bool, bool) {
 	gate := m.siteGate(siteID)
 	gate.RLock()

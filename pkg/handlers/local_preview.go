@@ -21,6 +21,10 @@ type localPreviewRuntimeProxy interface {
 	ProxyRuntime(http.ResponseWriter, *http.Request, config.SiteRuntime) error
 }
 
+type localPreviewRuntimePreparer interface {
+	PrepareProxyRuntime(config.SiteRuntime) (http.Handler, error)
+}
+
 func localPreviewIngress(manager localPreviewRuntimeProxy) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !config.IsLocalPreviewHostCandidate(c.Request.Host) {
@@ -65,7 +69,6 @@ func localPreviewIngress(manager localPreviewRuntimeProxy) gin.HandlerFunc {
 				c.AbortWithStatus(http.StatusServiceUnavailable)
 				return
 			}
-			defer ingressLease.Release()
 			if active {
 				runtime.ContentDir = workspace.ContentDir
 				if workspace.ProjectDir != "" {
@@ -78,6 +81,23 @@ func localPreviewIngress(manager localPreviewRuntimeProxy) gin.HandlerFunc {
 			slog.Warn("Local preview shadow workspace unavailable; serving saved content", "site", site.ID, "error", workspaceErr)
 		}
 
+		if preparer, ok := manager.(localPreviewRuntimePreparer); ok {
+			proxy, err := preparer.PrepareProxyRuntime(runtime)
+			ingressLease.Release()
+			if err != nil {
+				slog.Error("Local preview proxy failed", "site", site.ID, "error", err)
+				c.AbortWithStatus(http.StatusBadGateway)
+				return
+			}
+			proxy.ServeHTTP(c.Writer, c.Request)
+			c.Abort()
+			return
+		}
+
+		// Test doubles and legacy adapters that only provide ProxyRuntime keep
+		// the gate for the duration of that call. The production manager above
+		// exposes PrepareProxyRuntime so streaming responses do not hold it.
+		defer ingressLease.Release()
 		if err := manager.ProxyRuntime(c.Writer, c.Request, runtime); err != nil {
 			slog.Error("Local preview proxy failed", "site", site.ID, "error", err)
 			if !c.Writer.Written() {

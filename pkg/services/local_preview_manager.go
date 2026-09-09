@@ -665,16 +665,28 @@ func (m *LocalPreviewManager) ResolveArticleURL(ctx context.Context, runtime con
 }
 
 func (m *LocalPreviewManager) ProxyRuntime(w http.ResponseWriter, r *http.Request, runtime config.SiteRuntime) error {
-	slot, err := m.ensureReadyRuntime(runtime)
-	if err != nil {
-		return err
-	}
-	proxy, err := newLocalPreviewReverseProxy(runtime, slot.Port)
+	proxy, err := m.PrepareProxyRuntime(runtime)
 	if err != nil {
 		return err
 	}
 	proxy.ServeHTTP(w, r)
 	return nil
+}
+
+// PrepareProxyRuntime ensures that the generator process and its listening
+// port are ready, then builds the reverse proxy for that fixed target. The
+// caller may release workspace transition gates after this method returns;
+// ServeHTTP can remain active for a long-lived HTTP or WebSocket stream.
+func (m *LocalPreviewManager) PrepareProxyRuntime(runtime config.SiteRuntime) (http.Handler, error) {
+	slot, err := m.ensureReadyRuntime(runtime)
+	if err != nil {
+		return nil, err
+	}
+	proxy, err := newLocalPreviewReverseProxy(runtime, slot.Port)
+	if err != nil {
+		return nil, err
+	}
+	return proxy, nil
 }
 
 func newLocalPreviewReverseProxy(runtime config.SiteRuntime, port int) (*httputil.ReverseProxy, error) {
