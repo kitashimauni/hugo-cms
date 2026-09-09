@@ -61,7 +61,9 @@ func UpdateLocalPreviewContent(c *gin.Context) {
 		ErrorInternal(c, "Local preview workspace is unavailable")
 		return
 	}
-	workspace, created, applied, err := workspaceManager.Update(runtime, req.DraftID, req.Path, req.Revision, finalContent)
+	workspace, created, applied, err := workspaceManager.UpdateWithBeforeWrite(runtime, req.DraftID, req.Path, req.Revision, finalContent, func() error {
+		return services.DefaultLocalPreviewManager().InvalidateArticleURL(runtime)
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrLocalPreviewSessionConflict),
@@ -69,6 +71,8 @@ func UpdateLocalPreviewContent(c *gin.Context) {
 			errors.Is(err, services.ErrLocalPreviewSessionExpired),
 			errors.Is(err, services.ErrLocalPreviewSessionReclaiming):
 			ErrorConflict(c, err.Error())
+		case errors.Is(err, services.ErrLocalPreviewMetadataInvalidation):
+			ErrorInternal(c, "Failed to synchronize Local Live Preview metadata")
 		default:
 			ErrorBadRequest(c, err.Error())
 		}

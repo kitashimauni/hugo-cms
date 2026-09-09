@@ -74,9 +74,9 @@ function waitForHTTP(port, pathname) {
   });
 }
 
-function requestHTTP(port, pathname) {
+function requestHTTP(port, pathname, method = "GET") {
   return new Promise((resolve, reject) => {
-    const request = http.get({ host: "127.0.0.1", port, path: pathname }, (response) => {
+    const request = http.request({ host: "127.0.0.1", port, path: pathname, method }, (response) => {
       const chunks = [];
       response.on("data", (chunk) => chunks.push(chunk));
       response.on("end", () => resolve({
@@ -85,6 +85,7 @@ function requestHTTP(port, pathname) {
       }));
     });
     request.on("error", reject);
+    request.end();
   });
 }
 
@@ -364,6 +365,10 @@ test("starts real Eleventy serve and broadcasts LiveReload", { skip: !hasRealEle
       });
       reloadSocket.once("error", reject);
     });
+    const invalidated = await requestHTTP(port, "/__hugo_cms_invalidate", "POST");
+    assert.equal(invalidated.statusCode, 202);
+    const invalidatedMetadata = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    assert.equal(invalidatedMetadata.statusCode, 503);
     fs.writeFileSync(
       fixture.article,
       ["---", "title: Changed", "permalink: /custom/changed/", "---", "", "# {{ title }}", ""].join("\n"),

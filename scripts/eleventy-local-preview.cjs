@@ -12,6 +12,7 @@ const RELOAD_SCRIPT_PATH = "/__hugo_cms_reload.js";
 const RELOAD_SOCKET_PATH = "/__hugo_cms_live_reload";
 const READY_PATH = "/__hugo_cms_ready";
 const METADATA_PATH = "/__hugo_cms_metadata";
+const INVALIDATE_PATH = "/__hugo_cms_invalidate";
 const RELOAD_SCRIPT = `(() => {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(protocol + "//" + location.host + "${RELOAD_SOCKET_PATH}");
@@ -63,8 +64,11 @@ function createBuildState(input) {
     ready: false,
     building: true,
     entries: new Map(),
+    invalidationGeneration: 0,
+    activeBuildGeneration: 0,
   };
   state.begin = () => {
+    state.activeBuildGeneration = state.invalidationGeneration;
     state.ready = false;
     state.building = true;
   };
@@ -88,8 +92,14 @@ function createBuildState(input) {
       });
     }
     state.entries = entries;
-    state.ready = true;
-    state.building = false;
+    state.ready = state.activeBuildGeneration >= state.invalidationGeneration;
+    state.building = !state.ready;
+  };
+  state.invalidate = () => {
+    state.invalidationGeneration += 1;
+    state.ready = false;
+    state.building = true;
+    return state.invalidationGeneration;
   };
   state.get = (articlePath) => {
     const absoluteArticlePath = path.resolve(state.inputRoot, articlePath);
@@ -217,6 +227,15 @@ function createLoopbackServer(outputRoot, buildState = { ready: true, building: 
         status: buildState.ready ? "ready" : "building",
         building: buildState.building,
       });
+      return;
+    }
+    if (requestURL.pathname === INVALIDATE_PATH) {
+      if (request.method !== "POST") {
+        sendJSON(response, 405, { status: "method_not_allowed" });
+        return;
+      }
+      const generation = buildState.invalidate?.() || 0;
+      sendJSON(response, 202, { status: "invalidated", generation });
       return;
     }
     if (requestURL.pathname === METADATA_PATH) {

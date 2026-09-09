@@ -138,6 +138,18 @@ func (m *LocalPreviewWorkspaceManager) reclaimingLocked(siteID string) bool {
 // instead of overwriting newer editor state. Requests renew a lease only while
 // it is still valid; an expired session must be reclaimed before it can restart.
 func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftID, articlePath string, revision uint64, content []byte) (LocalPreviewWorkspace, bool, bool, error) {
+	return m.update(runtime, draftID, articlePath, revision, content, nil)
+}
+
+// UpdateWithBeforeWrite applies an update after running beforeWrite once all
+// session and path validation has succeeded. The hook is used to invalidate
+// generator-derived state immediately before the shadow file changes, which
+// prevents a consumer from observing the previous build as current.
+func (m *LocalPreviewWorkspaceManager) UpdateWithBeforeWrite(runtime config.SiteRuntime, draftID, articlePath string, revision uint64, content []byte, beforeWrite func() error) (LocalPreviewWorkspace, bool, bool, error) {
+	return m.update(runtime, draftID, articlePath, revision, content, beforeWrite)
+}
+
+func (m *LocalPreviewWorkspaceManager) update(runtime config.SiteRuntime, draftID, articlePath string, revision uint64, content []byte, beforeWrite func() error) (LocalPreviewWorkspace, bool, bool, error) {
 	if err := validateDraftID(draftID); err != nil {
 		return LocalPreviewWorkspace{}, false, false, err
 	}
@@ -228,6 +240,14 @@ func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftI
 	target := SafeJoin(workspace.ContentDir, "", articlePath)
 	if target == "" {
 		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("invalid local preview workspace path")
+	}
+	if beforeWrite != nil {
+		if err := beforeWrite(); err != nil {
+			if created {
+				_ = os.RemoveAll(filepath.Dir(workspace.ContentDir))
+			}
+			return LocalPreviewWorkspace{}, false, false, err
+		}
 	}
 	if err := writeLocalPreviewFileAtomic(target, content); err != nil {
 		if created {

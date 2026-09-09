@@ -21,17 +21,21 @@ import (
 )
 
 const (
-	defaultLocalPreviewStartupTimeout = 2 * time.Minute
-	defaultLocalPreviewProbeInterval  = 50 * time.Millisecond
-	defaultLocalPreviewStartAttempts  = 3
-	localPreviewStderrLimit           = 64 << 10
-	localPreviewHugoEnvironment       = "development"
-	localPreviewStartupTimeoutEnv     = "HUGO_CMS_LOCAL_PREVIEW_STARTUP_TIMEOUT"
-	eleventyLocalPreviewReadyPath     = "/__hugo_cms_ready"
-	eleventyLocalPreviewMetadataPath  = "/__hugo_cms_metadata"
+	defaultLocalPreviewStartupTimeout  = 2 * time.Minute
+	defaultLocalPreviewProbeInterval   = 50 * time.Millisecond
+	defaultLocalPreviewStartAttempts   = 3
+	localPreviewStderrLimit            = 64 << 10
+	localPreviewHugoEnvironment        = "development"
+	localPreviewStartupTimeoutEnv      = "HUGO_CMS_LOCAL_PREVIEW_STARTUP_TIMEOUT"
+	eleventyLocalPreviewReadyPath      = "/__hugo_cms_ready"
+	eleventyLocalPreviewMetadataPath   = "/__hugo_cms_metadata"
+	eleventyLocalPreviewInvalidatePath = "/__hugo_cms_invalidate"
 )
 
-var errLocalPreviewShuttingDown = errors.New("local preview manager is shutting down")
+var (
+	errLocalPreviewShuttingDown         = errors.New("local preview manager is shutting down")
+	ErrLocalPreviewMetadataInvalidation = errors.New("local preview metadata invalidation failed")
+)
 
 type localPreviewCommandFactory func(context.Context, config.SiteRuntime, int, string) (*exec.Cmd, error)
 
@@ -550,6 +554,41 @@ func (m *LocalPreviewManager) Shutdown(ctx context.Context) error {
 
 func (m *LocalPreviewManager) Proxy(w http.ResponseWriter, r *http.Request, site config.SiteConfig) error {
 	return m.ProxyRuntime(w, r, config.NewSiteRuntime(site))
+}
+
+// InvalidateArticleURL marks the next Eleventy watch build as required before
+// shadow content is written. A running process is optional: a process started
+// after the write will always build the latest workspace content from scratch.
+func (m *LocalPreviewManager) InvalidateArticleURL(runtime config.SiteRuntime) error {
+	if !isEleventyLocalPreviewGenerator(runtime.Generator) {
+		return nil
+	}
+	process := m.process(runtime.ID)
+	if process == nil || process.exited() {
+		return nil
+	}
+	slot, ok := m.Status(runtime.ID)
+	if !ok || slot.State != LocalPreviewReady {
+		return nil
+	}
+	address := net.JoinHostPort(LocalPreviewBindAddress, strconv.Itoa(slot.Port))
+	request, err := http.NewRequest(http.MethodPost, "http://"+address+eleventyLocalPreviewInvalidatePath, nil)
+	if err != nil {
+		return fmt.Errorf("%w: create request: %v", ErrLocalPreviewMetadataInvalidation, err)
+	}
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	response, err := client.Do(request)
+	if err != nil {
+		if process.exited() {
+			return nil
+		}
+		return fmt.Errorf("%w: %v", ErrLocalPreviewMetadataInvalidation, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("%w: endpoint returned %s", ErrLocalPreviewMetadataInvalidation, response.Status)
+	}
+	return nil
 }
 
 // ResolveArticleURL resolves an Eleventy article through the metadata map kept

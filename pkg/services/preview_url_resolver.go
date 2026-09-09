@@ -19,8 +19,6 @@ import (
 	"time"
 )
 
-const previewURLResolveTimeout = 15 * time.Second
-
 // PreviewURLResolver asks the configured generator to resolve a content path
 // to the URL that should be opened in the local preview origin. The resolver
 // receives the active shadow workspace so unsaved front matter participates in
@@ -74,7 +72,8 @@ func (resolver *hugoPreviewURLResolver) ResolveArticleURL(ctx context.Context, r
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, previewURLResolveTimeout)
+	timeout := configuredLocalPreviewStartupTimeout()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	run := resolver.run
@@ -84,7 +83,7 @@ func (resolver *hugoPreviewURLResolver) ResolveArticleURL(ctx context.Context, r
 	output, err := run(ctx, runtime, previewURL)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("hugo list all timed out after %s", previewURLResolveTimeout)
+			return "", fmt.Errorf("hugo list all timed out after %s", timeout)
 		}
 		return "", fmt.Errorf("hugo list all failed: %w", err)
 	}
@@ -274,7 +273,8 @@ func (resolver *eleventyPreviewURLResolver) ResolveArticleURL(ctx context.Contex
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, previewURLResolveTimeout)
+	timeout := configuredLocalPreviewStartupTimeout()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	run := resolver.run
@@ -284,7 +284,7 @@ func (resolver *eleventyPreviewURLResolver) ResolveArticleURL(ctx context.Contex
 	output, err := run(ctx, runtime)
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("eleventy URL resolution timed out after %s", previewURLResolveTimeout)
+			return "", fmt.Errorf("eleventy URL resolution timed out after %s", timeout)
 		}
 		return "", fmt.Errorf("eleventy URL resolution failed: %w", err)
 	}
@@ -319,7 +319,8 @@ func resolveRunningEleventyArticleURL(ctx context.Context, runtime config.SiteRu
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, previewURLResolveTimeout)
+	timeout := configuredLocalPreviewStartupTimeout()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	endpoint := url.URL{
@@ -367,7 +368,7 @@ func resolveRunningEleventyArticleURL(ctx context.Context, runtime config.SiteRu
 		select {
 		case <-ctx.Done():
 			if ctx.Err() == context.DeadlineExceeded {
-				return "", fmt.Errorf("eleventy running preview URL resolution timed out after %s", previewURLResolveTimeout)
+				return "", fmt.Errorf("eleventy running preview URL resolution timed out after %s", timeout)
 			}
 			return "", ctx.Err()
 		case <-ticker.C:

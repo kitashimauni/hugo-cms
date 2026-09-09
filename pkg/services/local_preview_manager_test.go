@@ -186,6 +186,19 @@ func TestLocalPreviewManagerResolvesEleventyURLFromRunningProcess(t *testing.T) 
 	}
 }
 
+func TestLocalPreviewManagerInvalidatesEleventyMetadata(t *testing.T) {
+	manager, site := newTestLocalPreviewManager(t)
+	site.Generator = "eleventy"
+	defer shutdownTestLocalPreviewManager(t, manager)
+
+	if _, err := manager.EnsureReady(site); err != nil {
+		t.Fatalf("EnsureReady() error = %v", err)
+	}
+	if err := manager.InvalidateArticleURL(config.NewSiteRuntime(site)); err != nil {
+		t.Fatalf("InvalidateArticleURL() error = %v", err)
+	}
+}
+
 func TestLocalPreviewManagerEnsureReadyAndProxy(t *testing.T) {
 	manager, site := newTestLocalPreviewManager(t)
 	defer shutdownTestLocalPreviewManager(t, manager)
@@ -384,6 +397,10 @@ func TestLocalPreviewHelperProcess(t *testing.T) {
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if generator == "eleventy" && r.URL.Path == eleventyLocalPreviewInvalidatePath {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		if generator == "eleventy" && r.URL.Path == eleventyLocalPreviewReadyPath {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"status":"ready","building":false}`)
