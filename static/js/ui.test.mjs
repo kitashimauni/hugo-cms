@@ -36,6 +36,7 @@ const {
 const {
     createDraftUUID,
     createLocalPreviewSessionID,
+    flushLocalPreviewBeforeArticleSwitch,
     getOrCreateDraftID,
     waitForLocalPreviewUpdates,
 } = await import("./editor.js");
@@ -355,6 +356,31 @@ describe("Local Preview destructive operations", () => {
         resolveUpdate();
         await waiting;
         assert.equal(updateApplied, true);
+    });
+
+    it("flushes the latest preview payload before switching articles", async () => {
+        let oldUpdateApplied = false;
+        let resolveOldUpdate;
+        const oldUpdate = new Promise(resolve => {
+            resolveOldUpdate = () => {
+                oldUpdateApplied = true;
+                resolve();
+            };
+        });
+        const pending = new Set([oldUpdate]);
+        const events = [];
+        const switching = flushLocalPreviewBeforeArticleSwitch(async () => {
+            assert.equal(oldUpdateApplied, true);
+            events.push("latest payload sent");
+            const latestUpdate = Promise.resolve().then(() => events.push("latest payload applied"));
+            pending.add(latestUpdate);
+        }, pending);
+
+        await Promise.resolve();
+        assert.deepEqual(events, []);
+        resolveOldUpdate();
+        await switching;
+        assert.deepEqual(events, ["latest payload sent", "latest payload applied"]);
     });
 });
 

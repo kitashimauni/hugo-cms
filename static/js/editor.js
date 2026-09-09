@@ -292,6 +292,15 @@ export function waitForLocalPreviewUpdates(pending = localPreviewInflight) {
     return Promise.allSettled(Array.from(pending));
 }
 
+// Article switching cancels the debounce timer, so explicitly send the
+// current editor payload after the previous preview writes have settled.
+// Keeping the pending set shared lets the final wait include this flush too.
+export async function flushLocalPreviewBeforeArticleSwitch(flush = refreshLocalLivePreview, pending = localPreviewInflight) {
+    await waitForLocalPreviewUpdates(pending);
+    await flush();
+    await waitForLocalPreviewUpdates(pending);
+}
+
 export async function releaseLocalLivePreview() {
     cancelLocalPreviewTimer();
     const sessionID = localPreviewSessionID;
@@ -385,14 +394,11 @@ export async function loadFile(path) {
     if (switchingArticle) {
         try {
             await queueCurrentSave("Saving before article switch...");
+            await flushLocalPreviewBeforeArticleSwitch();
         } catch (e) {
-            UI.showToast("Failed to save before switching article: " + e.message, "error");
+            UI.showToast("Failed to prepare article before switching: " + e.message, "error");
             return;
         }
-        // Complete the previous article's preview update before changing the
-        // selected path. The site workspace is reused, so an old request must
-        // not arrive after the new article update and move the selection back.
-        await waitForLocalPreviewUpdates();
     }
     await saveQueue.catch(() => {
         // Loading another file remains possible after a failed save.
