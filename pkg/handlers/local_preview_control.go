@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"hugo-cms/pkg/services"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -97,7 +98,8 @@ func HeartbeatLocalPreviewContent(c *gin.Context) {
 		case errors.Is(err, services.ErrLocalPreviewSessionConflict),
 			errors.Is(err, services.ErrLocalPreviewSessionNotFound),
 			errors.Is(err, services.ErrLocalPreviewSessionExpired),
-			errors.Is(err, services.ErrLocalPreviewSessionReclaiming):
+			errors.Is(err, services.ErrLocalPreviewSessionReclaiming),
+			errors.Is(err, services.ErrLocalPreviewSessionReleasing):
 			ErrorConflict(c, err.Error())
 		default:
 			ErrorBadRequest(c, err.Error())
@@ -128,27 +130,51 @@ func StopLocalPreview(c *gin.Context) {
 		return
 	}
 	workspace, active := workspaceManager.Active(runtime.ID)
+	var releaseClaim services.LocalPreviewRelease
+	claimed := false
 	if active {
 		if strings.TrimSpace(req.DraftID) == "" || workspace.DraftID != req.DraftID {
 			ErrorConflict(c, services.ErrLocalPreviewSessionConflict.Error())
 			return
 		}
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
-	stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
-	cancel()
-	if stopErr != nil {
-		ErrorInternal(c, "Failed to stop Local Live Preview process")
-		return
-	}
-	if active {
-		if _, err := workspaceManager.Release(runtime.ID, req.DraftID); err != nil {
-			if errors.Is(err, services.ErrLocalPreviewSessionConflict) || errors.Is(err, services.ErrLocalPreviewSessionReclaiming) {
+		releaseClaim, claimed, err = workspaceManager.ClaimRelease(runtime.ID, req.DraftID)
+		if err != nil {
+			if errors.Is(err, services.ErrLocalPreviewSessionConflict) ||
+				errors.Is(err, services.ErrLocalPreviewSessionReclaiming) ||
+				errors.Is(err, services.ErrLocalPreviewSessionReleasing) {
 				ErrorConflict(c, err.Error())
 				return
 			}
 			ErrorBadRequest(c, err.Error())
+			return
+		}
+	} else if workspaceManager.IsTransitioning(runtime.ID) {
+		ErrorConflict(c, services.ErrLocalPreviewSessionReleasing.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), services.DefaultLocalPreviewStopTimeout)
+	stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
+	cancel()
+	if stopErr != nil {
+		slog.Error("Failed to stop Local Live Preview process", "site", runtime.ID, "error", stopErr)
+		if claimed {
+			workspaceManager.CancelRelease(releaseClaim)
+		}
+		ErrorInternal(c, "Failed to stop Local Live Preview process")
+		return
+	}
+	if claimed {
+		if _, err := workspaceManager.FinishRelease(releaseClaim); err != nil {
+			workspaceManager.CancelRelease(releaseClaim)
+			slog.Error("Failed to detach Local Live Preview workspace", "site", runtime.ID, "error", err)
+			if errors.Is(err, services.ErrLocalPreviewSessionConflict) ||
+				errors.Is(err, services.ErrLocalPreviewSessionReclaiming) ||
+				errors.Is(err, services.ErrLocalPreviewSessionReleasing) {
+				ErrorConflict(c, err.Error())
+				return
+			}
+			ErrorInternal(c, "Failed to release Local Live Preview workspace")
 			return
 		}
 	}
@@ -181,10 +207,11 @@ func ReclaimStaleLocalPreview(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), services.DefaultLocalPreviewStopTimeout)
 	stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
 	cancel()
 	if stopErr != nil {
+		slog.Error("Failed to stop stale Local Live Preview process", "site", runtime.ID, "error", stopErr)
 		workspaceManager.CancelReclaim(claim)
 		ErrorInternal(c, "Failed to stop stale Local Live Preview process")
 		return

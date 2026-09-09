@@ -1,11 +1,15 @@
 package handlers
 
 import (
+	"errors"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/services"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -119,6 +123,95 @@ func TestLocalPreviewIngressHidesControlEndpoints(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewIngressReleasesGateBeforeStreaming(t *testing.T) {
+	originalDomain := config.PreviewDomain
+	originalScheme := config.PreviewScheme
+	originalSites := config.Sites
+	t.Cleanup(func() {
+		config.PreviewDomain = originalDomain
+		config.PreviewScheme = originalScheme
+		config.Sites = originalSites
+	})
+
+	config.PreviewDomain = "preview.example.com"
+	config.PreviewScheme = "https"
+	enabled := true
+	siteID := "streaming"
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "content"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "content", "one.md"), []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	config.Sites = []config.SiteConfig{{
+		ID:         siteID,
+		RepoPath:   repo,
+		ContentDir: "content",
+		Preview: config.SitePreviewConfig{
+			LocalPreview: config.LocalPreviewConfig{Enabled: &enabled},
+		},
+	}}
+
+	workspaceManager, err := services.DefaultLocalPreviewWorkspaceManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.NewSiteRuntime(config.Sites[0])
+	if _, _, _, err := workspaceManager.Update(runtime, "draft-1", "one.md", 1, []byte("draft")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = workspaceManager.Release(siteID, "draft-1")
+	})
+
+	proxy := &localPreviewPreparedProxySpy{
+		prepared: make(chan struct{}),
+		serving:  make(chan struct{}),
+		allow:    make(chan struct{}),
+	}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(localPreviewIngress(proxy))
+
+	request := httptest.NewRequest(http.MethodGet, "https://"+siteID+".preview.example.com/", nil)
+	request.Host = siteID + ".preview.example.com"
+	response := httptest.NewRecorder()
+	requestDone := make(chan struct{})
+	go func() {
+		router.ServeHTTP(response, request)
+		close(requestDone)
+	}()
+
+	select {
+	case <-proxy.prepared:
+	case <-time.After(2 * time.Second):
+		t.Fatal("proxy target was not prepared")
+	}
+	select {
+	case <-proxy.serving:
+	case <-time.After(2 * time.Second):
+		t.Fatal("streaming handler did not start")
+	}
+
+	claim, claimed, err := workspaceManager.ClaimRelease(siteID, "draft-1")
+	if err != nil || !claimed {
+		t.Fatalf("ClaimRelease() claimed=%v err=%v while stream was active", claimed, err)
+	}
+	if released, err := workspaceManager.FinishRelease(claim); err != nil || !released {
+		t.Fatalf("FinishRelease() released=%v err=%v", released, err)
+	}
+	close(proxy.allow)
+	select {
+	case <-requestDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("streaming request did not finish")
+	}
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("streaming response status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+}
+
 type localPreviewProxySpy struct {
 	calls int
 }
@@ -127,4 +220,23 @@ func (p *localPreviewProxySpy) ProxyRuntime(w http.ResponseWriter, _ *http.Reque
 	p.calls++
 	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+type localPreviewPreparedProxySpy struct {
+	prepared chan struct{}
+	serving  chan struct{}
+	allow    chan struct{}
+}
+
+func (p *localPreviewPreparedProxySpy) PrepareProxyRuntime(config.SiteRuntime) (http.Handler, error) {
+	close(p.prepared)
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(p.serving)
+		<-p.allow
+		w.WriteHeader(http.StatusNoContent)
+	}), nil
+}
+
+func (p *localPreviewPreparedProxySpy) ProxyRuntime(http.ResponseWriter, *http.Request, config.SiteRuntime) error {
+	return errors.New("ProxyRuntime should not be used when PrepareProxyRuntime is available")
 }

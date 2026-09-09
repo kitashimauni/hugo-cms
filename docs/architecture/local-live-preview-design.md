@@ -186,7 +186,7 @@ static配下はHugoが元repositoryを直接参照するためshadow同期しな
 - 別siteは独立workspaceを利用可能
 - stale tabは別tabのworkspaceをreleaseできない
 
-article/site切替ではbrowserがin-flight update完了を待ってreleaseする。serverはgenerator processを先に停止し、その後shadow directoryを削除する。
+article/site切替ではbrowserがin-flight update完了を待ってreleaseする。serverはrelease claimでsessionをreleasing状態にしてからgenerator processを停止し、workspace rootを一意なcleanup領域へrenameして論理的にdetachする。その後のshadow directoryの物理削除は非同期で行い、cleanup中のpreview requestや更新が古いworkspaceを再利用しないようにする。Ingressはworkspace snapshot取得からprocess/portとproxy targetの準備完了まで同じsiteのread gateを保持し、release/reclaimのwrite gateとTOCTOU raceにならないようにする。準備後のHTTP/WebSocket streamingはgate外で実行する。
 
 ブラウザtabを切替操作なしで閉じた場合の確実なlease解放はPhase 4の停止UI/lease運用で扱う。それまではCMS shutdownで全workspaceをcleanupする。
 
@@ -238,7 +238,7 @@ POST /admin/api/preview/local/navigate
 POST /admin/api/preview/local/release
 ```
 
-release時はgenerator process停止後にworkspaceを削除する。active shadow sessionがなければ次のpreview requestは保存済みrepository contentを使う。Eleventyのtemporary outputも同時に削除する。
+release時はgenerator process停止後にworkspaceをdetachし、物理削除は非同期で行う。active shadow sessionがなければ次のpreview requestは保存済みrepository contentを使う。Eleventyのtemporary outputも同時に削除する。release/reclaim claimの保持中はsession更新とpreview ingressを拒否し、停止前に古いworkspaceでgeneratorを再起動しない。
 
 ## Phase 4への契約
 
