@@ -169,6 +169,29 @@ func TestLocalPreviewManagerSupportsEleventy(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewManagerReusesSiteRuntimeForRepeatedPreparation(t *testing.T) {
+	for _, generator := range []string{"hugo", "eleventy"} {
+		t.Run(generator, func(t *testing.T) {
+			manager, site := newTestLocalPreviewManager(t)
+			site.Generator = generator
+			defer shutdownTestLocalPreviewManager(t, manager)
+
+			first, err := manager.EnsureReady(site)
+			if err != nil {
+				t.Fatalf("first EnsureReady() error = %v", err)
+			}
+			firstProcess := manager.process(site.ID)
+			second, err := manager.EnsureReady(site)
+			if err != nil {
+				t.Fatalf("second EnsureReady() error = %v", err)
+			}
+			if first.Port != second.Port || firstProcess == nil || manager.process(site.ID) != firstProcess {
+				t.Fatalf("site runtime was recreated: first=%#v second=%#v process_changed=%v", first, second, manager.process(site.ID) != firstProcess)
+			}
+		})
+	}
+}
+
 func TestLocalPreviewManagerResolvesEleventyURLFromRunningProcess(t *testing.T) {
 	manager, site := newTestLocalPreviewManager(t)
 	site.Generator = "eleventy"

@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const DefaultLocalPreviewLeaseTTL = 2 * time.Minute
+const (
+	DefaultLocalPreviewLeaseTTL    = 2 * time.Minute
+	DefaultLocalPreviewIdleTimeout = 30 * time.Minute
+)
 
 var (
 	ErrLocalPreviewSessionConflict   = errors.New("another local preview session is already active for this site")
@@ -26,9 +29,9 @@ var (
 	ErrLocalPreviewSessionReleasing  = errors.New("local preview session is being released")
 )
 
-// LocalPreviewWorkspace is the active unsaved-content workspace for one site.
-// Each site is intentionally limited to one active browser-document session so
-// separate tabs cannot silently mix unsaved content.
+// LocalPreviewWorkspace is the site-scoped unsaved-content workspace and its
+// current editor owner/article metadata. The generator project belongs to the
+// site and is reused when the owner selects another article.
 type LocalPreviewWorkspace struct {
 	SiteID      string
 	DraftID     string
@@ -220,9 +223,11 @@ func (m *LocalPreviewWorkspaceManager) AcquireIngress(siteID string) (LocalPrevi
 }
 
 // Update creates the site's workspace on the first request and applies the
-// newest editor revision. Older in-flight HTTP requests become harmless no-ops
-// instead of overwriting newer editor state. Requests renew a lease only while
-// it is still valid; an expired session must be reclaimed before it can restart.
+// newest revision for the selected article. The same owner may switch article
+// paths without recreating the workspace or restarting the generator. Older
+// in-flight HTTP requests become harmless no-ops instead of overwriting newer
+// editor state. Requests renew a lease only while it is still valid; an
+// expired session must be reclaimed before it can restart.
 func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftID, articlePath string, revision uint64, content []byte) (LocalPreviewWorkspace, bool, bool, error) {
 	return m.update(runtime, draftID, articlePath, revision, content, nil)
 }
@@ -277,16 +282,20 @@ func (m *LocalPreviewWorkspaceManager) update(runtime config.SiteRuntime, draftI
 		if workspace.DraftID != draftID {
 			return LocalPreviewWorkspace{}, false, false, ErrLocalPreviewSessionConflict
 		}
-		if workspace.ArticlePath != filepath.ToSlash(articlePath) {
-			return LocalPreviewWorkspace{}, false, false, ErrLocalPreviewSessionMismatch
-		}
-		workspace.LastSeenAt = now
 		if revision <= workspace.Revision {
+			workspace.LastSeenAt = now
 			m.sessions[runtime.ID] = workspace
 			return workspace, false, false, nil
 		}
+		if workspace.ArticlePath != filepath.ToSlash(articlePath) {
+			// Keep the site workspace and advance the selected article only for a
+			// newer request. A late request for the previous article is therefore a
+			// harmless no-op instead of moving the active selection backwards.
+			workspace.ArticlePath = filepath.ToSlash(articlePath)
+		}
+		workspace.LastSeenAt = now
 	} else {
-		workspaceRoot := filepath.Join(m.root, runtime.ID, draftID)
+		workspaceRoot := filepath.Join(m.root, runtime.ID)
 		if err := os.RemoveAll(workspaceRoot); err != nil {
 			return LocalPreviewWorkspace{}, false, false, fmt.Errorf("reset local preview workspace: %w", err)
 		}
@@ -390,6 +399,32 @@ func (m *LocalPreviewWorkspaceManager) Status(siteID string) (LocalPreviewWorksp
 		return LocalPreviewWorkspace{}, false, false
 	}
 	return workspace, true, m.staleLocked(workspace, m.currentTimeLocked())
+}
+
+// IdleWorkspaces returns active site workspaces that have not received an
+// editor update or heartbeat within timeout. The caller must claim each
+// returned workspace before stopping its generator so a concurrent editor
+// request cannot revive it during cleanup.
+func (m *LocalPreviewWorkspaceManager) IdleWorkspaces(timeout time.Duration) []LocalPreviewWorkspace {
+	if timeout <= 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil
+	}
+	now := m.currentTimeLocked()
+	idle := make([]LocalPreviewWorkspace, 0)
+	for siteID, workspace := range m.sessions {
+		if m.transitionErrorLocked(siteID) != nil || workspace.LastSeenAt.IsZero() {
+			continue
+		}
+		if now.Sub(workspace.LastSeenAt) >= timeout {
+			idle = append(idle, workspace)
+		}
+	}
+	return idle
 }
 
 // SyncContentResource mirrors a content-directory resource change made through

@@ -256,9 +256,6 @@ export async function refreshLocalLivePreview() {
     const sessionID = localPreviewSessionID || createLocalPreviewSessionID();
     if (!sessionID) return null;
 
-    if (localPreviewSessionPath && localPreviewSessionPath !== requestPath) {
-        throw new Error("Local Live Preview session path changed without release");
-    }
     localPreviewSessionID = sessionID;
     localPreviewSessionPath = requestPath;
     const revision = ++localPreviewRevision;
@@ -377,21 +374,22 @@ export async function loadFile(path) {
     clearAutoSaveTimer();
     cancelMarkdownPreview();
     cancelLocalPreviewTimer();
+    const switchingArticle = Boolean(currentPath && currentPath !== path);
+    if (switchingArticle) {
+        try {
+            await queueCurrentSave("Saving before article switch...");
+        } catch (e) {
+            UI.showToast("Failed to save before switching article: " + e.message, "error");
+            return;
+        }
+        // Complete the previous article's preview update before changing the
+        // selected path. The site workspace is reused, so an old request must
+        // not arrive after the new article update and move the selection back.
+        await Promise.allSettled(Array.from(localPreviewInflight));
+    }
     await saveQueue.catch(() => {
         // Loading another file remains possible after a failed save.
     });
-
-    // A failed cleanup can leave preview ownership alive even after the
-    // production article was deleted and currentPath was cleared. Base the
-    // retry decision on Local Preview ownership rather than editor selection.
-    if (localPreviewSessionID && localPreviewSessionPath && localPreviewSessionPath !== path) {
-        try {
-            await releaseLocalLivePreview();
-        } catch (e) {
-            UI.showToast("Failed to release Local Live Preview: " + e.message, "error");
-            return;
-        }
-    }
 
     currentPath = path;
     const display = document.getElementById('filename-display');
@@ -463,24 +461,11 @@ export async function deleteFile(refreshListCb) {
         // queued saves for this path from starting before DELETE.
         await saveQueue;
         await API.deleteArticle(pathToDelete);
-        // Production deletion is committed at this point. Preview cleanup is a
-        // separate best-effort operation and must never re-enable autosave for
-        // the deleted article.
+        // Production deletion is committed at this point. The server removes
+        // the corresponding file from the site-scoped preview workspace while
+        // keeping the generator runtime alive for the next article.
         deleted = true;
-
-        let previewCleanupError = null;
-        try {
-            await releaseLocalLivePreview();
-        } catch (e) {
-            previewCleanupError = e;
-            console.error("[LocalPreview] Cleanup after article deletion failed:", e);
-        }
-
-        if (previewCleanupError) {
-            UI.showToast("Article deleted, but Local Live Preview cleanup failed: " + previewCleanupError.message, "warning");
-        } else {
-            UI.showToast("Article deleted", "success");
-        }
+        UI.showToast("Article deleted", "success");
 
         if (currentPath === pathToDelete) {
             cancelMarkdownPreview();

@@ -84,7 +84,7 @@ func TestNavigateLocalPreviewUsesShadowContentAndPreservesProductionContent(t *t
 	}
 }
 
-func TestNavigateLocalPreviewRejectsWrongOwnerAndPath(t *testing.T) {
+func TestNavigateLocalPreviewRejectsWrongOwnerAndAllowsAnotherArticle(t *testing.T) {
 	site, runtime := localPreviewNavigationTestSite(t)
 	configureLocalPreviewNavigationTestSite(t, site)
 	workspaceManager, err := services.NewLocalPreviewWorkspaceManager(t.TempDir())
@@ -109,11 +109,11 @@ func TestNavigateLocalPreviewRejectsWrongOwnerAndPath(t *testing.T) {
 		t.Fatalf("wrong owner status = %d, want 409", ownerResponse.Code)
 	}
 	pathResponse := executeLocalPreviewNavigationRequest(t, site.ID, dependencies, "draft-1", "other.md")
-	if pathResponse.Code != http.StatusConflict {
-		t.Fatalf("wrong path status = %d, want 409", pathResponse.Code)
+	if pathResponse.Code != http.StatusOK {
+		t.Fatalf("another article status = %d, want 200", pathResponse.Code)
 	}
-	if resolveCalls != 0 {
-		t.Fatalf("resolver calls = %d, want 0 for rejected requests", resolveCalls)
+	if resolveCalls != 1 {
+		t.Fatalf("resolver calls = %d, want 1 for the allowed article", resolveCalls)
 	}
 }
 

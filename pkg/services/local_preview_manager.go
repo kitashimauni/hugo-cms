@@ -28,6 +28,7 @@ const (
 	localPreviewStderrLimit            = 64 << 10
 	localPreviewHugoEnvironment        = "development"
 	localPreviewStartupTimeoutEnv      = "HUGO_CMS_LOCAL_PREVIEW_STARTUP_TIMEOUT"
+	localPreviewIdleTimeoutEnv         = "HUGO_CMS_LOCAL_PREVIEW_IDLE_TIMEOUT"
 	eleventyLocalPreviewReadyPath      = "/__hugo_cms_ready"
 	eleventyLocalPreviewMetadataPath   = "/__hugo_cms_metadata"
 	eleventyLocalPreviewInvalidatePath = "/__hugo_cms_invalidate"
@@ -179,6 +180,7 @@ type LocalPreviewManager struct {
 	startupTimeout time.Duration
 	probeInterval  time.Duration
 	startAttempts  int
+	idleTimeout    time.Duration
 }
 
 func NewLocalPreviewManager(lifecycle *LocalPreviewLifecycle) *LocalPreviewManager {
@@ -193,6 +195,7 @@ func NewLocalPreviewManager(lifecycle *LocalPreviewLifecycle) *LocalPreviewManag
 		startupTimeout: configuredLocalPreviewStartupTimeout(),
 		probeInterval:  defaultLocalPreviewProbeInterval,
 		startAttempts:  defaultLocalPreviewStartAttempts,
+		idleTimeout:    configuredLocalPreviewIdleTimeout(),
 	}
 }
 
@@ -209,10 +212,89 @@ func configuredLocalPreviewStartupTimeout() time.Duration {
 	return defaultLocalPreviewStartupTimeout
 }
 
+func configuredLocalPreviewIdleTimeout() time.Duration {
+	value := strings.TrimSpace(os.Getenv(localPreviewIdleTimeoutEnv))
+	if value == "" {
+		return DefaultLocalPreviewIdleTimeout
+	}
+	timeout, err := time.ParseDuration(value)
+	if err == nil && timeout >= 0 {
+		return timeout
+	}
+	slog.Warn("Invalid local preview idle timeout; using default", "value", value, "default", DefaultLocalPreviewIdleTimeout)
+	return DefaultLocalPreviewIdleTimeout
+}
+
 var defaultLocalPreviewManager = NewLocalPreviewManager(nil)
 
 func DefaultLocalPreviewManager() *LocalPreviewManager {
 	return defaultLocalPreviewManager
+}
+
+// IdleTimeout returns the site runtime idle timeout. A zero duration
+// explicitly disables automatic idle cleanup.
+func (m *LocalPreviewManager) IdleTimeout() time.Duration {
+	return m.idleTimeout
+}
+
+// StopIdle releases workspaces that have exceeded the runtime idle timeout.
+// It uses the same claim -> process stop -> workspace detach sequence as an
+// explicit stop, so an article switch never enters this path.
+func (m *LocalPreviewManager) StopIdle(ctx context.Context, workspaceManager *LocalPreviewWorkspaceManager) error {
+	if workspaceManager == nil || m.idleTimeout <= 0 {
+		return nil
+	}
+	var errs []error
+	for _, workspace := range workspaceManager.IdleWorkspaces(m.idleTimeout) {
+		claim, claimed, err := workspaceManager.ClaimRelease(workspace.SiteID, workspace.DraftID)
+		if err != nil {
+			if errors.Is(err, ErrLocalPreviewSessionReleasing) || errors.Is(err, ErrLocalPreviewSessionReclaiming) {
+				continue
+			}
+			errs = append(errs, fmt.Errorf("claim idle local preview workspace for site %q: %w", workspace.SiteID, err))
+			continue
+		}
+		if !claimed {
+			continue
+		}
+		if err := m.Stop(ctx, workspace.SiteID); err != nil {
+			workspaceManager.CancelRelease(claim)
+			errs = append(errs, fmt.Errorf("stop idle local preview for site %q: %w", workspace.SiteID, err))
+			continue
+		}
+		if _, err := workspaceManager.FinishRelease(claim); err != nil {
+			workspaceManager.CancelRelease(claim)
+			errs = append(errs, fmt.Errorf("detach idle local preview workspace for site %q: %w", workspace.SiteID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// RunLocalPreviewIdleReaper periodically applies the configured idle timeout
+// until ctx is cancelled. The server owns the context so shutdown can stop
+// the reaper before the workspace manager is closed.
+func RunLocalPreviewIdleReaper(ctx context.Context, manager *LocalPreviewManager, workspaceManager *LocalPreviewWorkspaceManager) {
+	if manager == nil || workspaceManager == nil || manager.idleTimeout <= 0 {
+		return
+	}
+	interval := time.Minute
+	if half := manager.idleTimeout / 2; half > 0 && half < interval {
+		interval = half
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			stopCtx, cancel := context.WithTimeout(ctx, DefaultLocalPreviewStopTimeout)
+			if err := manager.StopIdle(stopCtx, workspaceManager); err != nil {
+				slog.Warn("Failed to stop idle Local Live Preview runtime", "error", err)
+			}
+			cancel()
+		}
+	}
 }
 
 func (m *LocalPreviewManager) BeginShutdown() {
@@ -649,10 +731,6 @@ func (m *LocalPreviewManager) ResolveArticleURL(ctx context.Context, runtime con
 	if workspace.ContentDir == "" {
 		return "", fmt.Errorf("preview workspace content directory is required")
 	}
-	if workspace.ArticlePath != filepath.ToSlash(articlePath) {
-		return "", fmt.Errorf("preview workspace article does not match request")
-	}
-
 	slot, err := m.ensureReadyRuntime(runtime)
 	if err != nil {
 		return "", fmt.Errorf("ensure Eleventy local preview ready: %w", err)

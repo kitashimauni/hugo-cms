@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"hugo-cms/pkg/config"
 	"os"
@@ -55,6 +56,70 @@ func TestLocalPreviewWorkspaceMirrorsAndUpdatesContent(t *testing.T) {
 	}
 	if string(original) != "old" {
 		t.Fatalf("production content was modified: %q", original)
+	}
+}
+
+func TestLocalPreviewWorkspaceReusesSiteWorkspaceWhenArticleChanges(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+
+	first, created, applied, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("first draft"))
+	if err != nil {
+		t.Fatalf("first Update() error = %v", err)
+	}
+	if !created || !applied {
+		t.Fatalf("first update created=%v applied=%v, want true/true", created, applied)
+	}
+
+	second, created, applied, err := manager.Update(runtime, "draft-1", "two.md", 2, []byte("second draft"))
+	if err != nil {
+		t.Fatalf("second Update() error = %v", err)
+	}
+	if created || !applied {
+		t.Fatalf("article switch created=%v applied=%v, want false/true", created, applied)
+	}
+	if first.ContentDir != second.ContentDir || first.ProjectDir != second.ProjectDir {
+		t.Fatalf("article switch recreated workspace: first=%#v second=%#v", first, second)
+	}
+	if second.ArticlePath != "two.md" || second.Revision != 2 {
+		t.Fatalf("selected article metadata = path=%q revision=%d", second.ArticlePath, second.Revision)
+	}
+	assertFileContent(t, filepath.Join(second.ContentDir, "one.md"), "first draft")
+	assertFileContent(t, filepath.Join(second.ContentDir, "two.md"), "second draft")
+	late, created, applied, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("late old article"))
+	if err != nil {
+		t.Fatalf("late Update() error = %v", err)
+	}
+	if created || applied || late.ArticlePath != "two.md" || late.Revision != 2 {
+		t.Fatalf("late update created=%v applied=%v path=%q revision=%d", created, applied, late.ArticlePath, late.Revision)
+	}
+	assertFileContent(t, filepath.Join(second.ContentDir, "one.md"), "first draft")
+}
+
+func TestLocalPreviewIdleRuntimeDetachesIdleWorkspace(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return base }
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	if _, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft")); err != nil {
+		t.Fatal(err)
+	}
+	manager.now = func() time.Time { return base.Add(DefaultLocalPreviewIdleTimeout + time.Second) }
+	previewManager := NewLocalPreviewManager(nil)
+	previewManager.idleTimeout = DefaultLocalPreviewIdleTimeout
+	if err := previewManager.StopIdle(context.Background(), manager); err != nil {
+		t.Fatalf("StopIdle() error = %v", err)
+	}
+	if _, active, _ := manager.Status(runtime.ID); active {
+		t.Fatal("idle workspace is still active")
 	}
 }
 

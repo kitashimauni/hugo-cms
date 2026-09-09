@@ -160,7 +160,7 @@ static配下は元repositoryをHugoが直接参照するためshadow同期しま
 
 Local Preview ownership IDはbrowser document/tabのmemory上だけに保持します。複製tabが同じIDを引き継がないため、同一siteの別tab/sessionは`409 Conflict`になります。
 
-一方、tab reload、browser crash、network断ではrelease requestを確実に送れません。そのためactive workspaceにはlast-seen leaseを持たせます。
+一方、tab reload、browser crash、network断ではrelease requestを確実に送れません。そのためsite単位のruntimeに対するeditor ownershipにはlast-seen leaseを持たせます。ownershipの有効期限は、generator processやshadow workspaceの寿命とは別に管理します。
 
 - lease TTL: 2分
 - CMS editorは30秒ごとにheartbeat
@@ -169,7 +169,7 @@ Local Preview ownership IDはbrowser document/tabのmemory上だけに保持し�
 - stale workspaceは明示的なreclaim APIでCMS再起動なしに回収可能
 - liveなsessionはreclaimできない
 
-recovery時もgenerator processを先にstopします。release/reclaim中はsessionを論理的にdetachし、workspace rootを一意なcleanup領域へrenameしてから物理削除を非同期で実行します。その間のpreview ingressやsession更新は古いworkspaceを再利用せず、ingressのworkspace snapshot取得からprocess/portとproxy targetの準備完了までをsite単位のread gateで保護します。長寿命のHTTP/WebSocket配信中はgateを保持しないため、cleanupの遅延が記事切替の応答をブロックしません。
+recovery時もgenerator processを先にstopします。release/reclaim中はsessionを論理的にdetachし、workspace rootを一意なcleanup領域へrenameしてから物理削除を非同期で実行します。その間のpreview ingressやsession更新は古いworkspaceを再利用せず、ingressのworkspace snapshot取得からprocess/portとproxy targetの準備完了までをsite単位のread gateで保護します。長寿命のHTTP/WebSocket配信中はgateを保持しないため、cleanupの遅延が記事切替の応答をブロックしません。runtimeのidle timeoutは`HUGO_CMS_LOCAL_PREVIEW_IDLE_TIMEOUT`で設定でき、初期値は30分、`0`で無効化できます。停止時は明示的なreleaseと同じprocess/workspace cleanupを行います。
 
 ## UI
 
@@ -192,7 +192,7 @@ Local Live Previewが有効なsiteではheaderのview切替を次のように扱
 
 記事選択直後の初回表示では、現在の記事をshadow workspaceへ反映した後、generator自身のURL解決結果を取得します。Hugoは`hugo list all`の`permalink`、Eleventyは稼働中wrapperの`eleventy.after` metadata map（`inputPath`/`url`）を使います。取得したURLはpath、query、fragmentを保持したままLocal Preview originへ変換し、iframeと新規タブへ直接設定します。CMSはslug、`url`、permalink、page bundle、Data Cascade、paginationなどの規則を再実装しません。通常の本文編集ではiframeの現在URLを維持してgeneratorのwatch/live reloadを利用し、URLに影響するfront matter変更時だけ再解決します。
 
-初回URL解決のnetwork error、408/425/429、5xxは250ms・750msのbackoffで最大3試行します。409（別session、stale、記事不一致）やその他の4xxは再試行せず、通常のsession recovery表示へ委譲します。URLを解決できない場合はpreview rootへフォールバックせず、エラー状態を表示します。
+初回URL解決のnetwork error、408/425/429、5xxは250ms・750msのbackoffで最大3試行します。409（別session、stale）やその他の4xxは再試行せず、通常のsession recovery表示へ委譲します。URLを解決できない場合はpreview rootへフォールバックせず、エラー状態を表示します。
 
 iframeの読み込み中はloading表示を出し、`load`または対応するpreview bridgeのready通知を一定時間確認できない場合は、エラーと「新規タブで開く」fallbackを表示します。これはbest-effortの判定であり、CSPや`X-Frame-Options`などによるiframe拒否をブラウザAPIだけで確実に判定するものではありません。埋め込み表示はボタンから閉じられ、記事を切り替えるかstale sessionを回収すると再び自動表示されます。狭い画面では編集画面とpreviewを上下に配置します。
 
@@ -216,7 +216,9 @@ CMS側iframeにはsandboxを付け、top-level navigation等を許可しませ�
 
 ## article/site切替とcleanup
 
-article/site切替時はin-flight update完了を待ってsessionをreleaseします。
+article切替では、現在記事のproduction保存とin-flight Local Preview updateの完了を待ってから、同じsite workspaceへ新しい記事pathを反映します。generator process、project overlay、shadow workspaceは再利用し、watch rebuildとgenerator準拠のURL解決だけを行います。editor ownership/sessionは維持されるため、記事切替でstop/releaseは実行しません。
+
+site切替、UIの明示的な停止、stale sessionのreclaim、idle timeout、CMS shutdownでは、次の順でsite runtimeを終了します。
 
 ```text
 generator process stop
@@ -251,7 +253,7 @@ POST /admin/api/preview/local/navigate
 }
 ```
 
-このAPIはactive sessionの所有者と記事pathを検証し、shadow workspaceを使ってgeneratorの実ページURLを解決します。成功時は`article_url`、`revision`、`session_id`を返し、production content、Git working tree、editorのrevisionは変更しません。解決に失敗した場合はエラーを返し、preview rootへフォールバックしません。
+このAPIはactive sessionの所有者を検証し、site単位のshadow workspaceから要求された記事pathを使ってgeneratorの実ページURLを解決します。成功時は`article_url`、`revision`、`session_id`を返し、production content、Git working tree、editorのrevisionは変更しません。解決に失敗した場合はエラーを返し、preview rootへフォールバックしません。
 
 release:
 

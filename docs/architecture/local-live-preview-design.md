@@ -150,17 +150,16 @@ Editor input
 ```text
 OS temporary directory/
   <site-id>/
-    <local-preview-session-id>/
-      package.json, node_modules, eleventy.config.js ... production references
-      src/ or content/ ... shadow content_dir
-      _includes/, _data/, _layouts/ ... production references
-      public/ ... empty preview output directory
+    package.json, node_modules, eleventy.config.js ... production references
+    src/ or content/ ... shadow content_dir
+    _includes/, _data/, _layouts/ ... production references
+    public/ ... empty preview output directory
 ```
 
 Hugoは従来どおり元repositoryをsource rootとして読み、`--contentDir`だけをshadow directoryのabsolute pathへ差し替える。Eleventyはtemporary project-root overlayをcwdにして`--input <content_dir>`、`--output <temporary-project-public-dir>`で実行する。overlayでは`content_dir`をshadowへmaterializeし、`public_dir`を空のpreview専用directoryにする。それ以外のroot-relativeなconfig、collection glob、includes/layouts/data、passthrough asset、pluginの相対pathはEleventy自身の通常のproject-root解決へ委譲する。生成出力はproductionのpublic directoryへ書き込まれない。
 repo外のabsolute pathや環境変数で指定された外部pathはこのoverlayの保証対象外とする。
 
-workspaceは`PREVIEW_STATE_DIR`へ永続化しない。session releaseまたはCMS shutdown時に削除する。
+workspaceは`PREVIEW_STATE_DIR`へ永続化しない。site runtimeの明示的なrelease、stale reclaim、idle timeoutまたはCMS shutdown時に削除する。idle timeoutは`HUGO_CMS_LOCAL_PREVIEW_IDLE_TIMEOUT`で指定し、初期値は30分、`0`で無効化する。editorのsession IDはworkspaceの物理パスではなく、site runtimeの所有権だけを表す。
 
 ### editor update ordering
 
@@ -182,11 +181,11 @@ static配下はHugoが元repositoryを直接参照するためshadow同期しな
 初期実装では**同一siteにつきactive Local Live Preview sessionは1つ**とする。
 
 - 同一siteへの別tab/session update -> `409 Conflict`
-- active sessionと異なるarticle path -> conflict
+- active sessionと異なるarticle path -> 同じsite workspaceへ反映
 - 別siteは独立workspaceを利用可能
 - stale tabは別tabのworkspaceをreleaseできない
 
-article/site切替ではbrowserがin-flight update完了を待ってreleaseする。serverはrelease claimでsessionをreleasing状態にしてからgenerator processを停止し、workspace rootを一意なcleanup領域へrenameして論理的にdetachする。その後のshadow directoryの物理削除は非同期で行い、cleanup中のpreview requestや更新が古いworkspaceを再利用しないようにする。Ingressはworkspace snapshot取得からprocess/portとproxy targetの準備完了まで同じsiteのread gateを保持し、release/reclaimのwrite gateとTOCTOU raceにならないようにする。準備後のHTTP/WebSocket streamingはgate外で実行する。
+article切替ではbrowserがproduction saveとin-flight update完了を待ち、同じsite workspaceへ選択pathを反映する。generator process、Eleventy project overlay、shadow workspaceは再作成しない。serverはarticle update時に現在記事のpath/revision metadataを更新し、watch rebuild後に要求pathのURLを解決する。site切替、明示的な停止、stale reclaim、idle timeoutではrelease claimでsessionをreleasing状態にしてからgenerator processを停止し、workspace rootを一意なcleanup領域へrenameして論理的にdetachする。その後のshadow directoryの物理削除は非同期で行い、cleanup中のpreview requestや更新が古いworkspaceを再利用しないようにする。Ingressはworkspace snapshot取得からprocess/portとproxy targetの準備完了まで同じsiteのread gateを保持し、release/reclaimのwrite gateとTOCTOU raceにならないようにする。準備後のHTTP/WebSocket streamingはgate外で実行する。
 
 ブラウザtabを切替操作なしで閉じた場合の確実なlease解放はPhase 4の停止UI/lease運用で扱う。それまではCMS shutdownで全workspaceをcleanupする。
 
@@ -222,7 +221,7 @@ POST /admin/api/preview/local
 }
 ```
 
-初回updateでworkspaceを作った場合、保存済みcontentを使っていた既存generator processを一度停止する。次のpreview hostname requestでshadow workspaceを含むproject-root overlayを使ってlazy startし、その後はgenerator watcherが変更を拾う。
+初回updateでworkspaceを作った場合、保存済みcontentを使っていた既存generator processを一度停止する。次のpreview hostname requestでshadow workspaceを含むproject-root overlayを使ってlazy startし、その後は同じsite runtimeを記事切替でも再利用してgenerator watcherが変更を拾う。
 
 ### 初回記事URL解決
 
@@ -230,7 +229,7 @@ POST /admin/api/preview/local
 POST /admin/api/preview/local/navigate
 ```
 
-記事選択時にCMSが`draft_id`と記事pathを`/admin/api/preview/local/navigate`へ送り、serverはactive sessionの所有者・記事pathを検証する。検証後、Hugoは`hugo list all`、Eleventyは稼働中wrapperの`/__hugo_cms_metadata`へ問い合わせて`article_url`を返す。Eleventyがbuild中ならmap更新まで待ち、初回起動も同じprocessのreadinessを待つ。この処理はproduction content、Git、editor revisionを変更しない。network error、408/425/429、5xxに限ってclientが250ms・750msのbackoffで最大3回まで再試行し、409やその他の4xxは再試行しない。通常の本文編集はLiveReloadを利用し、URL関連front matter変更時は再解決する。解決失敗時はpreview rootへ黙ってフォールバックしない。
+記事選択時にCMSが`draft_id`と記事pathを`/admin/api/preview/local/navigate`へ送り、serverはactive sessionの所有者を検証する。検証後、Hugoは`hugo list all`、Eleventyは稼働中wrapperの`/__hugo_cms_metadata`へ問い合わせて要求pathの`article_url`を返す。Eleventyがbuild中ならmap更新まで待ち、初回起動も同じprocessのreadinessを待つ。この処理はproduction content、Git、editor revisionを変更しない。network error、408/425/429、5xxに限ってclientが250ms・750msのbackoffで最大3回まで再試行し、409やその他の4xxは再試行しない。通常の本文編集はLiveReloadを利用し、URL関連front matter変更時は再解決する。解決失敗時はpreview rootへ黙ってフォールバックしない。
 
 ### release
 

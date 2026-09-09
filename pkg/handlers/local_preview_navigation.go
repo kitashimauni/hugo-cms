@@ -77,11 +77,6 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 		ErrorConflict(c, services.ErrLocalPreviewSessionConflict.Error())
 		return
 	}
-	if workspace.ArticlePath != filepath.ToSlash(req.Path) {
-		ErrorConflict(c, services.ErrLocalPreviewSessionMismatch.Error())
-		return
-	}
-
 	if dependencies.resolveArticleURL == nil {
 		ErrorInternal(c, "Local preview URL resolver is unavailable")
 		return
