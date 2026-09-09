@@ -33,7 +33,12 @@ const {
     shouldRetryLocalPreviewNavigation,
     shouldUseLocalPreviewSplitDefault,
 } = await import("./local_preview.js");
-const { createDraftUUID, createLocalPreviewSessionID, getOrCreateDraftID } = await import("./editor.js");
+const {
+    createDraftUUID,
+    createLocalPreviewSessionID,
+    getOrCreateDraftID,
+    waitForLocalPreviewUpdates,
+} = await import("./editor.js");
 const API = await import("./api.js");
 
 describe("safeExternalURL", () => {
@@ -329,6 +334,27 @@ describe("draft IDs", () => {
         assert.equal(createLocalPreviewSessionID(createUUID), "local-1");
         assert.equal(createLocalPreviewSessionID(createUUID), "local-2");
         assert.equal(sessionValues.size, 0);
+    });
+});
+
+describe("Local Preview destructive operations", () => {
+    it("waits for in-flight updates before deleting an article", async () => {
+        let updateApplied = false;
+        let resolveUpdate;
+        const update = new Promise(resolve => {
+            resolveUpdate = () => {
+                updateApplied = true;
+                resolve();
+            };
+        });
+
+        const waiting = waitForLocalPreviewUpdates(new Set([update]));
+        await Promise.resolve();
+        assert.equal(updateApplied, false);
+
+        resolveUpdate();
+        await waiting;
+        assert.equal(updateApplied, true);
     });
 });
 

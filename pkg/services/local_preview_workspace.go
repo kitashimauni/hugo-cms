@@ -427,6 +427,54 @@ func (m *LocalPreviewWorkspaceManager) IdleWorkspaces(timeout time.Duration) []L
 	return idle
 }
 
+// ClaimIdle atomically verifies that a workspace is still idle and marks it
+// as releasing. The site gate and manager lock cover the re-check so a
+// heartbeat/update that wins the race prevents idle cleanup rather than being
+// stopped immediately afterwards.
+func (m *LocalPreviewWorkspaceManager) ClaimIdle(siteID, draftID string, timeout time.Duration) (LocalPreviewRelease, bool, error) {
+	if err := validateDraftID(draftID); err != nil {
+		return LocalPreviewRelease{}, false, err
+	}
+	if timeout <= 0 {
+		return LocalPreviewRelease{}, false, nil
+	}
+	gate := m.siteGate(siteID)
+	gate.Lock()
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		gate.Unlock()
+		return LocalPreviewRelease{}, false, fmt.Errorf("local preview workspace manager is closed")
+	}
+	if err := m.transitionErrorLocked(siteID); err != nil {
+		m.mu.Unlock()
+		gate.Unlock()
+		return LocalPreviewRelease{}, false, err
+	}
+	workspace, ok := m.sessions[siteID]
+	if !ok {
+		m.mu.Unlock()
+		gate.Unlock()
+		return LocalPreviewRelease{}, false, nil
+	}
+	if workspace.DraftID != draftID {
+		m.mu.Unlock()
+		gate.Unlock()
+		return LocalPreviewRelease{}, false, ErrLocalPreviewSessionConflict
+	}
+	if workspace.LastSeenAt.IsZero() || m.currentTimeLocked().Sub(workspace.LastSeenAt) < timeout {
+		m.mu.Unlock()
+		gate.Unlock()
+		return LocalPreviewRelease{}, false, nil
+	}
+	m.nextReleaseToken++
+	state := localPreviewReleaseState{draftID: draftID, token: m.nextReleaseToken}
+	m.releasing[siteID] = state
+	m.mu.Unlock()
+	gate.Unlock()
+	return LocalPreviewRelease{siteID: siteID, draftID: draftID, token: state.token}, true, nil
+}
+
 // SyncContentResource mirrors a content-directory resource change made through
 // the normal CMS media API into an already-active shadow workspace. Static
 // resources do not need this because the generator overlay still references

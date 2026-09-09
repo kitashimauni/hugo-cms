@@ -285,6 +285,13 @@ export async function refreshLocalLivePreview() {
     }
 }
 
+// Destructive article/site operations must wait for preview writes that have
+// already been sent. The site-scoped workspace stays alive across deletion,
+// so a late update must not recreate a removed article.
+export function waitForLocalPreviewUpdates(pending = localPreviewInflight) {
+    return Promise.allSettled(Array.from(pending));
+}
+
 export async function releaseLocalLivePreview() {
     cancelLocalPreviewTimer();
     const sessionID = localPreviewSessionID;
@@ -295,7 +302,7 @@ export async function releaseLocalLivePreview() {
 
     // Do not race release against an update that the server may still be
     // applying even when the UI has moved on to another article/site.
-    await Promise.allSettled(Array.from(localPreviewInflight));
+    await waitForLocalPreviewUpdates();
     try {
         const result = await API.releaseLocalPreviewContent(sessionID);
         resetLocalPreviewClientState();
@@ -385,7 +392,7 @@ export async function loadFile(path) {
         // Complete the previous article's preview update before changing the
         // selected path. The site workspace is reused, so an old request must
         // not arrive after the new article update and move the selection back.
-        await Promise.allSettled(Array.from(localPreviewInflight));
+        await waitForLocalPreviewUpdates();
     }
     await saveQueue.catch(() => {
         // Loading another file remains possible after a failed save.
@@ -460,6 +467,11 @@ export async function deleteFile(refreshListCb) {
         // Let a save that already reached the server finish, then prevent all
         // queued saves for this path from starting before DELETE.
         await saveQueue;
+        // The site-scoped workspace remains alive after article deletion. Wait
+        // for already-sent preview updates before removing the production and
+        // shadow files, otherwise a late update could recreate the deleted
+        // article in the resident workspace.
+        await waitForLocalPreviewUpdates();
         await API.deleteArticle(pathToDelete);
         // Production deletion is committed at this point. The server removes
         // the corresponding file from the site-scoped preview workspace while

@@ -123,6 +123,41 @@ func TestLocalPreviewIdleRuntimeDetachesIdleWorkspace(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewClaimIdleRechecksHeartbeatBeforeRelease(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	now := base.Add(DefaultLocalPreviewIdleTimeout + time.Second)
+	manager.now = func() time.Time { return now }
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	if _, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a heartbeat winning between IdleWorkspaces and ClaimIdle.
+	now = base.Add(DefaultLocalPreviewIdleTimeout - time.Second)
+	if _, err := manager.Heartbeat(runtime.ID, "draft-1"); err != nil {
+		t.Fatalf("Heartbeat() error = %v", err)
+	}
+	now = base.Add(DefaultLocalPreviewIdleTimeout + time.Second)
+	if _, claimed, err := manager.ClaimIdle(runtime.ID, "draft-1", DefaultLocalPreviewIdleTimeout); err != nil || claimed {
+		t.Fatalf("ClaimIdle() claimed=%v err=%v, want false/nil after heartbeat", claimed, err)
+	}
+
+	now = base.Add(2*DefaultLocalPreviewIdleTimeout + time.Second)
+	claim, claimed, err := manager.ClaimIdle(runtime.ID, "draft-1", DefaultLocalPreviewIdleTimeout)
+	if err != nil || !claimed {
+		t.Fatalf("ClaimIdle() claimed=%v err=%v, want true/nil", claimed, err)
+	}
+	if _, err := manager.Heartbeat(runtime.ID, "draft-1"); !errors.Is(err, ErrLocalPreviewSessionReleasing) {
+		t.Fatalf("Heartbeat() after claim error = %v, want releasing", err)
+	}
+	manager.CancelRelease(claim)
+}
+
 func TestEleventyLocalPreviewWorkspaceUsesProjectRootOverlay(t *testing.T) {
 	repo := t.TempDir()
 	for _, directory := range []string{

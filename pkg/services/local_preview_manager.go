@@ -246,9 +246,11 @@ func (m *LocalPreviewManager) StopIdle(ctx context.Context, workspaceManager *Lo
 	}
 	var errs []error
 	for _, workspace := range workspaceManager.IdleWorkspaces(m.idleTimeout) {
-		claim, claimed, err := workspaceManager.ClaimRelease(workspace.SiteID, workspace.DraftID)
+		claim, claimed, err := workspaceManager.ClaimIdle(workspace.SiteID, workspace.DraftID, m.idleTimeout)
 		if err != nil {
-			if errors.Is(err, ErrLocalPreviewSessionReleasing) || errors.Is(err, ErrLocalPreviewSessionReclaiming) {
+			if errors.Is(err, ErrLocalPreviewSessionConflict) ||
+				errors.Is(err, ErrLocalPreviewSessionReleasing) ||
+				errors.Is(err, ErrLocalPreviewSessionReclaiming) {
 				continue
 			}
 			errs = append(errs, fmt.Errorf("claim idle local preview workspace for site %q: %w", workspace.SiteID, err))
