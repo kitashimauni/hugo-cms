@@ -20,23 +20,26 @@ type SiteRuntime struct {
 	// LocalPreviewProjectDir is an ephemeral project root used by a generator's
 	// local preview. It is intentionally transient and is never persisted.
 	LocalPreviewProjectDir string
-	StaticDir              string
-	PublicDir              string
-	PublicPath             string
-	PreviewURL             string
-	HugoServerPort         string
-	HugoServerBind         string
-	ArticleMediaDir        string
-	StaticMediaDir         string
-	SnippetPaths           []string
-	AppURL                 string
-	GitUserEmail           string
-	GitUserName            string
-	GitBranch              string
-	GitRemote              string
-	MarkdownPreviewEnabled bool
-	LocalPreview           LocalPreviewConfig
-	PreviewDeployment      DeploymentPreviewConfig
+	// LocalPreviewSourceRepoPath keeps the production repository path when
+	// RepoPath is temporarily replaced by a local-preview project overlay.
+	LocalPreviewSourceRepoPath string
+	StaticDir                  string
+	PublicDir                  string
+	PublicPath                 string
+	PreviewURL                 string
+	HugoServerPort             string
+	HugoServerBind             string
+	ArticleMediaDir            string
+	StaticMediaDir             string
+	SnippetPaths               []string
+	AppURL                     string
+	GitUserEmail               string
+	GitUserName                string
+	GitBranch                  string
+	GitRemote                  string
+	MarkdownPreviewEnabled     bool
+	LocalPreview               LocalPreviewConfig
+	PreviewDeployment          DeploymentPreviewConfig
 }
 
 func NewSiteRuntime(site SiteConfig) SiteRuntime {

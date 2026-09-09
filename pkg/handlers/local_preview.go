@@ -40,6 +40,7 @@ func LocalPreviewIngress(manager *services.LocalPreviewManager) gin.HandlerFunc 
 			if workspace, ok := workspaceManager.Active(site.ID); ok {
 				runtime.ContentDir = workspace.ContentDir
 				if workspace.ProjectDir != "" {
+					runtime.LocalPreviewSourceRepoPath = runtime.RepoPath
 					runtime.RepoPath = workspace.ProjectDir
 					runtime.LocalPreviewProjectDir = workspace.ProjectDir
 				}

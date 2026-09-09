@@ -9,6 +9,7 @@ import (
 	"hugo-cms/pkg/config"
 	"io"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -292,21 +293,27 @@ func (resolver *eleventyPreviewURLResolver) ResolveArticleURL(ctx context.Contex
 }
 
 func runEleventyJSON(ctx context.Context, runtime config.SiteRuntime) ([]byte, error) {
-	pm, err := detectEleventyPackageManager(runtime.RepoPath)
+	projectDir, outputDir, cleanup, err := prepareEleventyResolverProject(runtime)
 	if err != nil {
 		return nil, err
 	}
-	projectDir, outputDir, err := prepareEleventyLocalPreviewProject(runtime)
-	if err != nil {
-		return nil, err
-	}
-	cleanup := localPreviewProcessCleanup(runtime)
 	defer cleanup()
+
+	sourceRepoPath := strings.TrimSpace(runtime.LocalPreviewSourceRepoPath)
+	if sourceRepoPath == "" {
+		sourceRepoPath = runtime.RepoPath
+	}
+	pm, err := detectEleventyPackageManager(sourceRepoPath)
+	if err != nil {
+		return nil, err
+	}
 	scriptPath, err := eleventyLocalPreviewScriptPath()
 	if err != nil {
 		return nil, err
 	}
-	inputDir, err := eleventyLocalPreviewInputDir(runtime)
+	inputRuntime := runtime
+	inputRuntime.RepoPath = sourceRepoPath
+	inputDir, err := eleventyLocalPreviewInputDir(inputRuntime)
 	if err != nil {
 		return nil, err
 	}
@@ -327,6 +334,39 @@ func runEleventyJSON(ctx context.Context, runtime config.SiteRuntime) ([]byte, e
 		args...,
 	)
 	return cmd.Output()
+}
+
+func prepareEleventyResolverProject(runtime config.SiteRuntime) (string, string, func(), error) {
+	sourceRepoPath := strings.TrimSpace(runtime.LocalPreviewSourceRepoPath)
+	if sourceRepoPath == "" {
+		sourceRepoPath = runtime.RepoPath
+	}
+	inputRuntime := runtime
+	inputRuntime.RepoPath = sourceRepoPath
+	inputDir, err := eleventyLocalPreviewInputDir(inputRuntime)
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	publicDir, err := eleventyLocalPreviewPublicDir(runtime)
+	if err != nil {
+		return "", "", func() {}, err
+	}
+
+	projectDir, err := os.MkdirTemp("", "hugo-cms-eleventy-resolver-*")
+	if err != nil {
+		return "", "", func() {}, fmt.Errorf("create Eleventy resolver project: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(projectDir) }
+
+	contentSource := strings.TrimSpace(runtime.ContentDir)
+	if !filepath.IsAbs(contentSource) {
+		contentSource = filepath.Join(sourceRepoPath, inputDir)
+	}
+	if err := createEleventyLocalPreviewProjectOverlay(sourceRepoPath, projectDir, inputDir, publicDir, contentSource); err != nil {
+		cleanup()
+		return "", "", func() {}, err
+	}
+	return projectDir, filepath.Join(projectDir, publicDir), cleanup, nil
 }
 
 type eleventyPreviewJSONEntry struct {

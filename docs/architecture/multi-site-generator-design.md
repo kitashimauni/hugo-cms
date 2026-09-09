@@ -286,7 +286,7 @@ mise exec -C <repository> -- npm exec -- node <CMS>/scripts/eleventy-local-previ
   --host 127.0.0.1
 ```
 
-Local Live PreviewではCMSのNodeラッパーがEleventyのprogrammatic `watch`を起動し、静的出力とLiveReloadをloopback serverから提供する。`--host 127.0.0.1`はラッパー自身の`server.listen`へ渡され、内部portがwildcard bindにならない。temporary project-root overlayでは既存のproject entryをproductionへ参照させ、`content_dir`だけactive shadow workspace、`public_dir`だけtemporary real directoryへ置換する。これにより`getFilteredByGlob("src/posts/**")`、passthrough、pluginのproject-root相対pathをEleventy自身の意味論で処理し、productionの生成出力は変更しない。CMSは`--pathprefix`やpermalinkを再実装せず、generatorが返すURLをそのままproxyする。
+Local Live PreviewではCMSのNodeラッパーがEleventyのprogrammatic `watch`を起動し、静的出力とLiveReloadをloopback serverから提供する。`--host 127.0.0.1`はラッパー自身の`server.listen`へ渡され、内部portがwildcard bindにならない。temporary project-root overlayでは既存のproject entryをproductionへ参照させ、`content_dir`だけactive shadow workspace、`public_dir`だけtemporary real directoryへ置換する。これにより`getFilteredByGlob("src/posts/**")`、passthrough、pluginのproject-root相対pathをEleventy自身の意味論で処理し、productionの生成出力は変更しない。URL resolverは同じdirectory構成の専用overlay/outputを使うため、稼働中previewのpublicを削除・共有しない。CMSは`--pathprefix`やpermalinkを再実装せず、generatorが返すURLをそのままproxyする。
 
 URL解決は同じラッパーのJSONモードでprogrammatic `toJSON()`を実行する。返却metadataの`inputPath`が選択記事に一致するentryから`url`を取得し、CMSはoriginだけをLocal Preview originへ書き換える。`permalink`、Data Cascade、computed data、paginationの計算はEleventyが担当する。
 

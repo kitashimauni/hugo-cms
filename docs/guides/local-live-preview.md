@@ -106,7 +106,7 @@ Eleventy siteでは、対象siteのlock fileから検出したpackage manager経
 
 CMSのNodeラッパーはtemporary project-root overlayをcwdにしてEleventyのprogrammatic `watch`を実行します。overlayでは`content_dir`をshadow workspaceへ、`public_dir`をtemporary outputへ置き換え、package.json、node_modules、config、includes/layouts/data、その他のproject-root相対パスはproduction repositoryを参照します。HTTP配信とLiveReload WebSocketはCMS側のloopback serverが担当し、実際のlistenerを`127.0.0.1`へ限定します。Eleventy標準Dev Serverの未指定hostや`HOST`環境変数には依存しません。
 
-Eleventy設定はoverlayのproject rootで通常どおり解決します。そのため`getFilteredByGlob("src/posts/**")`、`addPassthroughCopy("src/images")`、pluginの`outputDir: "./public/img/"`のようなproject-root相対指定も、CMS側で解析・推定せずpreview側のcontent/publicを参照します。URL resolverも同じoverlayとラッパーのJSONモードを使うため、`--serve`と同じdirectory解決条件になります。
+Eleventy設定はoverlayのproject rootで通常どおり解決します。そのため`getFilteredByGlob("src/posts/**")`、`addPassthroughCopy("src/images")`、pluginの`outputDir: "./public/img/"`のようなproject-root相対指定も、CMS側で解析・推定せずpreview側のcontent/publicを参照します。URL resolverも同じ構成の専用temporary overlay/outputとラッパーのJSONモードを使うため、`--serve`と同じdirectory解決条件を保ちつつ、稼働中previewの`public`を削除・共有しません。
 repo外のabsolute pathや環境変数で指定された外部pathはこのfilesystem overlayの保証対象外です。
 
 ## Reverse proxy / LiveReload

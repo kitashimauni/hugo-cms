@@ -88,6 +88,7 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 	resolverRuntime := runtime
 	resolverRuntime.ContentDir = workspace.ContentDir
 	if workspace.ProjectDir != "" {
+		resolverRuntime.LocalPreviewSourceRepoPath = resolverRuntime.RepoPath
 		resolverRuntime.RepoPath = workspace.ProjectDir
 		resolverRuntime.LocalPreviewProjectDir = workspace.ProjectDir
 	}

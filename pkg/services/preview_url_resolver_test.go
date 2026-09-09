@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"hugo-cms/pkg/config"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -146,6 +148,62 @@ func TestEleventyPreviewURLResolverUsesGeneratorMetadataAndLocalOrigin(t *testin
 	}
 	if got != "https://daily-blog.preview.example.com/custom/" {
 		t.Fatalf("resolved URL = %q", got)
+	}
+}
+
+func TestEleventyResolverUsesDedicatedProjectAndOutput(t *testing.T) {
+	production := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(production, "src", "posts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(production, "public"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(production, "src", "posts", "one.md"), []byte("production"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	shadow := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(shadow, "posts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shadow, "posts", "one.md"), []byte("draft"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	liveProject := t.TempDir()
+	if err := createEleventyLocalPreviewProjectOverlay(production, liveProject, "src", "public", shadow); err != nil {
+		t.Fatalf("create live overlay: %v", err)
+	}
+	liveOutput := filepath.Join(liveProject, "public")
+	if err := os.WriteFile(filepath.Join(liveOutput, "existing.html"), []byte("live"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := config.SiteRuntime{
+		RepoPath:                   liveProject,
+		ContentDir:                 filepath.Join(liveProject, "src"),
+		ProductionContentDir:       "src",
+		PublicDir:                  "public",
+		LocalPreviewProjectDir:     liveProject,
+		LocalPreviewSourceRepoPath: production,
+	}
+	resolverProject, resolverOutput, cleanup, err := prepareEleventyResolverProject(runtime)
+	if err != nil {
+		t.Fatalf("prepareEleventyResolverProject() error = %v", err)
+	}
+	defer cleanup()
+	if resolverProject == liveProject || resolverOutput == liveOutput {
+		t.Fatalf("resolver reused live project/output: project=%q output=%q", resolverProject, resolverOutput)
+	}
+	if _, err := os.Stat(filepath.Join(liveOutput, "existing.html")); err != nil {
+		t.Fatalf("live output was removed by resolver preparation: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(resolverOutput, "resolved.html"), []byte("resolver"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(liveOutput, "resolved.html")); !os.IsNotExist(err) {
+		t.Fatalf("resolver output leaked into live output: %v", err)
 	}
 }
 

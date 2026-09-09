@@ -113,7 +113,7 @@ Eleventyは対象siteのpackage managerを再利用し、production repository�
 
 CMSのNodeラッパーはEleventyのprogrammatic `watch`で再ビルドし、CMS側のHTTP/LiveReload WebSocket serverを実際に`127.0.0.1`へbindする。Eleventy標準Dev Serverのhost省略時のbind挙動や`HOST`環境変数には依存しない。出力ディレクトリはproductionの`public`/`_site`を上書きせず、停止時にtemporary outputを削除する。
 
-記事選択時の初回起動では、shadow workspaceを含むtemporary project-root overlayをgeneratorの入力として使う。CMSはgeneratorに依存しない`PreviewURLResolver`契約を介して解決する。Hugo実装はserverと同じ`--environment development`を指定し、`HUGO_CONTENTDIR`と`HUGO_BASEURL`のenvironment variableでshadow contentとLocal Preview URLをoverrideし、`--noBuildLock`を渡す。Eleventy実装はserve時と同じproject-root overlayと`--input`でJSONモードを実行し、Eleventyが返す`inputPath`と`url`を対応づける。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalink、slug、Data Cascade、paginationを再実装しない。以降の同一記事の編集はgeneratorのwatch/live reloadを利用する。
+記事選択時の初回起動では、shadow workspaceを含むtemporary project-root overlayをgeneratorの入力として使う。CMSはgeneratorに依存しない`PreviewURLResolver`契約を介して解決する。Hugo実装はserverと同じ`--environment development`を指定し、`HUGO_CONTENTDIR`と`HUGO_BASEURL`のenvironment variableでshadow contentとLocal Preview URLをoverrideし、`--noBuildLock`を渡す。Eleventy実装はserve時と同じdirectory構成を持つresolver専用project-root overlay/outputでJSONモードを実行し、稼働中previewの`public`を共有・resetせず、Eleventyが返す`inputPath`と`url`を対応づける。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalink、slug、Data Cascade、paginationを再実装しない。以降の同一記事の編集はgeneratorのwatch/live reloadを利用する。
 
 ## Reverse proxy / LiveReload
 
