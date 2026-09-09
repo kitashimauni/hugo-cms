@@ -1,6 +1,6 @@
 # Local Live Preview設定ガイド
 
-> Issue #32ではPhase 1〜4が実装済みです。session lease/recovery、status/stop APIに加え、CMS内の埋め込みpreviewを主導線とするUIを提供します。実blogとwildcard ingressを使った受け入れ確認はIssue #37で追跡します。
+> Issue #32ではPhase 1〜4が実装済みです。site-scoped runtimeのstatus/stop APIと、CMS内の埋め込みpreviewを主導線とするUIを提供します。実blogとwildcard ingressを使った受け入れ確認はIssue #37で追跡します。
 
 ## 基本設定
 
@@ -106,7 +106,7 @@ Eleventy siteでは、対象siteのlock fileから検出したpackage manager経
 
 CMSのNodeラッパーはtemporary project-root overlayをcwdにしてEleventyのprogrammatic `watch`を実行します。overlayでは`content_dir`をshadow workspaceへ、`public_dir`をtemporary outputへ置き換え、package.json、node_modules、config、includes/layouts/data、その他のproject-root相対パスはproduction repositoryを参照します。HTTP配信とLiveReload WebSocketはCMS側のloopback serverが担当し、Eleventyの初回build前にlistenerを`127.0.0.1`へbindします。`/__hugo_cms_ready`はbuild中に503、初回build完了後に200を返すため、重いsiteでも起動処理が固定秒数で同じbuildを繰り返しません。Eleventy標準Dev Serverの未指定hostや`HOST`環境変数には依存しません。
 
-process停止はgeneratorの`cmd.Wait()`完了を成功条件とし、temporary outputのfilesystem cleanup完了を待ちません。workspaceが所有するEleventyのproject/outputはworkspace releaseまたはstale reclaimが削除し、process cleanupとの二重削除や次世代workspaceとの競合を避けます。workspace外のEleventy previewは起動ごとに一意なtemporary project rootを割り当て、停止後に所有projectだけを非同期cleanupします。cleanupの遅延・失敗はserver logへ記録しますが、generator processの停止失敗とは区別します。
+process停止はgeneratorの`cmd.Wait()`完了を成功条件とし、temporary outputのfilesystem cleanup完了を待ちません。workspaceが所有するEleventyのproject/outputはsite runtimeのStopまたはidle cleanupで削除し、process cleanupとの二重削除や次世代workspaceとの競合を避けます。workspace外のEleventy previewは起動ごとに一意なtemporary project rootを割り当て、停止後に所有projectだけを非同期cleanupします。cleanupの遅延・失敗はserver logへ記録しますが、generator processの停止失敗とは区別します。
 
 Eleventy設定はoverlayのproject rootで通常どおり解決します。そのため`getFilteredByGlob("src/posts/**")`、`addPassthroughCopy("src/images")`、pluginの`outputDir: "./public/img/"`のようなproject-root相対指定も、CMS側で解析・推定せずpreview側のcontent/publicを参照します。通常の記事URL解決では、稼働中wrapperが`eleventy.after`の`inputPath`/`url`を保持する`/__hugo_cms_metadata?path=...`を利用します。workspace updateはshadow fileを書き換える直前にmetadataをinvalidateし、次のwatch buildが完了するまで旧mapを503で隠します。watch rebuildごとにmapを更新するため、resolver専用の追加full buildを発生させません。既存の直接resolver呼び出しにはJSONモードのfallbackを残します。
 repo外のabsolute pathや環境変数で指定された外部pathはこのfilesystem overlayの保証対象外です。
@@ -146,9 +146,9 @@ generatorの作業ディレクトリは、Hugoでは元repository、Eleventyで�
 
 既存の3秒autosaveは保存機能として残りますが、Local Previewの250ms update経路はproduction working tree/Git index/refへ書き込みません。
 
-### revision
+### revision / 複数tab
 
-各updateには単調増加`revision`を付けます。serverは現在revision以下の古いrequestをno-opにするため、network順序が逆転しても古い本文で上書きされません。
+各updateにはbrowser documentごとの`revision`を付けます。serverはこの値をtab間のordering判定には使わず、受信したrequestをsite workspaceへ適用してserver側のrevisionを採番します。同じsiteを複数tabから編集しても`409`にはならず、preview shadowはlast-write-winsです。production contentとGitの整合性は通常のsave側で管理します。
 
 ### article bundle resource
 
@@ -156,20 +156,11 @@ workspace作成時点のcontent resourceは初回mirrorに含まれます。そ�
 
 static配下は元repositoryをHugoが直接参照するためshadow同期しません。media本体の保存成功後にpreview同期だけ失敗した場合は、media操作を失敗扱いにせずserver logへ記録します。
 
-## session lease / recovery
+## site runtime activity / cleanup
 
-Local Preview ownership IDはbrowser document/tabのmemory上だけに保持します。複製tabが同じIDを引き継がないため、同一siteの別tab/sessionは`409 Conflict`になります。
+Local Previewはbrowser tabを所有者として扱いません。update、記事URL解決、preview ingress、content resource同期をsite runtimeの`lastActivity`として記録します。idle timeoutは`HUGO_CMS_LOCAL_PREVIEW_IDLE_TIMEOUT`で設定でき、初期値は30分、`0`で無効化できます。
 
-一方、tab reload、browser crash、network断ではrelease requestを確実に送れません。そのためsite単位のruntimeに対するeditor ownershipにはlast-seen leaseを持たせます。ownershipの有効期限は、generator processやshadow workspaceの寿命とは別に管理します。
-
-- lease TTL: 2分
-- CMS editorは30秒ごとにheartbeat
-- editor update自体もleaseを更新
-- lease切れworkspaceは`stale`としてstatus APIへ表示
-- stale workspaceは明示的なreclaim APIでCMS再起動なしに回収可能
-- liveなsessionはreclaimできない
-
-recovery時もgenerator processを先にstopします。release/reclaim中はsessionを論理的にdetachし、workspace rootを一意なcleanup領域へrenameしてから物理削除を非同期で実行します。その間のpreview ingressやsession更新は古いworkspaceを再利用せず、ingressのworkspace snapshot取得からprocess/portとproxy targetの準備完了までをsite単位のread gateで保護します。長寿命のHTTP/WebSocket配信中はgateを保持しないため、cleanupの遅延が記事切替の応答をブロックしません。runtimeのidle timeoutは`HUGO_CMS_LOCAL_PREVIEW_IDLE_TIMEOUT`で設定でき、初期値は30分、`0`で無効化できます。停止時は明示的なreleaseと同じprocess/workspace cleanupを行います。
+idle timeoutまたは明示Stopでは、site gateで新しいupdate/ingressを止めてからgenerator processを停止し、workspace rootを一意なcleanup領域へrenameして物理削除を非同期で行います。長寿命のHTTP/WebSocket配信前にgateを解放するため、cleanupの遅延が配信完了をブロックしません。CMS shutdownでも同じcleanup pathを利用します。
 
 ## UI
 
@@ -178,9 +169,8 @@ Local Live Preview panelでは次を利用できます。
 - `埋め込み表示`: 記事を選択するとCMS内のsandbox付きiframeを主表示として自動表示
 - `新規タブで開く`: iframeが利用できない場合や補助的な確認に使う
 - `簡易Markdownを表示`: generatorを使わない補助/fallback表示
-- `管理操作` > `停止`: 自分が所有するsession、またはworkspaceを伴わないsaved-content preview processを停止
-- `管理操作` > `期限切れsessionを回収`: stale leaseだけを安全にreclaim
-- stopped / starting / ready / failed / conflict / staleの状態表示
+- `停止`: site runtime、generator process、shadow workspaceを停止・cleanup
+- stopped / starting / ready / failedの状態表示
 
 Local Live Previewが有効なsiteではheaderのview切替を次のように扱います。
 
@@ -192,9 +182,9 @@ Local Live Previewが有効なsiteではheaderのview切替を次のように扱
 
 記事選択直後の初回表示では、現在の記事をshadow workspaceへ反映した後、generator自身のURL解決結果を取得します。Hugoは`hugo list all`の`permalink`、Eleventyは稼働中wrapperの`eleventy.after` metadata map（`inputPath`/`url`）を使います。取得したURLはpath、query、fragmentを保持したままLocal Preview originへ変換し、iframeと新規タブへ直接設定します。CMSはslug、`url`、permalink、page bundle、Data Cascade、paginationなどの規則を再実装しません。通常の本文編集ではiframeの現在URLを維持してgeneratorのwatch/live reloadを利用し、URLに影響するfront matter変更時だけ再解決します。
 
-初回URL解決のnetwork error、408/425/429、5xxは250ms・750msのbackoffで最大3試行します。409（別session、stale）やその他の4xxは再試行せず、通常のsession recovery表示へ委譲します。URLを解決できない場合はpreview rootへフォールバックせず、エラー状態を表示します。
+初回URL解決のnetwork error、408/425/429、5xxは250ms・750msのbackoffで最大3試行します。その他の4xxは再試行せず、エラー状態を表示します。URLを解決できない場合はpreview rootへフォールバックしません。
 
-iframeの読み込み中はloading表示を出し、`load`または対応するpreview bridgeのready通知を一定時間確認できない場合は、エラーと「新規タブで開く」fallbackを表示します。これはbest-effortの判定であり、CSPや`X-Frame-Options`などによるiframe拒否をブラウザAPIだけで確実に判定するものではありません。埋め込み表示はボタンから閉じられ、記事を切り替えるかstale sessionを回収すると再び自動表示されます。狭い画面では編集画面とpreviewを上下に配置します。
+iframeの読み込み中はloading表示を出し、`load`または対応するpreview bridgeのready通知を一定時間確認できない場合は、エラーと「新規タブで開く」fallbackを表示します。これはbest-effortの判定であり、CSPや`X-Frame-Options`などによるiframe拒否をブラウザAPIだけで確実に判定するものではありません。埋め込み表示はボタンから閉じられ、記事を切り替えると再び自動表示されます。狭い画面では編集画面とpreviewを上下に配置します。
 
 preview側を管理できる場合は、正常表示後に親ウィンドウへ `window.parent.postMessage({ type: 'homecms-local-preview-ready' }, '<CMS origin>')` を送ると、CMSが明示的なready通知として扱います。第2引数のtarget originはpreview originではなく、親フレームであるCMSのorigin（例: `https://cms.example.com`）を指定し、`*`は使用しません。
 
@@ -216,9 +206,9 @@ CMS側iframeにはsandboxを付け、top-level navigation等を許可しませ�
 
 ## article/site切替とcleanup
 
-article切替では、現在記事のproduction保存とin-flight Local Preview updateの完了を待ってから、同じsite workspaceへ新しい記事pathを反映します。generator process、project overlay、shadow workspaceは再利用し、watch rebuildとgenerator準拠のURL解決だけを行います。editor ownership/sessionは維持されるため、記事切替でstop/releaseは実行しません。
+article切替では、現在記事のproduction保存とin-flight Local Preview updateの完了を待ってから、同じsite workspaceへ新しい記事pathを反映します。generator process、project overlay、shadow workspaceは再利用し、watch rebuildとgenerator準拠のURL解決だけを行います。browser tab ownershipを持たないため、記事切替でstop/releaseは実行しません。
 
-site切替、UIの明示的な停止、stale sessionのreclaim、idle timeout、CMS shutdownでは、次の順でsite runtimeを終了します。
+UIの明示的な停止、idle timeout、CMS shutdownでは、次の順でsite runtimeを終了します。
 
 ```text
 generator process stop
@@ -248,29 +238,20 @@ POST /admin/api/preview/local/navigate
 
 ```json
 {
-  "draft_id": "<local-preview-session-id>",
   "path": "posts/example.md"
 }
 ```
 
-このAPIはactive sessionの所有者を検証し、site単位のshadow workspaceから要求された記事pathを使ってgeneratorの実ページURLを解決します。成功時は`article_url`、`revision`、`session_id`を返し、production content、Git working tree、editorのrevisionは変更しません。解決に失敗した場合はエラーを返し、preview rootへフォールバックしません。
-
-release:
-
-```text
-POST /admin/api/preview/local/release
-```
+このAPIはsite単位のshadow workspaceから要求された記事pathを使ってgeneratorの実ページURLを解決します。成功時は`article_url`とserver側の`revision`を返し、production content、Git working tree、browserのrevisionは変更しません。解決に失敗した場合はエラーを返し、preview rootへフォールバックしません。
 
 lifecycle:
 
 ```text
 GET  /admin/api/preview/local/status
-POST /admin/api/preview/local/heartbeat
 POST /admin/api/preview/local/stop
-POST /admin/api/preview/local/reclaim
 ```
 
-すべて既存admin auth + CSRF境界の内側です。status APIは別tabのowner session IDを返しません。
+すべて既存admin auth + CSRF境界の内側です。status APIはprocess、workspace、last activityだけを返し、browser tabのowner情報を持ちません。
 
 ## 旧preview方式との違い
 

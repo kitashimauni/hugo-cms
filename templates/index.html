@@ -112,13 +112,7 @@
                         <button id="local-preview-open-btn" class="action-btn secondary" onclick="openLocalLivePreview()">新規タブで開く</button>
                         <button id="local-preview-embed-btn" class="action-btn" onclick="toggleEmbeddedLocalPreview()">埋め込みを表示</button>
                         <button id="local-preview-markdown-btn" class="action-btn secondary" onclick="showMarkdownFallback()">簡易Markdownを表示</button>
-                        <details id="local-preview-advanced" class="local-preview-advanced hidden">
-                            <summary>管理操作</summary>
-                            <div class="deployment-actions">
-                                <button id="local-preview-stop-btn" class="action-btn danger hidden" onclick="stopLocalLivePreview()">停止</button>
-                                <button id="local-preview-reclaim-btn" class="action-btn secondary hidden" onclick="reclaimLocalLivePreview()">期限切れsessionを回収</button>
-                            </div>
-                        </details>
+                        <button id="local-preview-stop-btn" class="action-btn danger hidden" onclick="stopLocalLivePreview()">停止</button>
                     </div>
                     <div id="local-preview-embed" class="local-preview-embed hidden">
                         <div id="local-preview-frame-loading" class="local-preview-frame-overlay" role="status" aria-live="polite">

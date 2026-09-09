@@ -5,12 +5,12 @@ const INITIAL_NAVIGATION_RETRY_DELAYS_MS = [250, 750];
 
 const DEFAULT_TIMEOUT_MESSAGE = 'previewの読み込みを確認できません。新規タブで開いてください。';
 
-export function shouldCloseEmbeddedLocalPreview({ status, hasCurrentPath } = {}) {
-    return !hasCurrentPath || status === 'conflict' || status === 'stale';
+export function shouldCloseEmbeddedLocalPreview({ hasCurrentPath } = {}) {
+    return !hasCurrentPath;
 }
 
-export function shouldAutoShowEmbeddedLocalPreview({ status, sessionOwned, hasCurrentPath, dismissed } = {}) {
-    return hasCurrentPath && sessionOwned === true && !dismissed && (status === 'starting' || status === 'ready');
+export function shouldAutoShowEmbeddedLocalPreview({ status, hasCurrentPath, dismissed } = {}) {
+    return hasCurrentPath && !dismissed && (status === 'starting' || status === 'ready');
 }
 
 export function shouldRetryLocalPreviewNavigation({ error, attempt } = {}) {

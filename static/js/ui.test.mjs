@@ -35,10 +35,8 @@ const {
 } = await import("./local_preview.js");
 const {
     createDraftUUID,
-    createLocalPreviewSessionID,
     flushLocalPreviewBeforeArticleSwitch,
     getOrCreateDraftID,
-    isLocalPreviewOwnershipConflict,
     waitForLocalPreviewUpdates,
 } = await import("./editor.js");
 const API = await import("./api.js");
@@ -78,27 +76,16 @@ describe("normalizeDeploymentState", () => {
 });
 
 describe("normalizeLocalPreviewState", () => {
-    it("keeps an active session owned by another tab in conflict", () => {
+    it("keeps the site runtime state without browser ownership fields", () => {
         const state = normalizeLocalPreviewState({
             status: "ready",
             process_state: "ready",
-            session_active: true,
-            session_owned: false,
-            session_stale: false,
+            workspace_active: true,
         });
 
-        assert.equal(state.status, "conflict");
-    });
-
-    it("does not replace the stale recovery state", () => {
-        const state = normalizeLocalPreviewState({
-            status: "stale",
-            session_active: true,
-            session_owned: false,
-            session_stale: true,
-        });
-
-        assert.equal(state.status, "stale");
+        assert.equal(state.status, "ready");
+        assert.equal(state.workspace_active, true);
+        assert.equal("session_owned" in state, false);
     });
 });
 
@@ -141,18 +128,16 @@ function createPreviewFrameHarness() {
 }
 
 describe("embedded Local Preview state transitions", () => {
-    it("closes the embed for conflict, stale, or missing article state", () => {
-        assert.equal(shouldCloseEmbeddedLocalPreview({ status: "conflict", hasCurrentPath: true }), true);
-        assert.equal(shouldCloseEmbeddedLocalPreview({ status: "stale", hasCurrentPath: true }), true);
+    it("closes the embed for missing article state", () => {
         assert.equal(shouldCloseEmbeddedLocalPreview({ status: "ready", hasCurrentPath: false }), true);
         assert.equal(shouldCloseEmbeddedLocalPreview({ status: "ready", hasCurrentPath: true }), false);
     });
 
-    it("only auto-shows an owned preview for an active article", () => {
-        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "starting", sessionOwned: true, hasCurrentPath: true, dismissed: false }), true);
-        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "conflict", sessionOwned: true, hasCurrentPath: true, dismissed: false }), false);
-        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "ready", sessionOwned: false, hasCurrentPath: true, dismissed: false }), false);
-        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "ready", sessionOwned: true, hasCurrentPath: true, dismissed: true }), false);
+    it("auto-shows a ready runtime for an active article", () => {
+        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "starting", hasCurrentPath: true, dismissed: false }), true);
+        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "ready", hasCurrentPath: true, dismissed: false }), true);
+        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "stopped", hasCurrentPath: true, dismissed: false }), false);
+        assert.equal(shouldAutoShowEmbeddedLocalPreview({ status: "ready", hasCurrentPath: true, dismissed: true }), false);
     });
 
     it("retries transient URL resolution failures with bounded backoff", () => {
@@ -329,14 +314,6 @@ describe("draft IDs", () => {
         assert.equal(getOrCreateDraftID("blog", "posts/one.md", memoryStorage, createUUID), "uuid-3");
     });
 
-    it("creates Local Preview ownership IDs without browser storage persistence", () => {
-        let sequence = 0;
-        const createUUID = () => `local-${++sequence}`;
-
-        assert.equal(createLocalPreviewSessionID(createUUID), "local-1");
-        assert.equal(createLocalPreviewSessionID(createUUID), "local-2");
-        assert.equal(sessionValues.size, 0);
-    });
 });
 
 describe("Local Preview destructive operations", () => {
@@ -384,11 +361,6 @@ describe("Local Preview destructive operations", () => {
         assert.deepEqual(events, ["latest payload sent", "latest payload applied"]);
     });
 
-    it("does not block article switching on a Local Preview ownership conflict", () => {
-        assert.equal(isLocalPreviewOwnershipConflict({ status: 409 }), true);
-        assert.equal(isLocalPreviewOwnershipConflict({ status: 500 }), false);
-        assert.equal(isLocalPreviewOwnershipConflict(new Error("network failure")), false);
-    });
 });
 
 describe("preview API contracts", () => {
@@ -405,13 +377,10 @@ describe("preview API contracts", () => {
         API.setCurrentSite("docs site");
         const article = { path: "posts/one.md", body: "# Draft", frontmatter: { title: "Draft" } };
         await API.renderMarkdownPreview(article);
-        await API.updateLocalPreviewContent(article, "local-session", 7);
-        await API.resolveLocalPreviewArticleURL("local-session", article.path);
-        await API.releaseLocalPreviewContent("local-session");
-        await API.fetchLocalPreviewStatus("local-session");
-        await API.heartbeatLocalPreviewContent("local-session");
-        await API.stopLocalPreviewContent("local-session");
-        await API.reclaimStaleLocalPreview();
+        await API.updateLocalPreviewContent(article, 7);
+        await API.resolveLocalPreviewArticleURL(article.path);
+        await API.fetchLocalPreviewStatus();
+        await API.stopLocalPreviewContent();
         await API.triggerPreviewDeployment(article.path, "draft/id");
         await API.fetchPreviewDeployment("draft/id");
         await API.retryPreviewDeployment("draft/id");
@@ -421,43 +390,20 @@ describe("preview API contracts", () => {
         assert.equal(calls[1].url, "/admin/api/preview/markdown?site=docs+site");
         assert.deepEqual(JSON.parse(calls[1].options.body), article);
         assert.equal(calls[2].url, "/admin/api/preview/local?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[2].options.body), { ...article, draft_id: "local-session", revision: 7 });
+        assert.deepEqual(JSON.parse(calls[2].options.body), { ...article, revision: 7 });
         assert.equal(calls[3].url, "/admin/api/preview/local/navigate?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[3].options.body), { draft_id: "local-session", path: article.path });
-        assert.equal(calls[4].url, "/admin/api/preview/local/release?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[4].options.body), { draft_id: "local-session" });
-        assert.equal(calls[5].url, "/admin/api/preview/local/status?draft_id=local-session&site=docs+site");
-        assert.equal(calls[6].url, "/admin/api/preview/local/heartbeat?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[6].options.body), { draft_id: "local-session" });
-        assert.equal(calls[7].url, "/admin/api/preview/local/stop?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[7].options.body), { draft_id: "local-session" });
-        assert.equal(calls[8].url, "/admin/api/preview/local/reclaim?site=docs+site");
-        assert.equal(calls[9].url, "/admin/api/preview/deployments?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[9].options.body), { path: article.path, draft_id: "draft/id" });
-        assert.equal(calls[10].url, "/admin/api/preview/deployments/draft%2Fid?site=docs+site");
-        assert.equal(calls[11].url, "/admin/api/preview/deployments/draft%2Fid/retry?site=docs+site");
-        assert.equal(calls[12].url, "/admin/api/preview/deployments/draft%2Fid/discard?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[13].options.body), { path: article.path, draft_id: "draft/id" });
+        assert.deepEqual(JSON.parse(calls[3].options.body), { path: article.path });
+        assert.equal(calls[4].url, "/admin/api/preview/local/status?site=docs+site");
+        assert.equal(calls[5].url, "/admin/api/preview/local/stop?site=docs+site");
+        assert.equal(calls[6].url, "/admin/api/preview/deployments?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[6].options.body), { path: article.path, draft_id: "draft/id" });
+        assert.equal(calls[7].url, "/admin/api/preview/deployments/draft%2Fid?site=docs+site");
+        assert.equal(calls[8].url, "/admin/api/preview/deployments/draft%2Fid/retry?site=docs+site");
+        assert.equal(calls[9].url, "/admin/api/preview/deployments/draft%2Fid/discard?site=docs+site");
+        assert.deepEqual(JSON.parse(calls[10].options.body), { path: article.path, draft_id: "draft/id" });
         calls.slice(1).forEach(call => {
             assert.equal(call.options.headers["X-CMS-Site"], "docs site");
         });
     });
 
-    it("preserves conflict status from local preview API errors", async () => {
-        globalThis.fetch = async (url) => {
-            if (url === "/admin/api/csrf-token") {
-                return { ok: true, status: 200, json: async () => ({ csrf_token: "csrf" }) };
-            }
-            return {
-                ok: false,
-                status: 409,
-                json: async () => ({ message: "another local preview session is already active for this site" }),
-            };
-        };
-
-        await assert.rejects(
-            () => API.updateLocalPreviewContent({ path: "one.md", content: "draft" }, "local-session", 1),
-            error => error.status === 409 && /another local preview session/.test(error.message),
-        );
-    });
 });

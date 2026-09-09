@@ -233,28 +233,28 @@ export async function renderMarkdownPreview(payload, signal) {
     return await res.json();
 }
 
-export async function updateLocalPreviewContent(payload, draftID, revision, signal) {
+export async function updateLocalPreviewContent(payload, revision, signal) {
     const res = await fetchWithCSRF(withSite('/admin/api/preview/local'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             ...siteHeaders()
         },
-        body: JSON.stringify({ ...payload, draft_id: draftID, revision }),
+        body: JSON.stringify({ ...payload, revision }),
         signal
     });
     if (!res.ok) throw await responseError(res, "Local Live Preview update failed");
     return await res.json();
 }
 
-export async function resolveLocalPreviewArticleURL(draftID, path, signal) {
+export async function resolveLocalPreviewArticleURL(path, signal) {
     const res = await fetchWithCSRF(withSite('/admin/api/preview/local/navigate'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             ...siteHeaders()
         },
-        body: JSON.stringify({ draft_id: draftID, path }),
+        body: JSON.stringify({ path }),
         signal
     });
     if (!res.ok) throw await responseError(res, "Local Live Preview URL resolution failed");
@@ -265,22 +265,8 @@ export async function resolveLocalPreviewArticleURL(draftID, path, signal) {
 // helper. The endpoint now resolves and returns the article URL directly.
 export const navigateLocalPreviewContent = resolveLocalPreviewArticleURL;
 
-export async function releaseLocalPreviewContent(draftID) {
-    const res = await fetchWithCSRF(withSite('/admin/api/preview/local/release'), {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            ...siteHeaders()
-        },
-        body: JSON.stringify({ draft_id: draftID })
-    });
-    if (!res.ok) throw await responseError(res, "Local Live Preview release failed");
-    return await res.json();
-}
-
-export async function fetchLocalPreviewStatus(draftID = "", signal) {
-    let url = '/admin/api/preview/local/status';
-    if (draftID) url += `?draft_id=${encodeURIComponent(draftID)}`;
+export async function fetchLocalPreviewStatus(signal) {
+    const url = '/admin/api/preview/local/status';
     const res = await fetch(withSite(url), {
         headers: siteHeaders(),
         signal
@@ -289,42 +275,15 @@ export async function fetchLocalPreviewStatus(draftID = "", signal) {
     return await res.json();
 }
 
-export async function heartbeatLocalPreviewContent(draftID) {
-    const res = await fetchWithCSRF(withSite('/admin/api/preview/local/heartbeat'), {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            ...siteHeaders()
-        },
-        body: JSON.stringify({ draft_id: draftID })
-    });
-    if (!res.ok) throw await responseError(res, "Local Live Preview heartbeat failed");
-    return await res.json();
-}
-
-export async function stopLocalPreviewContent(draftID = "") {
+export async function stopLocalPreviewContent() {
     const res = await fetchWithCSRF(withSite('/admin/api/preview/local/stop'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             ...siteHeaders()
         },
-        body: JSON.stringify({ draft_id: draftID })
     });
     if (!res.ok) throw await responseError(res, "Local Live Preview stop failed");
-    return await res.json();
-}
-
-export async function reclaimStaleLocalPreview() {
-    const res = await fetchWithCSRF(withSite('/admin/api/preview/local/reclaim'), {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            ...siteHeaders()
-        },
-        body: JSON.stringify({})
-    });
-    if (!res.ok) throw await responseError(res, "Local Live Preview recovery failed");
     return await res.json();
 }
 

@@ -1,7 +1,6 @@
 package services
 
 import (
-	"errors"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"io"
@@ -14,65 +13,22 @@ import (
 	"time"
 )
 
-const (
-	DefaultLocalPreviewLeaseTTL    = 2 * time.Minute
-	DefaultLocalPreviewIdleTimeout = 30 * time.Minute
-)
+const DefaultLocalPreviewIdleTimeout = 30 * time.Minute
 
-var (
-	ErrLocalPreviewSessionConflict   = errors.New("another local preview session is already active for this site")
-	ErrLocalPreviewSessionMismatch   = errors.New("local preview session article does not match request")
-	ErrLocalPreviewSessionNotFound   = errors.New("local preview session is not active")
-	ErrLocalPreviewSessionNotStale   = errors.New("local preview session is still active")
-	ErrLocalPreviewSessionExpired    = errors.New("local preview session lease has expired")
-	ErrLocalPreviewSessionReclaiming = errors.New("local preview session is being reclaimed")
-	ErrLocalPreviewSessionReleasing  = errors.New("local preview session is being released")
-)
-
-// LocalPreviewWorkspace is the site-scoped unsaved-content workspace and its
-// current editor owner/article metadata. The generator project belongs to the
-// site and is reused when the owner selects another article.
+// LocalPreviewWorkspace is the site-scoped unsaved-content workspace. It has
+// no browser owner: every editor tab may update the same site workspace and
+// the newest request wins.
 type LocalPreviewWorkspace struct {
-	SiteID      string
-	DraftID     string
-	ArticlePath string
-	ContentDir  string
-	ProjectDir  string
-	Revision    uint64
-	LastSeenAt  time.Time
-}
-
-// LocalPreviewReclaim is an opaque ownership token for reclaiming one stale
-// workspace. Callers must either finish or cancel the claim before another
-// session for the same site can be created.
-type LocalPreviewReclaim struct {
-	siteID  string
-	draftID string
-	token   uint64
-}
-
-type localPreviewReclaimState struct {
-	draftID string
-	token   uint64
-}
-
-// LocalPreviewRelease is an opaque ownership token for detaching an active
-// workspace before its filesystem cleanup runs. Callers must either finish or
-// cancel the claim after stopping the generator process.
-type LocalPreviewRelease struct {
-	siteID  string
-	draftID string
-	token   uint64
-}
-
-type localPreviewReleaseState struct {
-	draftID string
-	token   uint64
+	SiteID         string
+	ArticlePath    string
+	ContentDir     string
+	ProjectDir     string
+	Revision       uint64
+	LastActivityAt time.Time
 }
 
 // LocalPreviewIngressLease protects preview preparation from a concurrent
-// release/reclaim transition. Callers release it after the process/port and
-// proxy target are fixed, before serving a potentially long-lived stream.
+// cleanup transition. Callers release it before serving a long-lived stream.
 type LocalPreviewIngressLease struct {
 	gate *sync.RWMutex
 	once sync.Once
@@ -89,23 +45,39 @@ func (lease *LocalPreviewIngressLease) Release() {
 	})
 }
 
+// LocalPreviewCleanupLease holds the site's write gate while the generator is
+// stopped and the shadow workspace is detached. It is a lifecycle lock, not a
+// browser/session ownership claim.
+type LocalPreviewCleanupLease struct {
+	manager *LocalPreviewWorkspaceManager
+	siteID  string
+	gate    *sync.RWMutex
+	once    sync.Once
+}
+
+func (lease *LocalPreviewCleanupLease) Release() {
+	if lease == nil {
+		return
+	}
+	lease.once.Do(func() {
+		if lease.gate != nil {
+			lease.gate.Unlock()
+		}
+	})
+}
+
 // LocalPreviewWorkspaceManager owns ephemeral shadow content directories and,
-// for Eleventy, a temporary project-root overlay. Hugo keeps the original
-// repository as its generator source root; Eleventy receives production
-// project references with only content/public materialized into the overlay.
+// for Eleventy, a temporary project-root overlay. Activity is tracked per
+// site runtime, independently of browser tabs and editor revision counters.
 type LocalPreviewWorkspaceManager struct {
-	root             string
-	mu               sync.Mutex
-	sessions         map[string]LocalPreviewWorkspace
-	reclaiming       map[string]localPreviewReclaimState
-	releasing        map[string]localPreviewReleaseState
-	siteGates        map[string]*sync.RWMutex
-	nextReclaimToken uint64
-	nextReleaseToken uint64
-	closed           bool
-	leaseTTL         time.Duration
-	now              func() time.Time
-	removeWorkspace  func(string) error
+	root            string
+	mu              sync.Mutex
+	workspaces      map[string]LocalPreviewWorkspace
+	activities      map[string]time.Time
+	siteGates       map[string]*sync.RWMutex
+	closed          bool
+	now             func() time.Time
+	removeWorkspace func(string) error
 }
 
 func NewLocalPreviewWorkspaceManager(root string) (*LocalPreviewWorkspaceManager, error) {
@@ -122,11 +94,9 @@ func NewLocalPreviewWorkspaceManager(root string) (*LocalPreviewWorkspaceManager
 	}
 	return &LocalPreviewWorkspaceManager{
 		root:            absRoot,
-		sessions:        make(map[string]LocalPreviewWorkspace),
-		reclaiming:      make(map[string]localPreviewReclaimState),
-		releasing:       make(map[string]localPreviewReleaseState),
+		workspaces:      make(map[string]LocalPreviewWorkspace),
+		activities:      make(map[string]time.Time),
 		siteGates:       make(map[string]*sync.RWMutex),
-		leaseTTL:        DefaultLocalPreviewLeaseTTL,
 		now:             time.Now,
 		removeWorkspace: os.RemoveAll,
 	}, nil
@@ -153,44 +123,11 @@ func DefaultLocalPreviewWorkspaceManager() (*LocalPreviewWorkspaceManager, error
 	return defaultLocalPreviewWorkspace, defaultLocalPreviewWorkspaceErr
 }
 
-func (m *LocalPreviewWorkspaceManager) LeaseTTL() time.Duration {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.leaseTTL
-}
-
 func (m *LocalPreviewWorkspaceManager) currentTimeLocked() time.Time {
 	if m.now == nil {
 		return time.Now().UTC()
 	}
 	return m.now().UTC()
-}
-
-func (m *LocalPreviewWorkspaceManager) staleLocked(workspace LocalPreviewWorkspace, now time.Time) bool {
-	if workspace.LastSeenAt.IsZero() {
-		return true
-	}
-	return now.Sub(workspace.LastSeenAt) > m.leaseTTL
-}
-
-func (m *LocalPreviewWorkspaceManager) reclaimingLocked(siteID string) bool {
-	_, ok := m.reclaiming[siteID]
-	return ok
-}
-
-func (m *LocalPreviewWorkspaceManager) releasingLocked(siteID string) bool {
-	_, ok := m.releasing[siteID]
-	return ok
-}
-
-func (m *LocalPreviewWorkspaceManager) transitionErrorLocked(siteID string) error {
-	if m.reclaimingLocked(siteID) {
-		return ErrLocalPreviewSessionReclaiming
-	}
-	if m.releasingLocked(siteID) {
-		return ErrLocalPreviewSessionReleasing
-	}
-	return nil
 }
 
 func (m *LocalPreviewWorkspaceManager) siteGate(siteID string) *sync.RWMutex {
@@ -205,51 +142,63 @@ func (m *LocalPreviewWorkspaceManager) siteGate(siteID string) *sync.RWMutex {
 }
 
 // AcquireIngress returns one consistent workspace snapshot while holding the
-// site's read gate. Callers must release the returned lease after preparing a
-// fixed proxy target; release/reclaim claims use the corresponding write gate.
+// site's read gate. Cleanup takes the corresponding write gate, so an ingress
+// request cannot capture a workspace while it is being detached.
 func (m *LocalPreviewWorkspaceManager) AcquireIngress(siteID string) (LocalPreviewIngressLease, LocalPreviewWorkspace, bool, bool) {
 	gate := m.siteGate(siteID)
 	gate.RLock()
 
 	m.mu.Lock()
-	transitioning := m.closed || m.transitionErrorLocked(siteID) != nil
-	workspace, active := m.sessions[siteID]
-	m.mu.Unlock()
-	if transitioning {
+	if m.closed {
+		m.mu.Unlock()
 		gate.RUnlock()
 		return LocalPreviewIngressLease{}, LocalPreviewWorkspace{}, false, true
 	}
+	now := m.currentTimeLocked()
+	m.activities[siteID] = now
+	workspace, active := m.workspaces[siteID]
+	if active {
+		workspace.LastActivityAt = now
+		m.workspaces[siteID] = workspace
+	}
+	m.mu.Unlock()
 	return LocalPreviewIngressLease{gate: gate}, workspace, active, false
 }
 
-// Update creates the site's workspace on the first request and applies the
-// newest revision for the selected article. The same owner may switch article
-// paths without recreating the workspace or restarting the generator. Older
-// in-flight HTTP requests become harmless no-ops instead of overwriting newer
-// editor state. Requests renew a lease only while it is still valid; an
-// expired session must be reclaimed before it can restart.
-func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, draftID, articlePath string, revision uint64, content []byte) (LocalPreviewWorkspace, bool, bool, error) {
-	return m.update(runtime, draftID, articlePath, revision, content, nil)
+// Touch records activity for a site runtime even when it has not created a
+// shadow workspace yet, such as preview access using saved content.
+func (m *LocalPreviewWorkspaceManager) Touch(siteID string) {
+	if strings.TrimSpace(siteID) == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.closed {
+		m.activities[siteID] = m.currentTimeLocked()
+	}
 }
 
-// UpdateWithBeforeWrite applies an update after running beforeWrite once all
-// session and path validation has succeeded. The hook is used to invalidate
-// generator-derived state immediately before the shadow file changes, which
-// prevents a consumer from observing the previous build as current.
-func (m *LocalPreviewWorkspaceManager) UpdateWithBeforeWrite(runtime config.SiteRuntime, draftID, articlePath string, revision uint64, content []byte, beforeWrite func() error) (LocalPreviewWorkspace, bool, bool, error) {
-	return m.update(runtime, draftID, articlePath, revision, content, beforeWrite)
+// Update applies a site-scoped shadow update. The client revision is accepted
+// only as request metadata; ordering is assigned by this server-side critical
+// section so independent browser tabs cannot permanently reject each other's
+// revisions. Every accepted request receives the next server revision.
+func (m *LocalPreviewWorkspaceManager) Update(runtime config.SiteRuntime, articlePath string, clientRevision uint64, content []byte) (LocalPreviewWorkspace, bool, bool, error) {
+	return m.update(runtime, articlePath, clientRevision, content, nil)
 }
 
-func (m *LocalPreviewWorkspaceManager) update(runtime config.SiteRuntime, draftID, articlePath string, revision uint64, content []byte, beforeWrite func() error) (LocalPreviewWorkspace, bool, bool, error) {
-	if err := validateDraftID(draftID); err != nil {
-		return LocalPreviewWorkspace{}, false, false, err
+// UpdateWithBeforeWrite applies an update after running beforeWrite once the
+// site workspace and article path have been validated.
+func (m *LocalPreviewWorkspaceManager) UpdateWithBeforeWrite(runtime config.SiteRuntime, articlePath string, clientRevision uint64, content []byte, beforeWrite func() error) (LocalPreviewWorkspace, bool, bool, error) {
+	return m.update(runtime, articlePath, clientRevision, content, beforeWrite)
+}
+
+func (m *LocalPreviewWorkspaceManager) update(runtime config.SiteRuntime, articlePath string, clientRevision uint64, content []byte, beforeWrite func() error) (LocalPreviewWorkspace, bool, bool, error) {
+	if clientRevision == 0 {
+		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("local preview revision must be greater than zero")
 	}
 	articlePath = filepath.Clean(strings.TrimSpace(articlePath))
 	if articlePath == "." || filepath.IsAbs(articlePath) {
 		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("invalid local preview article path")
-	}
-	if revision == 0 {
-		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("local preview revision must be greater than zero")
 	}
 	if runtime.ID == "" {
 		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("local preview site ID is required")
@@ -263,38 +212,18 @@ func (m *LocalPreviewWorkspaceManager) update(runtime config.SiteRuntime, draftI
 		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("invalid local preview article path")
 	}
 
+	gate := m.siteGate(runtime.ID)
+	gate.RLock()
+	defer gate.RUnlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("local preview workspace manager is closed")
 	}
-	if err := m.transitionErrorLocked(runtime.ID); err != nil {
-		return LocalPreviewWorkspace{}, false, false, err
-	}
 	now := m.currentTimeLocked()
-
-	workspace, exists := m.sessions[runtime.ID]
+	workspace, exists := m.workspaces[runtime.ID]
 	created := false
-	if exists {
-		if m.staleLocked(workspace, now) {
-			return LocalPreviewWorkspace{}, false, false, ErrLocalPreviewSessionExpired
-		}
-		if workspace.DraftID != draftID {
-			return LocalPreviewWorkspace{}, false, false, ErrLocalPreviewSessionConflict
-		}
-		if revision <= workspace.Revision {
-			workspace.LastSeenAt = now
-			m.sessions[runtime.ID] = workspace
-			return workspace, false, false, nil
-		}
-		if workspace.ArticlePath != filepath.ToSlash(articlePath) {
-			// Keep the site workspace and advance the selected article only for a
-			// newer request. A late request for the previous article is therefore a
-			// harmless no-op instead of moving the active selection backwards.
-			workspace.ArticlePath = filepath.ToSlash(articlePath)
-		}
-		workspace.LastSeenAt = now
-	} else {
+	if !exists {
 		workspaceRoot := filepath.Join(m.root, runtime.ID)
 		if err := os.RemoveAll(workspaceRoot); err != nil {
 			return LocalPreviewWorkspace{}, false, false, fmt.Errorf("reset local preview workspace: %w", err)
@@ -323,17 +252,20 @@ func (m *LocalPreviewWorkspaceManager) update(runtime config.SiteRuntime, draftI
 		}
 		workspace = LocalPreviewWorkspace{
 			SiteID:      runtime.ID,
-			DraftID:     draftID,
 			ArticlePath: filepath.ToSlash(articlePath),
 			ContentDir:  contentDir,
 			ProjectDir:  projectDir,
-			LastSeenAt:  now,
 		}
 		created = true
+	} else {
+		workspace.ArticlePath = filepath.ToSlash(articlePath)
 	}
 
 	target := SafeJoin(workspace.ContentDir, "", articlePath)
 	if target == "" {
+		if created {
+			_ = os.RemoveAll(filepath.Dir(workspace.ContentDir))
+		}
 		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("invalid local preview workspace path")
 	}
 	if beforeWrite != nil {
@@ -350,62 +282,29 @@ func (m *LocalPreviewWorkspaceManager) update(runtime config.SiteRuntime, draftI
 		}
 		return LocalPreviewWorkspace{}, false, false, err
 	}
-	workspace.Revision = revision
-	workspace.LastSeenAt = now
-	m.sessions[runtime.ID] = workspace
+	workspace.Revision++
+	workspace.LastActivityAt = now
+	m.workspaces[runtime.ID] = workspace
+	m.activities[runtime.ID] = now
 	return workspace, created, true, nil
 }
 
-// Heartbeat renews a live lease without changing content. Once the lease has
-// expired, the browser must reclaim/restart instead of reviving a session whose
-// generator process may already be stopping.
-func (m *LocalPreviewWorkspaceManager) Heartbeat(siteID, draftID string) (LocalPreviewWorkspace, error) {
-	if err := validateDraftID(draftID); err != nil {
-		return LocalPreviewWorkspace{}, err
-	}
+// Status reports the current site workspace. There is no stale or ownership
+// state; runtime idle cleanup is based solely on activity timestamps.
+func (m *LocalPreviewWorkspaceManager) Status(siteID string) (LocalPreviewWorkspace, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.closed {
-		return LocalPreviewWorkspace{}, fmt.Errorf("local preview workspace manager is closed")
-	}
-	if err := m.transitionErrorLocked(siteID); err != nil {
-		return LocalPreviewWorkspace{}, err
-	}
-	workspace, ok := m.sessions[siteID]
-	if !ok {
-		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionNotFound
-	}
-	if workspace.DraftID != draftID {
-		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionConflict
-	}
-	now := m.currentTimeLocked()
-	if m.staleLocked(workspace, now) {
-		return LocalPreviewWorkspace{}, ErrLocalPreviewSessionExpired
-	}
-	workspace.LastSeenAt = now
-	m.sessions[siteID] = workspace
-	return workspace, nil
+	workspace, ok := m.workspaces[siteID]
+	return workspace, ok
 }
 
-// Status reports the active workspace and whether its lease has expired.
-func (m *LocalPreviewWorkspaceManager) Status(siteID string) (LocalPreviewWorkspace, bool, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.transitionErrorLocked(siteID) != nil {
-		return LocalPreviewWorkspace{}, false, false
-	}
-	workspace, ok := m.sessions[siteID]
-	if !ok {
-		return LocalPreviewWorkspace{}, false, false
-	}
-	return workspace, true, m.staleLocked(workspace, m.currentTimeLocked())
+func (m *LocalPreviewWorkspaceManager) Active(siteID string) (LocalPreviewWorkspace, bool) {
+	return m.Status(siteID)
 }
 
-// IdleWorkspaces returns active site workspaces that have not received an
-// editor update or heartbeat within timeout. The caller must claim each
-// returned workspace before stopping its generator so a concurrent editor
-// request cannot revive it during cleanup.
-func (m *LocalPreviewWorkspaceManager) IdleWorkspaces(timeout time.Duration) []LocalPreviewWorkspace {
+// IdleSites returns site runtimes with no recent preview activity. It includes
+// runtimes that only served saved content and therefore have no workspace yet.
+func (m *LocalPreviewWorkspaceManager) IdleSites(timeout time.Duration) []string {
 	if timeout <= 0 {
 		return nil
 	}
@@ -415,70 +314,86 @@ func (m *LocalPreviewWorkspaceManager) IdleWorkspaces(timeout time.Duration) []L
 		return nil
 	}
 	now := m.currentTimeLocked()
-	idle := make([]LocalPreviewWorkspace, 0)
-	for siteID, workspace := range m.sessions {
-		if m.transitionErrorLocked(siteID) != nil || workspace.LastSeenAt.IsZero() {
-			continue
-		}
-		if now.Sub(workspace.LastSeenAt) >= timeout {
-			idle = append(idle, workspace)
+	idle := make([]string, 0)
+	for siteID, lastActivity := range m.activities {
+		if !lastActivity.IsZero() && now.Sub(lastActivity) >= timeout {
+			idle = append(idle, siteID)
 		}
 	}
 	return idle
 }
 
-// ClaimIdle atomically verifies that a workspace is still idle and marks it
-// as releasing. The site gate and manager lock cover the re-check so a
-// heartbeat/update that wins the race prevents idle cleanup rather than being
-// stopped immediately afterwards.
-func (m *LocalPreviewWorkspaceManager) ClaimIdle(siteID, draftID string, timeout time.Duration) (LocalPreviewRelease, bool, error) {
-	if err := validateDraftID(draftID); err != nil {
-		return LocalPreviewRelease{}, false, err
-	}
+// BeginCleanup obtains exclusive access to a site's workspace and preview
+// ingress. The caller must stop the generator before FinishCleanup, or call
+// CancelCleanup when stopping fails.
+func (m *LocalPreviewWorkspaceManager) BeginCleanup(siteID string) (LocalPreviewCleanupLease, bool, error) {
+	return m.beginCleanup(siteID, 0)
+}
+
+// BeginIdleCleanup repeats the idle check while holding the site's write gate,
+// so activity that races with IdleSites cannot be stopped immediately after it
+// was recorded.
+func (m *LocalPreviewWorkspaceManager) BeginIdleCleanup(siteID string, timeout time.Duration) (LocalPreviewCleanupLease, bool, error) {
 	if timeout <= 0 {
-		return LocalPreviewRelease{}, false, nil
+		return LocalPreviewCleanupLease{}, false, nil
 	}
+	return m.beginCleanup(siteID, timeout)
+}
+
+func (m *LocalPreviewWorkspaceManager) beginCleanup(siteID string, idleTimeout time.Duration) (LocalPreviewCleanupLease, bool, error) {
 	gate := m.siteGate(siteID)
 	gate.Lock()
 	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewRelease{}, false, fmt.Errorf("local preview workspace manager is closed")
+	closed := m.closed
+	if !closed && idleTimeout > 0 {
+		lastActivity, active := m.activities[siteID]
+		if !active || lastActivity.IsZero() || m.currentTimeLocked().Sub(lastActivity) < idleTimeout {
+			m.mu.Unlock()
+			gate.Unlock()
+			return LocalPreviewCleanupLease{}, false, nil
+		}
 	}
-	if err := m.transitionErrorLocked(siteID); err != nil {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewRelease{}, false, err
-	}
-	workspace, ok := m.sessions[siteID]
-	if !ok {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewRelease{}, false, nil
-	}
-	if workspace.DraftID != draftID {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewRelease{}, false, ErrLocalPreviewSessionConflict
-	}
-	if workspace.LastSeenAt.IsZero() || m.currentTimeLocked().Sub(workspace.LastSeenAt) < timeout {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewRelease{}, false, nil
-	}
-	m.nextReleaseToken++
-	state := localPreviewReleaseState{draftID: draftID, token: m.nextReleaseToken}
-	m.releasing[siteID] = state
 	m.mu.Unlock()
-	gate.Unlock()
-	return LocalPreviewRelease{siteID: siteID, draftID: draftID, token: state.token}, true, nil
+	if closed {
+		gate.Unlock()
+		return LocalPreviewCleanupLease{}, false, fmt.Errorf("local preview workspace manager is closed")
+	}
+	return LocalPreviewCleanupLease{manager: m, siteID: siteID, gate: gate}, true, nil
+}
+
+func (m *LocalPreviewWorkspaceManager) FinishCleanup(lease *LocalPreviewCleanupLease) (bool, error) {
+	if lease == nil || lease.manager != m || lease.gate == nil || lease.siteID == "" {
+		return false, fmt.Errorf("invalid local preview cleanup lease")
+	}
+	m.mu.Lock()
+	workspace, ok := m.workspaces[lease.siteID]
+	if !ok {
+		delete(m.activities, lease.siteID)
+		m.mu.Unlock()
+		lease.Release()
+		return false, nil
+	}
+	cleanupPath, err := m.detachWorkspaceLocked(lease.siteID, workspace)
+	if err != nil {
+		m.mu.Unlock()
+		lease.Release()
+		return false, err
+	}
+	delete(m.activities, lease.siteID)
+	m.mu.Unlock()
+	lease.Release()
+	m.cleanupWorkspaceAsync(lease.siteID, cleanupPath)
+	return true, nil
+}
+
+func (m *LocalPreviewWorkspaceManager) CancelCleanup(lease *LocalPreviewCleanupLease) {
+	if lease != nil && lease.manager == m {
+		lease.Release()
+	}
 }
 
 // SyncContentResource mirrors a content-directory resource change made through
-// the normal CMS media API into an already-active shadow workspace. Static
-// resources do not need this because the generator overlay still references
-// the production static tree.
+// the normal CMS media API into an active shadow workspace.
 func (m *LocalPreviewWorkspaceManager) SyncContentResource(runtime config.SiteRuntime, repoPath string, deleted bool) (bool, error) {
 	if runtime.ID == "" {
 		return false, fmt.Errorf("local preview site ID is required")
@@ -496,18 +411,22 @@ func (m *LocalPreviewWorkspaceManager) SyncContentResource(runtime config.SiteRu
 		return false, nil
 	}
 
+	gate := m.siteGate(runtime.ID)
+	gate.RLock()
+	defer gate.RUnlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return false, fmt.Errorf("local preview workspace manager is closed")
 	}
-	if m.transitionErrorLocked(runtime.ID) != nil {
+	workspace, active := m.workspaces[runtime.ID]
+	if !active {
 		return false, nil
 	}
-	workspace, active := m.sessions[runtime.ID]
-	if !active || m.staleLocked(workspace, m.currentTimeLocked()) {
-		return false, nil
-	}
+	now := m.currentTimeLocked()
+	m.activities[runtime.ID] = now
+	workspace.LastActivityAt = now
+	m.workspaces[runtime.ID] = workspace
 	target := SafeJoin(workspace.ContentDir, "", relative)
 	if target == "" {
 		return false, fmt.Errorf("invalid local preview resource target")
@@ -536,241 +455,6 @@ func (m *LocalPreviewWorkspaceManager) SyncContentResource(runtime config.SiteRu
 	return true, nil
 }
 
-// Release is idempotent for a site without an active workspace. A stale tab is
-// never allowed to release another tab's active session.
-func (m *LocalPreviewWorkspaceManager) Release(siteID, draftID string) (bool, error) {
-	if err := validateDraftID(draftID); err != nil {
-		return false, err
-	}
-	gate := m.siteGate(siteID)
-	gate.Lock()
-	m.mu.Lock()
-	if err := m.transitionErrorLocked(siteID); err != nil {
-		m.mu.Unlock()
-		gate.Unlock()
-		return false, err
-	}
-
-	workspace, ok := m.sessions[siteID]
-	if !ok {
-		m.mu.Unlock()
-		gate.Unlock()
-		return false, nil
-	}
-	if workspace.DraftID != draftID {
-		m.mu.Unlock()
-		gate.Unlock()
-		return false, ErrLocalPreviewSessionConflict
-	}
-	cleanupPath, err := m.detachWorkspaceLocked(siteID, workspace)
-	m.mu.Unlock()
-	gate.Unlock()
-	if err != nil {
-		return false, err
-	}
-	m.cleanupWorkspaceAsync(siteID, cleanupPath)
-	return true, nil
-}
-
-// ClaimStale atomically marks an expired workspace as reclaiming. While the
-// claim is held, heartbeat/update/release/resource-sync operations for the same
-// site cannot mutate or revive the session. This claim must be acquired before
-// stopping the generator so a racing heartbeat cannot leave a fresh session
-// with a stopped process.
-func (m *LocalPreviewWorkspaceManager) ClaimStale(siteID string) (LocalPreviewReclaim, bool, error) {
-	gate := m.siteGate(siteID)
-	gate.Lock()
-	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewReclaim{}, false, fmt.Errorf("local preview workspace manager is closed")
-	}
-	if err := m.transitionErrorLocked(siteID); err != nil {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewReclaim{}, false, err
-	}
-	workspace, ok := m.sessions[siteID]
-	if !ok {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewReclaim{}, false, nil
-	}
-	if !m.staleLocked(workspace, m.currentTimeLocked()) {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewReclaim{}, false, ErrLocalPreviewSessionNotStale
-	}
-	m.nextReclaimToken++
-	state := localPreviewReclaimState{draftID: workspace.DraftID, token: m.nextReclaimToken}
-	m.reclaiming[siteID] = state
-	m.mu.Unlock()
-	gate.Unlock()
-	return LocalPreviewReclaim{siteID: siteID, draftID: workspace.DraftID, token: state.token}, true, nil
-}
-
-// FinishReclaim removes the workspace owned by a previously acquired stale
-// claim. The token and draft ID prevent an old cleanup attempt from deleting a
-// different session if the lifecycle changes in the future.
-func (m *LocalPreviewWorkspaceManager) FinishReclaim(claim LocalPreviewReclaim) (bool, error) {
-	gate := m.siteGate(claim.siteID)
-	gate.Lock()
-	m.mu.Lock()
-	state, ok := m.reclaiming[claim.siteID]
-	if !ok || state.token != claim.token || state.draftID != claim.draftID {
-		m.mu.Unlock()
-		gate.Unlock()
-		return false, ErrLocalPreviewSessionReclaiming
-	}
-	workspace, ok := m.sessions[claim.siteID]
-	if !ok {
-		delete(m.reclaiming, claim.siteID)
-		m.mu.Unlock()
-		gate.Unlock()
-		return false, nil
-	}
-	if workspace.DraftID != claim.draftID {
-		m.mu.Unlock()
-		gate.Unlock()
-		return false, ErrLocalPreviewSessionConflict
-	}
-	cleanupPath, err := m.detachWorkspaceLocked(claim.siteID, workspace)
-	if err != nil {
-		m.mu.Unlock()
-		gate.Unlock()
-		return false, err
-	}
-	delete(m.reclaiming, claim.siteID)
-	m.mu.Unlock()
-	gate.Unlock()
-	m.cleanupWorkspaceAsync(claim.siteID, cleanupPath)
-	return true, nil
-}
-
-// CancelReclaim releases a stale claim without removing the workspace. It is
-// used when the generator cannot be stopped; the expired session remains stale
-// and can be reclaimed again, but it still cannot be revived by heartbeat/update.
-func (m *LocalPreviewWorkspaceManager) CancelReclaim(claim LocalPreviewReclaim) {
-	gate := m.siteGate(claim.siteID)
-	gate.Lock()
-	m.mu.Lock()
-	state, ok := m.reclaiming[claim.siteID]
-	if ok && state.token == claim.token && state.draftID == claim.draftID {
-		delete(m.reclaiming, claim.siteID)
-		m.mu.Unlock()
-		gate.Unlock()
-		return
-	}
-	m.mu.Unlock()
-	gate.Unlock()
-}
-
-// ClaimRelease atomically marks an active workspace as releasing. The claim
-// must be held while the generator process is stopped so preview requests
-// cannot restart it against the old workspace before it is detached.
-func (m *LocalPreviewWorkspaceManager) ClaimRelease(siteID, draftID string) (LocalPreviewRelease, bool, error) {
-	if err := validateDraftID(draftID); err != nil {
-		return LocalPreviewRelease{}, false, err
-	}
-	gate := m.siteGate(siteID)
-	gate.Lock()
-	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewRelease{}, false, fmt.Errorf("local preview workspace manager is closed")
-	}
-	if err := m.transitionErrorLocked(siteID); err != nil {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewRelease{}, false, err
-	}
-	workspace, ok := m.sessions[siteID]
-	if !ok {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewRelease{}, false, nil
-	}
-	if workspace.DraftID != draftID {
-		m.mu.Unlock()
-		gate.Unlock()
-		return LocalPreviewRelease{}, false, ErrLocalPreviewSessionConflict
-	}
-	m.nextReleaseToken++
-	state := localPreviewReleaseState{draftID: draftID, token: m.nextReleaseToken}
-	m.releasing[siteID] = state
-	m.mu.Unlock()
-	gate.Unlock()
-	return LocalPreviewRelease{siteID: siteID, draftID: draftID, token: state.token}, true, nil
-}
-
-// FinishRelease detaches a claimed workspace and schedules its physical
-// removal after the session lock has been released.
-func (m *LocalPreviewWorkspaceManager) FinishRelease(claim LocalPreviewRelease) (bool, error) {
-	gate := m.siteGate(claim.siteID)
-	gate.Lock()
-	m.mu.Lock()
-	state, ok := m.releasing[claim.siteID]
-	if !ok || state.token != claim.token || state.draftID != claim.draftID {
-		m.mu.Unlock()
-		gate.Unlock()
-		return false, ErrLocalPreviewSessionReleasing
-	}
-	workspace, ok := m.sessions[claim.siteID]
-	if !ok {
-		delete(m.releasing, claim.siteID)
-		m.mu.Unlock()
-		gate.Unlock()
-		return false, nil
-	}
-	if workspace.DraftID != claim.draftID {
-		m.mu.Unlock()
-		gate.Unlock()
-		return false, ErrLocalPreviewSessionConflict
-	}
-	cleanupPath, err := m.detachWorkspaceLocked(claim.siteID, workspace)
-	if err != nil {
-		m.mu.Unlock()
-		gate.Unlock()
-		return false, err
-	}
-	delete(m.releasing, claim.siteID)
-	m.mu.Unlock()
-	gate.Unlock()
-	m.cleanupWorkspaceAsync(claim.siteID, cleanupPath)
-	return true, nil
-}
-
-// CancelRelease leaves the workspace active when stopping the generator
-// failed. This keeps the session recoverable instead of deleting it while its
-// process may still be serving the workspace.
-func (m *LocalPreviewWorkspaceManager) CancelRelease(claim LocalPreviewRelease) {
-	gate := m.siteGate(claim.siteID)
-	gate.Lock()
-	m.mu.Lock()
-	state, ok := m.releasing[claim.siteID]
-	if ok && state.token == claim.token && state.draftID == claim.draftID {
-		delete(m.releasing, claim.siteID)
-		m.mu.Unlock()
-		gate.Unlock()
-		return
-	}
-	m.mu.Unlock()
-	gate.Unlock()
-}
-
-// ReleaseStale atomically claims and removes an expired workspace. Callers that
-// must stop the generator process before deleting the workspace should use
-// ClaimStale followed by FinishReclaim instead.
-func (m *LocalPreviewWorkspaceManager) ReleaseStale(siteID string) (bool, error) {
-	claim, claimed, err := m.ClaimStale(siteID)
-	if err != nil || !claimed {
-		return false, err
-	}
-	return m.FinishReclaim(claim)
-}
-
 func (m *LocalPreviewWorkspaceManager) detachWorkspaceLocked(siteID string, workspace LocalPreviewWorkspace) (string, error) {
 	workspaceRoot := filepath.Dir(workspace.ContentDir)
 	cleanupParent := filepath.Join(m.root, ".cleanup")
@@ -786,26 +470,13 @@ func (m *LocalPreviewWorkspaceManager) detachWorkspaceLocked(siteID string, work
 	}
 	if err := os.Rename(workspaceRoot, cleanupPath); err != nil {
 		if os.IsNotExist(err) {
-			delete(m.sessions, siteID)
+			delete(m.workspaces, siteID)
 			return "", nil
 		}
 		return "", fmt.Errorf("detach local preview workspace: %w", err)
 	}
-	delete(m.sessions, siteID)
+	delete(m.workspaces, siteID)
 	return cleanupPath, nil
-}
-
-func (m *LocalPreviewWorkspaceManager) Active(siteID string) (LocalPreviewWorkspace, bool) {
-	workspace, active, _ := m.Status(siteID)
-	return workspace, active
-}
-
-// IsTransitioning reports whether a workspace is being reclaimed or released
-// and must not be reused by a new preview request.
-func (m *LocalPreviewWorkspaceManager) IsTransitioning(siteID string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.transitionErrorLocked(siteID) != nil
 }
 
 func (m *LocalPreviewWorkspaceManager) cleanupWorkspaceAsync(siteID, cleanupPath string) {
@@ -830,9 +501,8 @@ func (m *LocalPreviewWorkspaceManager) Shutdown() error {
 		return nil
 	}
 	m.closed = true
-	m.sessions = make(map[string]LocalPreviewWorkspace)
-	m.reclaiming = make(map[string]localPreviewReclaimState)
-	m.releasing = make(map[string]localPreviewReleaseState)
+	m.workspaces = make(map[string]LocalPreviewWorkspace)
+	m.activities = make(map[string]time.Time)
 	root := m.root
 	m.mu.Unlock()
 	if err := os.RemoveAll(root); err != nil {
