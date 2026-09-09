@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"hugo-cms/pkg/services"
+	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -80,10 +80,11 @@ func UpdateLocalPreviewContent(c *gin.Context) {
 	}
 
 	if created {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), services.DefaultLocalPreviewStopTimeout)
 		stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
 		cancel()
 		if stopErr != nil {
+			slog.Error("Failed to switch Local Live Preview to shadow content", "site", runtime.ID, "error", stopErr)
 			_, _ = workspaceManager.Release(runtime.ID, req.DraftID)
 			ErrorInternal(c, "Failed to switch Local Live Preview to shadow content")
 			return
@@ -128,10 +129,11 @@ func ReleaseLocalPreviewContent(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), services.DefaultLocalPreviewStopTimeout)
 	stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
 	cancel()
 	if stopErr != nil {
+		slog.Error("Failed to stop Local Live Preview process", "site", runtime.ID, "error", stopErr)
 		ErrorInternal(c, "Failed to stop Local Live Preview process")
 		return
 	}

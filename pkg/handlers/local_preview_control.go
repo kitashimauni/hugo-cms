@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"hugo-cms/pkg/services"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -135,10 +136,11 @@ func StopLocalPreview(c *gin.Context) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), services.DefaultLocalPreviewStopTimeout)
 	stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
 	cancel()
 	if stopErr != nil {
+		slog.Error("Failed to stop Local Live Preview process", "site", runtime.ID, "error", stopErr)
 		ErrorInternal(c, "Failed to stop Local Live Preview process")
 		return
 	}
@@ -181,10 +183,11 @@ func ReclaimStaleLocalPreview(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), services.DefaultLocalPreviewStopTimeout)
 	stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
 	cancel()
 	if stopErr != nil {
+		slog.Error("Failed to stop stale Local Live Preview process", "site", runtime.ID, "error", stopErr)
 		workspaceManager.CancelReclaim(claim)
 		ErrorInternal(c, "Failed to stop stale Local Live Preview process")
 		return

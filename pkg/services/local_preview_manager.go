@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"hugo-cms/pkg/config"
@@ -23,6 +22,7 @@ import (
 
 const (
 	defaultLocalPreviewStartupTimeout  = 2 * time.Minute
+	DefaultLocalPreviewStopTimeout     = 10 * time.Second
 	defaultLocalPreviewProbeInterval   = 50 * time.Millisecond
 	defaultLocalPreviewStartAttempts   = 3
 	localPreviewStderrLimit            = 64 << 10
@@ -54,20 +54,35 @@ var (
 type localPreviewCommandFactory func(context.Context, config.SiteRuntime, int, string) (*exec.Cmd, error)
 
 type managedLocalPreviewProcess struct {
-	cmd     *exec.Cmd
-	cancel  context.CancelFunc
-	done    chan struct{}
-	stderr  *cappedBuffer
-	cleanup func()
+	cmd         *exec.Cmd
+	cancel      context.CancelFunc
+	done        chan struct{} // process termination; closed before cleanup starts
+	cleanupDone chan struct{}
+	stderr      *cappedBuffer
+	cleanup     func() error
 
-	mu      sync.RWMutex
-	waitErr error
+	mu         sync.RWMutex
+	waitErr    error
+	cleanupErr error
 }
 
 func (p *managedLocalPreviewProcess) setWaitErr(err error) {
 	p.mu.Lock()
 	p.waitErr = err
 	p.mu.Unlock()
+}
+
+func (p *managedLocalPreviewProcess) setCleanupErr(err error) {
+	p.mu.Lock()
+	p.cleanupErr = err
+	p.mu.Unlock()
+}
+
+func (p *managedLocalPreviewProcess) cleanupError() error {
+	p.mu.RLock()
+	err := p.cleanupErr
+	p.mu.RUnlock()
+	return err
 }
 
 func (p *managedLocalPreviewProcess) processError() error {
@@ -97,6 +112,18 @@ func (p *managedLocalPreviewProcess) exited() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func (p *managedLocalPreviewProcess) finishCleanup(siteID string) {
+	var err error
+	if p.cleanup != nil {
+		err = p.cleanup()
+	}
+	p.setCleanupErr(err)
+	close(p.cleanupDone)
+	if err != nil {
+		slog.Error("Local preview cleanup failed after process termination", "site", siteID, "error", err)
 	}
 }
 
@@ -351,13 +378,12 @@ func (m *LocalPreviewManager) ensureReadyRuntime(runtime config.SiteRuntime) (Lo
 
 func (m *LocalPreviewManager) startProcess(runtime config.SiteRuntime, port int, previewURL string) (*managedLocalPreviewProcess, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cleanup := localPreviewProcessCleanup(runtime)
 	cmd, err := m.commandFactory(ctx, runtime, port, previewURL)
 	if err != nil {
 		cancel()
-		cleanup()
 		return nil, err
 	}
+	cleanup := localPreviewProcessCleanup(runtime, cmd.Dir)
 
 	stderr := newCappedBuffer(localPreviewStderrLimit)
 	// Generator processes may emit useful startup/build diagnostics to either
@@ -368,23 +394,26 @@ func (m *LocalPreviewManager) startProcess(runtime config.SiteRuntime, port int,
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		cancel()
-		cleanup()
+		if cleanupErr := cleanup(); cleanupErr != nil {
+			slog.Error("Local preview cleanup failed after process start error", "site", runtime.ID, "error", cleanupErr)
+		}
 		return nil, err
 	}
 
 	process := &managedLocalPreviewProcess{
-		cmd:     cmd,
-		cancel:  cancel,
-		done:    make(chan struct{}),
-		stderr:  stderr,
-		cleanup: cleanup,
+		cmd:         cmd,
+		cancel:      cancel,
+		done:        make(chan struct{}),
+		cleanupDone: make(chan struct{}),
+		stderr:      stderr,
+		cleanup:     cleanup,
 	}
 	m.setProcess(runtime.ID, process)
 
 	go func() {
 		process.setWaitErr(cmd.Wait())
-		process.cleanup()
 		close(process.done)
+		go process.finishCleanup(runtime.ID)
 		m.handleProcessExit(runtime.ID, process)
 	}()
 
@@ -824,51 +853,42 @@ func eleventyLocalPreviewScriptPath() (string, error) {
 	return "", fmt.Errorf("Eleventy local preview helper script is unavailable")
 }
 
-func eleventyLocalPreviewProjectDir(runtime config.SiteRuntime) (string, error) {
-	if projectDir := strings.TrimSpace(runtime.LocalPreviewProjectDir); projectDir != "" {
-		return filepath.Abs(projectDir)
-	}
-	if strings.TrimSpace(runtime.ID) == "" {
-		return "", fmt.Errorf("Eleventy local preview site ID is required")
-	}
-	repoPath, err := filepath.Abs(strings.TrimSpace(runtime.RepoPath))
-	if err != nil {
-		return "", fmt.Errorf("resolve Eleventy local preview repository: %w", err)
-	}
-	digest := sha256.Sum256([]byte(filepath.Clean(repoPath) + "\x00" + runtime.ID))
-	return filepath.Join(os.TempDir(), "hugo-cms-local-preview", fmt.Sprintf("%x", digest[:12])), nil
-}
-
-func eleventyLocalPreviewOutputDir(runtime config.SiteRuntime) (string, error) {
-	projectDir, err := eleventyLocalPreviewProjectDir(runtime)
-	if err != nil {
-		return "", err
-	}
-	publicDir, err := eleventyLocalPreviewPublicDir(runtime)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(projectDir, publicDir), nil
-}
-
 func prepareEleventyLocalPreviewProject(runtime config.SiteRuntime) (string, string, error) {
-	projectDir, err := eleventyLocalPreviewProjectDir(runtime)
-	if err != nil {
-		return "", "", err
+	projectDir := strings.TrimSpace(runtime.LocalPreviewProjectDir)
+	workspaceProject := projectDir != ""
+	if workspaceProject {
+		var err error
+		projectDir, err = filepath.Abs(projectDir)
+		if err != nil {
+			return "", "", fmt.Errorf("resolve Eleventy local preview project root: %w", err)
+		}
+	} else {
+		baseDir := filepath.Join(os.TempDir(), "hugo-cms-local-preview")
+		if err := os.MkdirAll(baseDir, 0700); err != nil {
+			return "", "", fmt.Errorf("create Eleventy local preview project root: %w", err)
+		}
+		var err error
+		projectDir, err = os.MkdirTemp(baseDir, "project-")
+		if err != nil {
+			return "", "", fmt.Errorf("allocate Eleventy local preview project root: %w", err)
+		}
 	}
 	inputDir, err := eleventyLocalPreviewInputDir(runtime)
 	if err != nil {
+		if !workspaceProject {
+			_ = os.RemoveAll(projectDir)
+		}
 		return "", "", err
 	}
 	publicDir, err := eleventyLocalPreviewPublicDir(runtime)
 	if err != nil {
+		if !workspaceProject {
+			_ = os.RemoveAll(projectDir)
+		}
 		return "", "", err
 	}
 
-	if runtime.LocalPreviewProjectDir == "" {
-		if err := os.RemoveAll(projectDir); err != nil {
-			return "", "", fmt.Errorf("reset Eleventy local preview project: %w", err)
-		}
+	if !workspaceProject {
 		contentSource := strings.TrimSpace(runtime.ContentDir)
 		if !filepath.IsAbs(contentSource) {
 			contentSource = filepath.Join(runtime.RepoPath, inputDir)
@@ -883,30 +903,45 @@ func prepareEleventyLocalPreviewProject(runtime config.SiteRuntime) (string, str
 
 	outputDir := filepath.Join(projectDir, publicDir)
 	if err := os.RemoveAll(outputDir); err != nil {
+		if !workspaceProject {
+			_ = os.RemoveAll(projectDir)
+		}
 		return "", "", fmt.Errorf("reset Eleventy local preview output: %w", err)
 	}
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		if !workspaceProject {
+			_ = os.RemoveAll(projectDir)
+		}
 		return "", "", fmt.Errorf("create Eleventy local preview output: %w", err)
 	}
 	return projectDir, outputDir, nil
 }
 
-func localPreviewProcessCleanup(runtime config.SiteRuntime) func() {
+func localPreviewProcessCleanup(runtime config.SiteRuntime, projectDir string) func() error {
 	if !isEleventyLocalPreviewGenerator(runtime.Generator) {
-		return func() {}
+		return func() error { return nil }
 	}
-	return func() {
-		if runtime.LocalPreviewProjectDir != "" {
-			outputDir, err := eleventyLocalPreviewOutputDir(runtime)
-			if err == nil {
-				_ = os.RemoveAll(outputDir)
-			}
-			return
+	// The workspace manager owns workspace directories. Removing their output
+	// here would duplicate release cleanup and could race with a new session
+	// reusing the same draft directory.
+	if runtime.LocalPreviewProjectDir != "" {
+		return func() error { return nil }
+	}
+	projectDir = strings.TrimSpace(projectDir)
+	if projectDir == "" {
+		return func() error { return nil }
+	}
+	projectDir, err := filepath.Abs(projectDir)
+	if err != nil {
+		return func() error {
+			return fmt.Errorf("resolve Eleventy local preview cleanup path: %w", err)
 		}
-		projectDir, err := eleventyLocalPreviewProjectDir(runtime)
-		if err == nil {
-			_ = os.RemoveAll(projectDir)
+	}
+	return func() error {
+		if err := os.RemoveAll(projectDir); err != nil {
+			return fmt.Errorf("remove Eleventy local preview project %q: %w", projectDir, err)
 		}
+		return nil
 	}
 }
 

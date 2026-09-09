@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -137,13 +138,16 @@ func TestEleventyLocalPreviewCommandUsesDetectedPackageManagerAndLoopbackServer(
 		ContentDir:           "content",
 		ProductionContentDir: "content",
 	}
-	cleanup := localPreviewProcessCleanup(runtime)
-	t.Cleanup(cleanup)
-
 	cmd, err := eleventyLocalPreviewCommand(context.Background(), runtime, 14123)
 	if err != nil {
 		t.Fatalf("eleventyLocalPreviewCommand() error = %v", err)
 	}
+	cleanup := localPreviewProcessCleanup(runtime, cmd.Dir)
+	t.Cleanup(func() {
+		if err := cleanup(); err != nil {
+			t.Errorf("cleanup() error = %v", err)
+		}
+	})
 	joined := strings.Join(cmd.Args, " ")
 	for _, want := range []string{"npm", "exec", "--", "node", "eleventy-local-preview.cjs", "--serve", "--input", "content", "--output", "--port", "14123", "--host", LocalPreviewBindAddress} {
 		if !strings.Contains(joined, want) {
@@ -294,6 +298,136 @@ func TestLocalPreviewManagerStopReleasesSlot(t *testing.T) {
 	}
 	if _, ok := manager.Status(site.ID); ok {
 		t.Fatal("Stop() should release the lifecycle slot")
+	}
+}
+
+func TestLocalPreviewManagerStopDoesNotWaitForCleanup(t *testing.T) {
+	lifecycle, err := NewLocalPreviewLifecycle(14100, 14100)
+	if err != nil {
+		t.Fatalf("NewLocalPreviewLifecycle() error = %v", err)
+	}
+	manager := NewLocalPreviewManager(lifecycle)
+	const siteID = "tech"
+	if _, err := lifecycle.Reserve(siteID, nil); err != nil {
+		t.Fatalf("Reserve() error = %v", err)
+	}
+	if _, err := lifecycle.Transition(siteID, LocalPreviewStarting, nil); err != nil {
+		t.Fatalf("Transition(starting) error = %v", err)
+	}
+	if _, err := lifecycle.Transition(siteID, LocalPreviewReady, nil); err != nil {
+		t.Fatalf("Transition(ready) error = %v", err)
+	}
+
+	terminated := make(chan struct{})
+	cleanupDone := make(chan struct{})
+	cleanupStarted := make(chan struct{})
+	releaseCleanup := make(chan struct{})
+	var cancelOnce sync.Once
+	process := &managedLocalPreviewProcess{
+		cmd:         &exec.Cmd{},
+		done:        terminated,
+		cleanupDone: cleanupDone,
+		cleanup: func() error {
+			close(cleanupStarted)
+			<-releaseCleanup
+			return nil
+		},
+	}
+	process.cancel = func() {
+		cancelOnce.Do(func() {
+			close(terminated)
+			go process.finishCleanup(siteID)
+		})
+	}
+	manager.setProcess(siteID, process)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if err := manager.Stop(ctx, siteID); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if _, ok := manager.Status(siteID); ok {
+		t.Fatal("Stop() should release the lifecycle slot before cleanup completes")
+	}
+	select {
+	case <-cleanupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not start after process termination")
+	}
+
+	close(releaseCleanup)
+	select {
+	case <-cleanupDone:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not complete")
+	}
+	if err := process.cleanupError(); err != nil {
+		t.Fatalf("cleanup error = %v", err)
+	}
+}
+
+func TestEleventyLocalPreviewCleanupLeavesWorkspaceOwnedProject(t *testing.T) {
+	projectDir := t.TempDir()
+	outputDir := filepath.Join(projectDir, "public")
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	outputFile := filepath.Join(outputDir, "generated.html")
+	if err := os.WriteFile(outputFile, []byte("preview"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := config.SiteRuntime{
+		Generator:              "eleventy",
+		LocalPreviewProjectDir: projectDir,
+	}
+	cleanup := localPreviewProcessCleanup(runtime, projectDir)
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup() error = %v", err)
+	}
+	if _, err := os.Stat(outputFile); err != nil {
+		t.Fatalf("workspace-owned output was removed by process cleanup: %v", err)
+	}
+}
+
+func TestEleventyLocalPreviewGenerationsDoNotShareCleanupPath(t *testing.T) {
+	repo := t.TempDir()
+	contentDir := filepath.Join(repo, "content")
+	if err := os.MkdirAll(contentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(contentDir, "one.md"), []byte("one"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{
+		ID:         "tech",
+		RepoPath:   repo,
+		Generator:  "eleventy",
+		ContentDir: "content",
+	}
+
+	firstProject, _, err := prepareEleventyLocalPreviewProject(runtime)
+	if err != nil {
+		t.Fatalf("prepare first project: %v", err)
+	}
+	secondProject, _, err := prepareEleventyLocalPreviewProject(runtime)
+	if err != nil {
+		t.Fatalf("prepare second project: %v", err)
+	}
+	if firstProject == secondProject {
+		t.Fatalf("preview generations share project path %q", firstProject)
+	}
+
+	firstCleanup := localPreviewProcessCleanup(runtime, firstProject)
+	if err := firstCleanup(); err != nil {
+		t.Fatalf("first cleanup: %v", err)
+	}
+	if _, err := os.Stat(secondProject); err != nil {
+		t.Fatalf("old cleanup removed new preview project: %v", err)
+	}
+	secondCleanup := localPreviewProcessCleanup(runtime, secondProject)
+	if err := secondCleanup(); err != nil {
+		t.Fatalf("second cleanup: %v", err)
 	}
 }
 
