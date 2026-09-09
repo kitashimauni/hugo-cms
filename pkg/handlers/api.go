@@ -354,6 +354,9 @@ func DeleteArticle(c *gin.Context) {
 	// Re-scan or remove from cache
 	// Assuming UpdateCache handles re-scan or we'll fix it
 	services.UpdateCacheForRuntime(runtime, req.Path)
+	// Keep an active site-scoped Local Live Preview workspace in sync without
+	// releasing the generator runtime for the next article.
+	syncLocalPreviewContentResource(runtime, filepath.ToSlash(filepath.Join(runtime.ContentDir, req.Path)), true)
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 

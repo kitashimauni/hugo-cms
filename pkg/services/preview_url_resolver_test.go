@@ -112,15 +112,18 @@ func TestParseHugoListAllMatchesRelativeAndAbsoluteContentPaths(t *testing.T) {
 	}
 }
 
-func TestHugoPreviewURLResolverRejectsMismatchedArticle(t *testing.T) {
+func TestHugoPreviewURLResolverAllowsAnotherArticleInSiteWorkspace(t *testing.T) {
 	resolver := &hugoPreviewURLResolver{run: func(context.Context, config.SiteRuntime, string) ([]byte, error) {
-		t.Fatal("Hugo should not run for a mismatched article")
-		return nil, nil
+		return []byte("path,url\ncontent/posts/two.md,/posts/two/\n"), nil
 	}}
 	runtime := config.SiteRuntime{ID: "tech", ContentDir: "/tmp/content", LocalPreview: config.LocalPreviewConfig{URL: "https://tech.preview.example.com/"}}
 	workspace := LocalPreviewWorkspace{ArticlePath: "posts/one.md", ContentDir: "/tmp/content"}
-	if _, err := resolver.ResolveArticleURL(context.Background(), runtime, workspace, "posts/two.md"); err == nil {
-		t.Fatal("ResolveArticleURL() should reject a mismatched article")
+	got, err := resolver.ResolveArticleURL(context.Background(), runtime, workspace, "posts/two.md")
+	if err != nil {
+		t.Fatalf("ResolveArticleURL() error = %v", err)
+	}
+	if got != "https://tech.preview.example.com/posts/two/" {
+		t.Fatalf("resolved URL = %q", got)
 	}
 }
 
@@ -268,15 +271,18 @@ func TestParseEleventyJSONMatchesRelativeInputAndDataPageURL(t *testing.T) {
 	}
 }
 
-func TestEleventyPreviewURLResolverRejectsMismatchedArticle(t *testing.T) {
+func TestEleventyPreviewURLResolverAllowsAnotherArticleInSiteWorkspace(t *testing.T) {
 	resolver := &eleventyPreviewURLResolver{run: func(context.Context, config.SiteRuntime) ([]byte, error) {
-		t.Fatal("Eleventy should not run for a mismatched article")
-		return nil, nil
+		return []byte(`[{"inputPath":"/tmp/content/posts/two.md","url":"/posts/two/"}]`), nil
 	}}
 	runtime := config.SiteRuntime{ID: "daily-blog", ContentDir: "/tmp/content", LocalPreview: config.LocalPreviewConfig{URL: "https://daily-blog.preview.example.com/"}}
 	workspace := LocalPreviewWorkspace{ArticlePath: "posts/one.md", ContentDir: "/tmp/content"}
-	if _, err := resolver.ResolveArticleURL(context.Background(), runtime, workspace, "posts/two.md"); err == nil {
-		t.Fatal("ResolveArticleURL() should reject a mismatched article")
+	got, err := resolver.ResolveArticleURL(context.Background(), runtime, workspace, "posts/two.md")
+	if err != nil {
+		t.Fatalf("ResolveArticleURL() error = %v", err)
+	}
+	if got != "https://daily-blog.preview.example.com/posts/two/" {
+		t.Fatalf("resolved URL = %q", got)
 	}
 }
 

@@ -256,9 +256,6 @@ export async function refreshLocalLivePreview() {
     const sessionID = localPreviewSessionID || createLocalPreviewSessionID();
     if (!sessionID) return null;
 
-    if (localPreviewSessionPath && localPreviewSessionPath !== requestPath) {
-        throw new Error("Local Live Preview session path changed without release");
-    }
     localPreviewSessionID = sessionID;
     localPreviewSessionPath = requestPath;
     const revision = ++localPreviewRevision;
@@ -288,6 +285,26 @@ export async function refreshLocalLivePreview() {
     }
 }
 
+// Destructive article/site operations must wait for preview writes that have
+// already been sent. The site-scoped workspace stays alive across deletion,
+// so a late update must not recreate a removed article.
+export function waitForLocalPreviewUpdates(pending = localPreviewInflight) {
+    return Promise.allSettled(Array.from(pending));
+}
+
+export function isLocalPreviewOwnershipConflict(error) {
+    return error?.status === 409;
+}
+
+// Article switching cancels the debounce timer, so explicitly send the
+// current editor payload after the previous preview writes have settled.
+// Keeping the pending set shared lets the final wait include this flush too.
+export async function flushLocalPreviewBeforeArticleSwitch(flush = refreshLocalLivePreview, pending = localPreviewInflight) {
+    await waitForLocalPreviewUpdates(pending);
+    await flush();
+    await waitForLocalPreviewUpdates(pending);
+}
+
 export async function releaseLocalLivePreview() {
     cancelLocalPreviewTimer();
     const sessionID = localPreviewSessionID;
@@ -298,7 +315,7 @@ export async function releaseLocalLivePreview() {
 
     // Do not race release against an update that the server may still be
     // applying even when the UI has moved on to another article/site.
-    await Promise.allSettled(Array.from(localPreviewInflight));
+    await waitForLocalPreviewUpdates();
     try {
         const result = await API.releaseLocalPreviewContent(sessionID);
         resetLocalPreviewClientState();
@@ -377,21 +394,32 @@ export async function loadFile(path) {
     clearAutoSaveTimer();
     cancelMarkdownPreview();
     cancelLocalPreviewTimer();
+    const switchingArticle = Boolean(currentPath && currentPath !== path);
+    if (switchingArticle) {
+        try {
+            await queueCurrentSave("Saving before article switch...");
+        } catch (e) {
+            UI.showToast("Failed to prepare article before switching: " + e.message, "error");
+            return;
+        }
+        try {
+            await flushLocalPreviewBeforeArticleSwitch();
+        } catch (e) {
+            // A 409 means another document owns the site's preview workspace.
+            // Preview sync is unavailable for this tab, but normal article
+            // navigation must remain available. Production save errors above
+            // are still blocking.
+            if (isLocalPreviewOwnershipConflict(e)) {
+                // Continue with the article switch without a preview flush.
+            } else {
+                UI.showToast("Failed to prepare article before switching: " + e.message, "error");
+                return;
+            }
+        }
+    }
     await saveQueue.catch(() => {
         // Loading another file remains possible after a failed save.
     });
-
-    // A failed cleanup can leave preview ownership alive even after the
-    // production article was deleted and currentPath was cleared. Base the
-    // retry decision on Local Preview ownership rather than editor selection.
-    if (localPreviewSessionID && localPreviewSessionPath && localPreviewSessionPath !== path) {
-        try {
-            await releaseLocalLivePreview();
-        } catch (e) {
-            UI.showToast("Failed to release Local Live Preview: " + e.message, "error");
-            return;
-        }
-    }
 
     currentPath = path;
     const display = document.getElementById('filename-display');
@@ -462,25 +490,17 @@ export async function deleteFile(refreshListCb) {
         // Let a save that already reached the server finish, then prevent all
         // queued saves for this path from starting before DELETE.
         await saveQueue;
+        // The site-scoped workspace remains alive after article deletion. Wait
+        // for already-sent preview updates before removing the production and
+        // shadow files, otherwise a late update could recreate the deleted
+        // article in the resident workspace.
+        await waitForLocalPreviewUpdates();
         await API.deleteArticle(pathToDelete);
-        // Production deletion is committed at this point. Preview cleanup is a
-        // separate best-effort operation and must never re-enable autosave for
-        // the deleted article.
+        // Production deletion is committed at this point. The server removes
+        // the corresponding file from the site-scoped preview workspace while
+        // keeping the generator runtime alive for the next article.
         deleted = true;
-
-        let previewCleanupError = null;
-        try {
-            await releaseLocalLivePreview();
-        } catch (e) {
-            previewCleanupError = e;
-            console.error("[LocalPreview] Cleanup after article deletion failed:", e);
-        }
-
-        if (previewCleanupError) {
-            UI.showToast("Article deleted, but Local Live Preview cleanup failed: " + previewCleanupError.message, "warning");
-        } else {
-            UI.showToast("Article deleted", "success");
-        }
+        UI.showToast("Article deleted", "success");
 
         if (currentPath === pathToDelete) {
             cancelMarkdownPreview();

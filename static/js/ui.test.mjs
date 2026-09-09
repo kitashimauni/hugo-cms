@@ -33,7 +33,14 @@ const {
     shouldRetryLocalPreviewNavigation,
     shouldUseLocalPreviewSplitDefault,
 } = await import("./local_preview.js");
-const { createDraftUUID, createLocalPreviewSessionID, getOrCreateDraftID } = await import("./editor.js");
+const {
+    createDraftUUID,
+    createLocalPreviewSessionID,
+    flushLocalPreviewBeforeArticleSwitch,
+    getOrCreateDraftID,
+    isLocalPreviewOwnershipConflict,
+    waitForLocalPreviewUpdates,
+} = await import("./editor.js");
 const API = await import("./api.js");
 
 describe("safeExternalURL", () => {
@@ -329,6 +336,58 @@ describe("draft IDs", () => {
         assert.equal(createLocalPreviewSessionID(createUUID), "local-1");
         assert.equal(createLocalPreviewSessionID(createUUID), "local-2");
         assert.equal(sessionValues.size, 0);
+    });
+});
+
+describe("Local Preview destructive operations", () => {
+    it("waits for in-flight updates before deleting an article", async () => {
+        let updateApplied = false;
+        let resolveUpdate;
+        const update = new Promise(resolve => {
+            resolveUpdate = () => {
+                updateApplied = true;
+                resolve();
+            };
+        });
+
+        const waiting = waitForLocalPreviewUpdates(new Set([update]));
+        await Promise.resolve();
+        assert.equal(updateApplied, false);
+
+        resolveUpdate();
+        await waiting;
+        assert.equal(updateApplied, true);
+    });
+
+    it("flushes the latest preview payload before switching articles", async () => {
+        let oldUpdateApplied = false;
+        let resolveOldUpdate;
+        const oldUpdate = new Promise(resolve => {
+            resolveOldUpdate = () => {
+                oldUpdateApplied = true;
+                resolve();
+            };
+        });
+        const pending = new Set([oldUpdate]);
+        const events = [];
+        const switching = flushLocalPreviewBeforeArticleSwitch(async () => {
+            assert.equal(oldUpdateApplied, true);
+            events.push("latest payload sent");
+            const latestUpdate = Promise.resolve().then(() => events.push("latest payload applied"));
+            pending.add(latestUpdate);
+        }, pending);
+
+        await Promise.resolve();
+        assert.deepEqual(events, []);
+        resolveOldUpdate();
+        await switching;
+        assert.deepEqual(events, ["latest payload sent", "latest payload applied"]);
+    });
+
+    it("does not block article switching on a Local Preview ownership conflict", () => {
+        assert.equal(isLocalPreviewOwnershipConflict({ status: 409 }), true);
+        assert.equal(isLocalPreviewOwnershipConflict({ status: 500 }), false);
+        assert.equal(isLocalPreviewOwnershipConflict(new Error("network failure")), false);
     });
 });
 

@@ -355,11 +355,13 @@ test("starts real Eleventy serve and broadcasts LiveReload", { skip: !hasRealEle
     assert.equal(metadata.statusCode, 200);
     assert.equal(JSON.parse(metadata.body).url, "/custom/one/");
     reloadSocket = await connectReloadSocket(port);
+    let reloadReceived = false;
     const reload = new Promise((resolve, reject) => {
       const deadline = setTimeout(() => reject(new Error("Timed out waiting for Eleventy LiveReload")), 15000);
       reloadSocket.on("data", (chunk) => {
         if (chunk.toString("utf8").includes('"type":"eleventy.reload"')) {
           clearTimeout(deadline);
+          reloadReceived = true;
           resolve();
         }
       });
@@ -369,12 +371,21 @@ test("starts real Eleventy serve and broadcasts LiveReload", { skip: !hasRealEle
     assert.equal(invalidated.statusCode, 202);
     const invalidatedMetadata = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
     assert.equal(invalidatedMetadata.statusCode, 503);
-    fs.writeFileSync(
-      fixture.article,
-      ["---", "title: Changed", "permalink: /custom/changed/", "---", "", "# {{ title }}", ""].join("\n"),
-    );
-    await reload;
-    const updatedMetadata = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    const updatedArticle = ["---", "title: Changed", "permalink: /custom/changed/", "---", "", "# {{ title }}", ""].join("\n");
+    fs.writeFileSync(fixture.article, updatedArticle);
+    // The first filesystem event can be coalesced with Eleventy's initial
+    // watch setup on a busy runner. Repeat the same write until the watcher
+    // acknowledges the rebuild so the test checks the LiveReload contract
+    // instead of depending on one platform-specific event delivery.
+    const retryWrite = setInterval(() => {
+      if (!reloadReceived) fs.writeFileSync(fixture.article, updatedArticle);
+    }, 1000);
+    try {
+      await reload;
+    } finally {
+      clearInterval(retryWrite);
+    }
+    const updatedMetadata = await waitForHTTPStatus(port, "/__hugo_cms_metadata?path=posts%2Fone.md", 200);
     assert.equal(updatedMetadata.statusCode, 200);
     assert.equal(JSON.parse(updatedMetadata.body).url, "/custom/changed/");
   } finally {

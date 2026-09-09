@@ -230,7 +230,6 @@ async function loadFile(path) {
         return;
     }
 
-    localPreviewSessionID = "";
     resetLocalPreviewArticleURL();
     if (localPreviewEnabled) {
         localPreviewFrameController?.resetDismissed();

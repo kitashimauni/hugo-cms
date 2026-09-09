@@ -58,9 +58,6 @@ func (resolver *hugoPreviewURLResolver) ResolveArticleURL(ctx context.Context, r
 	if workspace.ContentDir == "" {
 		return "", fmt.Errorf("preview workspace content directory is required")
 	}
-	if workspace.ArticlePath != filepath.ToSlash(articlePath) {
-		return "", fmt.Errorf("preview workspace article does not match request")
-	}
 	if strings.TrimSpace(runtime.ProductionContentDir) == "" {
 		runtime.ProductionContentDir = runtime.ContentDir
 	}
@@ -258,9 +255,6 @@ func (resolver *eleventyPreviewURLResolver) ResolveArticleURL(ctx context.Contex
 	}
 	if workspace.ContentDir == "" {
 		return "", fmt.Errorf("preview workspace content directory is required")
-	}
-	if workspace.ArticlePath != filepath.ToSlash(articlePath) {
-		return "", fmt.Errorf("preview workspace article does not match request")
 	}
 	if strings.TrimSpace(runtime.ProductionContentDir) == "" {
 		runtime.ProductionContentDir = runtime.ContentDir
