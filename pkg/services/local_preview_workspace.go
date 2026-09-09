@@ -67,6 +67,26 @@ type localPreviewReleaseState struct {
 	token   uint64
 }
 
+// LocalPreviewIngressLease protects a preview request from a concurrent
+// release/reclaim transition. The lease remains held through ProxyRuntime so
+// a process cannot be started with a workspace snapshot that is being
+// detached underneath it.
+type LocalPreviewIngressLease struct {
+	gate *sync.RWMutex
+	once sync.Once
+}
+
+func (lease *LocalPreviewIngressLease) Release() {
+	if lease == nil {
+		return
+	}
+	lease.once.Do(func() {
+		if lease.gate != nil {
+			lease.gate.RUnlock()
+		}
+	})
+}
+
 // LocalPreviewWorkspaceManager owns ephemeral shadow content directories and,
 // for Eleventy, a temporary project-root overlay. Hugo keeps the original
 // repository as its generator source root; Eleventy receives production
@@ -77,6 +97,7 @@ type LocalPreviewWorkspaceManager struct {
 	sessions         map[string]LocalPreviewWorkspace
 	reclaiming       map[string]localPreviewReclaimState
 	releasing        map[string]localPreviewReleaseState
+	siteGates        map[string]*sync.RWMutex
 	nextReclaimToken uint64
 	nextReleaseToken uint64
 	closed           bool
@@ -102,6 +123,7 @@ func NewLocalPreviewWorkspaceManager(root string) (*LocalPreviewWorkspaceManager
 		sessions:        make(map[string]LocalPreviewWorkspace),
 		reclaiming:      make(map[string]localPreviewReclaimState),
 		releasing:       make(map[string]localPreviewReleaseState),
+		siteGates:       make(map[string]*sync.RWMutex),
 		leaseTTL:        DefaultLocalPreviewLeaseTTL,
 		now:             time.Now,
 		removeWorkspace: os.RemoveAll,
@@ -167,6 +189,35 @@ func (m *LocalPreviewWorkspaceManager) transitionErrorLocked(siteID string) erro
 		return ErrLocalPreviewSessionReleasing
 	}
 	return nil
+}
+
+func (m *LocalPreviewWorkspaceManager) siteGate(siteID string) *sync.RWMutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	gate := m.siteGates[siteID]
+	if gate == nil {
+		gate = &sync.RWMutex{}
+		m.siteGates[siteID] = gate
+	}
+	return gate
+}
+
+// AcquireIngress returns one consistent workspace snapshot while holding the
+// site's read gate. Callers must release the returned lease after proxying the
+// request; release/reclaim claims use the corresponding write gate.
+func (m *LocalPreviewWorkspaceManager) AcquireIngress(siteID string) (LocalPreviewIngressLease, LocalPreviewWorkspace, bool, bool) {
+	gate := m.siteGate(siteID)
+	gate.RLock()
+
+	m.mu.Lock()
+	transitioning := m.closed || m.transitionErrorLocked(siteID) != nil
+	workspace, active := m.sessions[siteID]
+	m.mu.Unlock()
+	if transitioning {
+		gate.RUnlock()
+		return LocalPreviewIngressLease{}, LocalPreviewWorkspace{}, false, true
+	}
+	return LocalPreviewIngressLease{gate: gate}, workspace, active, false
 }
 
 // Update creates the site's workspace on the first request and applies the
@@ -409,23 +460,29 @@ func (m *LocalPreviewWorkspaceManager) Release(siteID, draftID string) (bool, er
 	if err := validateDraftID(draftID); err != nil {
 		return false, err
 	}
+	gate := m.siteGate(siteID)
+	gate.Lock()
 	m.mu.Lock()
 	if err := m.transitionErrorLocked(siteID); err != nil {
 		m.mu.Unlock()
+		gate.Unlock()
 		return false, err
 	}
 
 	workspace, ok := m.sessions[siteID]
 	if !ok {
 		m.mu.Unlock()
+		gate.Unlock()
 		return false, nil
 	}
 	if workspace.DraftID != draftID {
 		m.mu.Unlock()
+		gate.Unlock()
 		return false, ErrLocalPreviewSessionConflict
 	}
 	cleanupPath, err := m.detachWorkspaceLocked(siteID, workspace)
 	m.mu.Unlock()
+	gate.Unlock()
 	if err != nil {
 		return false, err
 	}
@@ -439,24 +496,35 @@ func (m *LocalPreviewWorkspaceManager) Release(siteID, draftID string) (bool, er
 // stopping the generator so a racing heartbeat cannot leave a fresh session
 // with a stopped process.
 func (m *LocalPreviewWorkspaceManager) ClaimStale(siteID string) (LocalPreviewReclaim, bool, error) {
+	gate := m.siteGate(siteID)
+	gate.Lock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.closed {
+		m.mu.Unlock()
+		gate.Unlock()
 		return LocalPreviewReclaim{}, false, fmt.Errorf("local preview workspace manager is closed")
 	}
 	if err := m.transitionErrorLocked(siteID); err != nil {
+		m.mu.Unlock()
+		gate.Unlock()
 		return LocalPreviewReclaim{}, false, err
 	}
 	workspace, ok := m.sessions[siteID]
 	if !ok {
+		m.mu.Unlock()
+		gate.Unlock()
 		return LocalPreviewReclaim{}, false, nil
 	}
 	if !m.staleLocked(workspace, m.currentTimeLocked()) {
+		m.mu.Unlock()
+		gate.Unlock()
 		return LocalPreviewReclaim{}, false, ErrLocalPreviewSessionNotStale
 	}
 	m.nextReclaimToken++
 	state := localPreviewReclaimState{draftID: workspace.DraftID, token: m.nextReclaimToken}
 	m.reclaiming[siteID] = state
+	m.mu.Unlock()
+	gate.Unlock()
 	return LocalPreviewReclaim{siteID: siteID, draftID: workspace.DraftID, token: state.token}, true, nil
 }
 
@@ -464,29 +532,36 @@ func (m *LocalPreviewWorkspaceManager) ClaimStale(siteID string) (LocalPreviewRe
 // claim. The token and draft ID prevent an old cleanup attempt from deleting a
 // different session if the lifecycle changes in the future.
 func (m *LocalPreviewWorkspaceManager) FinishReclaim(claim LocalPreviewReclaim) (bool, error) {
+	gate := m.siteGate(claim.siteID)
+	gate.Lock()
 	m.mu.Lock()
 	state, ok := m.reclaiming[claim.siteID]
 	if !ok || state.token != claim.token || state.draftID != claim.draftID {
 		m.mu.Unlock()
+		gate.Unlock()
 		return false, ErrLocalPreviewSessionReclaiming
 	}
 	workspace, ok := m.sessions[claim.siteID]
 	if !ok {
 		delete(m.reclaiming, claim.siteID)
 		m.mu.Unlock()
+		gate.Unlock()
 		return false, nil
 	}
 	if workspace.DraftID != claim.draftID {
 		m.mu.Unlock()
+		gate.Unlock()
 		return false, ErrLocalPreviewSessionConflict
 	}
 	cleanupPath, err := m.detachWorkspaceLocked(claim.siteID, workspace)
 	if err != nil {
 		m.mu.Unlock()
+		gate.Unlock()
 		return false, err
 	}
 	delete(m.reclaiming, claim.siteID)
 	m.mu.Unlock()
+	gate.Unlock()
 	m.cleanupWorkspaceAsync(claim.siteID, cleanupPath)
 	return true, nil
 }
@@ -495,12 +570,18 @@ func (m *LocalPreviewWorkspaceManager) FinishReclaim(claim LocalPreviewReclaim) 
 // used when the generator cannot be stopped; the expired session remains stale
 // and can be reclaimed again, but it still cannot be revived by heartbeat/update.
 func (m *LocalPreviewWorkspaceManager) CancelReclaim(claim LocalPreviewReclaim) {
+	gate := m.siteGate(claim.siteID)
+	gate.Lock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	state, ok := m.reclaiming[claim.siteID]
 	if ok && state.token == claim.token && state.draftID == claim.draftID {
 		delete(m.reclaiming, claim.siteID)
+		m.mu.Unlock()
+		gate.Unlock()
+		return
 	}
+	m.mu.Unlock()
+	gate.Unlock()
 }
 
 // ClaimRelease atomically marks an active workspace as releasing. The claim
@@ -510,53 +591,71 @@ func (m *LocalPreviewWorkspaceManager) ClaimRelease(siteID, draftID string) (Loc
 	if err := validateDraftID(draftID); err != nil {
 		return LocalPreviewRelease{}, false, err
 	}
+	gate := m.siteGate(siteID)
+	gate.Lock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.closed {
+		m.mu.Unlock()
+		gate.Unlock()
 		return LocalPreviewRelease{}, false, fmt.Errorf("local preview workspace manager is closed")
 	}
 	if err := m.transitionErrorLocked(siteID); err != nil {
+		m.mu.Unlock()
+		gate.Unlock()
 		return LocalPreviewRelease{}, false, err
 	}
 	workspace, ok := m.sessions[siteID]
 	if !ok {
+		m.mu.Unlock()
+		gate.Unlock()
 		return LocalPreviewRelease{}, false, nil
 	}
 	if workspace.DraftID != draftID {
+		m.mu.Unlock()
+		gate.Unlock()
 		return LocalPreviewRelease{}, false, ErrLocalPreviewSessionConflict
 	}
 	m.nextReleaseToken++
 	state := localPreviewReleaseState{draftID: draftID, token: m.nextReleaseToken}
 	m.releasing[siteID] = state
+	m.mu.Unlock()
+	gate.Unlock()
 	return LocalPreviewRelease{siteID: siteID, draftID: draftID, token: state.token}, true, nil
 }
 
 // FinishRelease detaches a claimed workspace and schedules its physical
 // removal after the session lock has been released.
 func (m *LocalPreviewWorkspaceManager) FinishRelease(claim LocalPreviewRelease) (bool, error) {
+	gate := m.siteGate(claim.siteID)
+	gate.Lock()
 	m.mu.Lock()
 	state, ok := m.releasing[claim.siteID]
 	if !ok || state.token != claim.token || state.draftID != claim.draftID {
 		m.mu.Unlock()
+		gate.Unlock()
 		return false, ErrLocalPreviewSessionReleasing
 	}
 	workspace, ok := m.sessions[claim.siteID]
 	if !ok {
 		delete(m.releasing, claim.siteID)
 		m.mu.Unlock()
+		gate.Unlock()
 		return false, nil
 	}
 	if workspace.DraftID != claim.draftID {
 		m.mu.Unlock()
+		gate.Unlock()
 		return false, ErrLocalPreviewSessionConflict
 	}
 	cleanupPath, err := m.detachWorkspaceLocked(claim.siteID, workspace)
 	if err != nil {
 		m.mu.Unlock()
+		gate.Unlock()
 		return false, err
 	}
 	delete(m.releasing, claim.siteID)
 	m.mu.Unlock()
+	gate.Unlock()
 	m.cleanupWorkspaceAsync(claim.siteID, cleanupPath)
 	return true, nil
 }
@@ -565,12 +664,18 @@ func (m *LocalPreviewWorkspaceManager) FinishRelease(claim LocalPreviewRelease) 
 // failed. This keeps the session recoverable instead of deleting it while its
 // process may still be serving the workspace.
 func (m *LocalPreviewWorkspaceManager) CancelRelease(claim LocalPreviewRelease) {
+	gate := m.siteGate(claim.siteID)
+	gate.Lock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	state, ok := m.releasing[claim.siteID]
 	if ok && state.token == claim.token && state.draftID == claim.draftID {
 		delete(m.releasing, claim.siteID)
+		m.mu.Unlock()
+		gate.Unlock()
+		return
 	}
+	m.mu.Unlock()
+	gate.Unlock()
 }
 
 // ReleaseStale atomically claims and removes an expired workspace. Callers that

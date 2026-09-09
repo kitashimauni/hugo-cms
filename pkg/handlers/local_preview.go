@@ -41,12 +41,6 @@ func localPreviewIngress(manager localPreviewRuntimeProxy) gin.HandlerFunc {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
-		if workspaceManager, workspaceErr := services.DefaultLocalPreviewWorkspaceManager(); workspaceErr == nil && workspaceManager.IsTransitioning(site.ID) {
-			// A release/reclaim claim owns the stop-and-detach window. Do not
-			// fall back to saved content or restart the old workspace process.
-			c.AbortWithStatus(http.StatusServiceUnavailable)
-			return
-		}
 		if manager == nil {
 			slog.Error("Local preview manager is not configured", "site", site.ID)
 			c.AbortWithStatus(http.StatusServiceUnavailable)
@@ -54,12 +48,25 @@ func localPreviewIngress(manager localPreviewRuntimeProxy) gin.HandlerFunc {
 		}
 
 		runtime := config.NewSiteRuntime(site)
+		var ingressLease services.LocalPreviewIngressLease
 		// Phase 3 keeps unsaved editor content outside the production working
 		// tree. Eleventy receives the workspace's project-root overlay so config,
 		// collections, passthrough and plugins keep their normal project-relative
 		// semantics.
 		if workspaceManager, workspaceErr := services.DefaultLocalPreviewWorkspaceManager(); workspaceErr == nil {
-			if workspace, ok := workspaceManager.Active(site.ID); ok {
+			var transitioning bool
+			var workspace services.LocalPreviewWorkspace
+			var active bool
+			ingressLease, workspace, active, transitioning = workspaceManager.AcquireIngress(site.ID)
+			if transitioning {
+				// A release/reclaim claim owns the stop-and-detach window. Do not
+				// fall back to saved content or restart the old workspace process.
+				ingressLease.Release()
+				c.AbortWithStatus(http.StatusServiceUnavailable)
+				return
+			}
+			defer ingressLease.Release()
+			if active {
 				runtime.ContentDir = workspace.ContentDir
 				if workspace.ProjectDir != "" {
 					runtime.LocalPreviewSourceRepoPath = runtime.RepoPath

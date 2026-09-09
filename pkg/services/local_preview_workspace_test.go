@@ -276,6 +276,56 @@ func TestLocalPreviewWorkspaceReleaseClaimBlocksMutations(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewWorkspaceIngressSnapshotCoordinatesWithRelease(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	if _, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft")); err != nil {
+		t.Fatal(err)
+	}
+
+	lease, workspace, active, transitioning := manager.AcquireIngress(runtime.ID)
+	if !active || transitioning || workspace.DraftID != "draft-1" {
+		t.Fatalf("ingress snapshot active=%v transitioning=%v draft=%q", active, transitioning, workspace.DraftID)
+	}
+
+	claimResult := make(chan struct {
+		claim   LocalPreviewRelease
+		claimed bool
+		err     error
+	}, 1)
+	go func() {
+		claim, claimed, err := manager.ClaimRelease(runtime.ID, "draft-1")
+		claimResult <- struct {
+			claim   LocalPreviewRelease
+			claimed bool
+			err     error
+		}{claim: claim, claimed: claimed, err: err}
+	}()
+	select {
+	case <-claimResult:
+		t.Fatal("release claim crossed an active ingress lease")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	lease.Release()
+	result := <-claimResult
+	if result.err != nil || !result.claimed {
+		t.Fatalf("ClaimRelease() claimed=%v err=%v", result.claimed, result.err)
+	}
+	if _, _, active, transitioning := manager.AcquireIngress(runtime.ID); !transitioning || active {
+		t.Fatal("ingress was allowed to use a releasing workspace")
+	}
+	// The check above returns an already-released lease for the transitioning
+	// case; FinishRelease owns the final detach and cleanup.
+	if released, err := manager.FinishRelease(result.claim); err != nil || !released {
+		t.Fatalf("FinishRelease() released=%v err=%v", released, err)
+	}
+}
+
 func TestLocalPreviewWorkspaceReleaseDetachesBeforeCleanup(t *testing.T) {
 	repo := makeLocalPreviewWorkspaceRepo(t)
 	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
