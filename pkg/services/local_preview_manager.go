@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -32,12 +33,12 @@ const (
 	eleventyLocalPreviewInvalidatePath = "/__hugo_cms_invalidate"
 )
 
-// IsLocalPreviewControlPath reports whether path is an internal Eleventy
-// control endpoint. These endpoints are intentionally separate from the
-// public preview content and must only be reachable through the loopback
-// connection used by the local preview manager.
-func IsLocalPreviewControlPath(path string) bool {
-	switch path {
+// IsLocalPreviewControlPath reports whether requestPath resolves to an
+// internal Eleventy control endpoint. Canonicalizing the path before matching
+// keeps dot-segment variants from reaching the loopback wrapper through the
+// public preview ingress.
+func IsLocalPreviewControlPath(requestPath string) bool {
+	switch path.Clean(requestPath) {
 	case eleventyLocalPreviewReadyPath, eleventyLocalPreviewMetadataPath, eleventyLocalPreviewInvalidatePath:
 		return true
 	default:

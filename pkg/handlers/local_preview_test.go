@@ -87,6 +87,9 @@ func TestLocalPreviewIngressHidesControlEndpoints(t *testing.T) {
 		{name: "ready", method: http.MethodGet, path: "/__hugo_cms_ready"},
 		{name: "metadata", method: http.MethodGet, path: "/__hugo_cms_metadata?path=content/posts/one.md"},
 		{name: "invalidate", method: http.MethodPost, path: "/__hugo_cms_invalidate"},
+		{name: "ready dot segment", method: http.MethodGet, path: "/foo/../__hugo_cms_ready"},
+		{name: "metadata encoded dot segment", method: http.MethodGet, path: "/foo/%2e%2e/__hugo_cms_metadata"},
+		{name: "invalidate dot segment", method: http.MethodPost, path: "/foo/../__hugo_cms_invalidate"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			request := httptest.NewRequest(testCase.method, "https://tech.preview.example.com"+testCase.path, nil)
