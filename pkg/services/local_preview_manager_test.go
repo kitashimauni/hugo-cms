@@ -165,6 +165,40 @@ func TestLocalPreviewManagerSupportsEleventy(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewManagerResolvesEleventyURLFromRunningProcess(t *testing.T) {
+	manager, site := newTestLocalPreviewManager(t)
+	site.Generator = "eleventy"
+	defer shutdownTestLocalPreviewManager(t, manager)
+
+	runtime := config.NewSiteRuntime(site)
+	workspace := LocalPreviewWorkspace{
+		SiteID:      site.ID,
+		DraftID:     "draft-1",
+		ArticlePath: "posts/one.md",
+		ContentDir:  filepath.Join(t.TempDir(), "content"),
+	}
+	got, err := manager.ResolveArticleURL(context.Background(), runtime, workspace, workspace.ArticlePath)
+	if err != nil {
+		t.Fatalf("ResolveArticleURL() error = %v", err)
+	}
+	if got != "http://tech.preview.example.com/posts/one/" {
+		t.Fatalf("resolved URL = %q", got)
+	}
+}
+
+func TestLocalPreviewManagerInvalidatesEleventyMetadata(t *testing.T) {
+	manager, site := newTestLocalPreviewManager(t)
+	site.Generator = "eleventy"
+	defer shutdownTestLocalPreviewManager(t, manager)
+
+	if _, err := manager.EnsureReady(site); err != nil {
+		t.Fatalf("EnsureReady() error = %v", err)
+	}
+	if err := manager.InvalidateArticleURL(config.NewSiteRuntime(site)); err != nil {
+		t.Fatalf("InvalidateArticleURL() error = %v", err)
+	}
+}
+
 func TestLocalPreviewManagerEnsureReadyAndProxy(t *testing.T) {
 	manager, site := newTestLocalPreviewManager(t)
 	defer shutdownTestLocalPreviewManager(t, manager)
@@ -338,11 +372,12 @@ func shutdownTestLocalPreviewManager(t *testing.T, manager *LocalPreviewManager)
 	}
 }
 
-func testLocalPreviewCommand(ctx context.Context, _ config.SiteRuntime, port int, _ string) (*exec.Cmd, error) {
+func testLocalPreviewCommand(ctx context.Context, runtime config.SiteRuntime, port int, _ string) (*exec.Cmd, error) {
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestLocalPreviewHelperProcess$")
 	cmd.Env = append(os.Environ(),
 		"HUGO_CMS_LOCAL_PREVIEW_HELPER=1",
 		"HUGO_CMS_LOCAL_PREVIEW_PORT="+strconv.Itoa(port),
+		"HUGO_CMS_LOCAL_PREVIEW_GENERATOR="+runtime.Generator,
 	)
 	return cmd, nil
 }
@@ -355,12 +390,27 @@ func TestLocalPreviewHelperProcess(t *testing.T) {
 	if err != nil {
 		os.Exit(2)
 	}
+	generator := strings.ToLower(strings.TrimSpace(os.Getenv("HUGO_CMS_LOCAL_PREVIEW_GENERATOR")))
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		os.Exit(3)
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if generator == "eleventy" && r.URL.Path == eleventyLocalPreviewInvalidatePath {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		if generator == "eleventy" && r.URL.Path == eleventyLocalPreviewReadyPath {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"status":"ready","building":false}`)
+			return
+		}
+		if generator == "eleventy" && r.URL.Path == eleventyLocalPreviewMetadataPath {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"status":"resolved","url":"/posts/one/"}`)
+			return
+		}
 		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 			hijacker, ok := w.(http.Hijacker)
 			if !ok {

@@ -426,6 +426,8 @@ GIT_USER_EMAIL="bot@hugo-cms.local"
 | Hugo新規コンテンツ | 60秒 | `hugo new` コマンド |
 | GitHubトークン検証 | 5分 | 定期的なトークン有効性確認 |
 
+Local Live PreviewのEleventy初回buildとwatch rebuild後のmetadata URL解決の待機上限はデフォルト2分です。重いsiteでは`HUGO_CMS_LOCAL_PREVIEW_STARTUP_TIMEOUT=5m`のようにGoのduration形式で変更できます。Eleventyの初回build失敗時は同じbuildを自動再試行しません。
+
 ## 設定例
 
 ### ローカル開発

@@ -145,6 +145,33 @@ func TestLocalPreviewWorkspaceRejectsStaleRevision(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewWorkspaceRunsBeforeWriteHookBeforeShadowChange(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	workspace, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hookCalled := false
+	updated, _, applied, err := manager.UpdateWithBeforeWrite(runtime, "draft-1", "one.md", 2, []byte("updated"), func() error {
+		hookCalled = true
+		assertFileContent(t, filepath.Join(workspace.ContentDir, "one.md"), "draft")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateWithBeforeWrite() error = %v", err)
+	}
+	if !hookCalled || !applied || updated.Revision != 2 {
+		t.Fatalf("hook_called=%v applied=%v revision=%d", hookCalled, applied, updated.Revision)
+	}
+	assertFileContent(t, filepath.Join(workspace.ContentDir, "one.md"), "updated")
+}
+
 func TestLocalPreviewWorkspaceRejectsOtherDraftSameSite(t *testing.T) {
 	repo := makeLocalPreviewWorkspaceRepo(t)
 	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())

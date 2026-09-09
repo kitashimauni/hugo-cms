@@ -10,6 +10,9 @@ const { createRequire } = require("node:module");
 
 const RELOAD_SCRIPT_PATH = "/__hugo_cms_reload.js";
 const RELOAD_SOCKET_PATH = "/__hugo_cms_live_reload";
+const READY_PATH = "/__hugo_cms_ready";
+const METADATA_PATH = "/__hugo_cms_metadata";
+const INVALIDATE_PATH = "/__hugo_cms_invalidate";
 const RELOAD_SCRIPT = `(() => {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(protocol + "//" + location.host + "${RELOAD_SOCKET_PATH}");
@@ -51,9 +54,71 @@ function parseArguments(argv) {
   return options;
 }
 
-function configureProjectDirectories(eleventyConfig, options, notify) {
+function normalizeMetadataPath(value) {
+  return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+/, "");
+}
+
+function createBuildState(input) {
+  const state = {
+    inputRoot: path.resolve(process.cwd(), input),
+    ready: false,
+    building: true,
+    entries: new Map(),
+    invalidationGeneration: 0,
+    activeBuildGeneration: 0,
+  };
+  state.begin = () => {
+    state.activeBuildGeneration = state.invalidationGeneration;
+    state.ready = false;
+    state.building = true;
+  };
+  state.update = (results) => {
+    const entries = new Map();
+    for (const result of Array.isArray(results) ? results : []) {
+      const inputPath = typeof result?.inputPath === "string" ? result.inputPath : "";
+      const url = typeof result?.url === "string"
+        ? result.url
+        : typeof result?.data?.page?.url === "string" ? result.data.page.url : "";
+      if (!inputPath || !url) continue;
+      const absoluteInputPath = path.resolve(process.cwd(), inputPath);
+      const relativeInputPath = path.relative(state.inputRoot, absoluteInputPath);
+      if (!relativeInputPath || relativeInputPath.startsWith(".." + path.sep) || path.isAbsolute(relativeInputPath)) {
+        continue;
+      }
+      entries.set(normalizeMetadataPath(relativeInputPath), {
+        inputPath,
+        outputPath: result.outputPath || "",
+        url,
+      });
+    }
+    state.entries = entries;
+    state.ready = state.activeBuildGeneration >= state.invalidationGeneration;
+    state.building = !state.ready;
+  };
+  state.invalidate = () => {
+    state.invalidationGeneration += 1;
+    state.ready = false;
+    state.building = true;
+    return state.invalidationGeneration;
+  };
+  state.get = (articlePath) => {
+    const absoluteArticlePath = path.resolve(state.inputRoot, articlePath);
+    const relativeArticlePath = path.relative(state.inputRoot, absoluteArticlePath);
+    if (!relativeArticlePath || relativeArticlePath.startsWith(".." + path.sep) || path.isAbsolute(relativeArticlePath)) {
+      return null;
+    }
+    return state.entries.get(normalizeMetadataPath(relativeArticlePath)) || null;
+  };
+  return state;
+}
+
+function configureProjectDirectories(eleventyConfig, options, notify, buildState) {
   if (!options.json) {
-    eleventyConfig.on("eleventy.after", notify);
+    eleventyConfig.on("eleventy.before", () => buildState?.begin());
+    eleventyConfig.on("eleventy.after", (event) => {
+      buildState?.update(event?.results);
+      notify(event);
+    });
   }
 }
 
@@ -143,10 +208,50 @@ function websocketFrame(message) {
   throw new Error("Eleventy local preview reload message is too large");
 }
 
-function createLoopbackServer(outputRoot) {
+function sendJSON(response, status, body) {
+  const payload = Buffer.from(JSON.stringify(body));
+  response.writeHead(status, {
+    "Content-Length": payload.length,
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  response.end(payload);
+}
+
+function createLoopbackServer(outputRoot, buildState = { ready: true, building: false, get: () => null }) {
   const clients = new Set();
   const server = http.createServer((request, response) => {
     const requestURL = new URL(request.url || "/", "http://127.0.0.1/");
+    if (requestURL.pathname === READY_PATH) {
+      sendJSON(response, buildState.ready ? 200 : 503, {
+        status: buildState.ready ? "ready" : "building",
+        building: buildState.building,
+      });
+      return;
+    }
+    if (requestURL.pathname === INVALIDATE_PATH) {
+      if (request.method !== "POST") {
+        sendJSON(response, 405, { status: "method_not_allowed" });
+        return;
+      }
+      const generation = buildState.invalidate?.() || 0;
+      sendJSON(response, 202, { status: "invalidated", generation });
+      return;
+    }
+    if (requestURL.pathname === METADATA_PATH) {
+      if (!buildState.ready) {
+        sendJSON(response, 503, { status: "building" });
+        return;
+      }
+      const articlePath = requestURL.searchParams.get("path");
+      const metadata = articlePath ? buildState.get(articlePath) : null;
+      if (!metadata) {
+        sendJSON(response, 404, { status: "not_found" });
+        return;
+      }
+      sendJSON(response, 200, { status: "resolved", ...metadata });
+      return;
+    }
     if (requestURL.pathname === RELOAD_SCRIPT_PATH) {
       const body = Buffer.from(RELOAD_SCRIPT);
       response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Content-Length": body.length });
@@ -189,6 +294,7 @@ function createLoopbackServer(outputRoot) {
       return;
     }
     const accept = crypto.createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+    clients.add(socket);
     socket.write([
       "HTTP/1.1 101 Switching Protocols",
       "Upgrade: websocket",
@@ -196,7 +302,6 @@ function createLoopbackServer(outputRoot) {
       `Sec-WebSocket-Accept: ${accept}`,
       "\r\n",
     ].join("\r\n"));
-    clients.add(socket);
     socket.on("close", () => clients.delete(socket));
     socket.on("error", () => clients.delete(socket));
   });
@@ -241,14 +346,16 @@ async function closeServer(server) {
 async function main(argv = process.argv.slice(2)) {
   const options = parseArguments(argv);
   const Eleventy = getEleventyClass();
-  let server;
+  const buildState = options.json ? null : createBuildState(options.input);
+  const server = options.json ? null : createLoopbackServer(options.output, buildState);
   let stopping = false;
   const notify = () => server?.broadcast({ type: "eleventy.reload" });
+  if (server) await listen(server, options.port, options.host);
   const eleventy = new Eleventy(options.input, options.output, {
     source: "script",
     runMode: options.json ? "build" : "serve",
     quietMode: options.json,
-    config: (eleventyConfig) => configureProjectDirectories(eleventyConfig, options, notify),
+    config: (eleventyConfig) => configureProjectDirectories(eleventyConfig, options, notify, buildState),
   });
 
   if (options.json) {
@@ -257,10 +364,13 @@ async function main(argv = process.argv.slice(2)) {
     return;
   }
 
-  await eleventy.init();
-  await eleventy.watch();
-  server = createLoopbackServer(options.output);
-  await listen(server, options.port, options.host);
+  try {
+    await eleventy.init();
+    await eleventy.watch();
+  } catch (error) {
+    await closeServer(server);
+    throw error;
+  }
 
   const shutdown = async () => {
     if (stopping) return;
@@ -281,6 +391,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  createBuildState,
   configureProjectDirectories,
   createLoopbackServer,
   findOutputFile,

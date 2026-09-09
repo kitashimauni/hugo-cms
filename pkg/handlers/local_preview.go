@@ -14,6 +14,14 @@ import (
 // belongs to the external preview ingress (for example Tailscale or Cloudflare
 // Access); the CMS admin session cookie is deliberately not reused here.
 func LocalPreviewIngress(manager *services.LocalPreviewManager) gin.HandlerFunc {
+	return localPreviewIngress(manager)
+}
+
+type localPreviewRuntimeProxy interface {
+	ProxyRuntime(http.ResponseWriter, *http.Request, config.SiteRuntime) error
+}
+
+func localPreviewIngress(manager localPreviewRuntimeProxy) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !config.IsLocalPreviewHostCandidate(c.Request.Host) {
 			return
@@ -22,6 +30,14 @@ func LocalPreviewIngress(manager *services.LocalPreviewManager) gin.HandlerFunc 
 		site, err := config.ResolveLocalPreviewHost(c.Request.Host)
 		if err != nil {
 			slog.Warn("Rejected local preview host", "host", c.Request.Host, "error", err)
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		if services.IsLocalPreviewControlPath(c.Request.URL.Path) {
+			// Readiness, metadata, and invalidation are loopback-only contracts
+			// between the CMS and the Eleventy wrapper. LiveReload paths remain
+			// proxyable, but the control plane must not be exposed on the
+			// externally reachable preview hostname.
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}

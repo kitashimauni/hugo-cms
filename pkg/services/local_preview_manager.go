@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,14 +22,34 @@ import (
 )
 
 const (
-	defaultLocalPreviewStartupTimeout = 15 * time.Second
-	defaultLocalPreviewProbeInterval  = 50 * time.Millisecond
-	defaultLocalPreviewStartAttempts  = 3
-	localPreviewStderrLimit           = 64 << 10
-	localPreviewHugoEnvironment       = "development"
+	defaultLocalPreviewStartupTimeout  = 2 * time.Minute
+	defaultLocalPreviewProbeInterval   = 50 * time.Millisecond
+	defaultLocalPreviewStartAttempts   = 3
+	localPreviewStderrLimit            = 64 << 10
+	localPreviewHugoEnvironment        = "development"
+	localPreviewStartupTimeoutEnv      = "HUGO_CMS_LOCAL_PREVIEW_STARTUP_TIMEOUT"
+	eleventyLocalPreviewReadyPath      = "/__hugo_cms_ready"
+	eleventyLocalPreviewMetadataPath   = "/__hugo_cms_metadata"
+	eleventyLocalPreviewInvalidatePath = "/__hugo_cms_invalidate"
 )
 
-var errLocalPreviewShuttingDown = errors.New("local preview manager is shutting down")
+// IsLocalPreviewControlPath reports whether requestPath resolves to an
+// internal Eleventy control endpoint. Canonicalizing the path before matching
+// keeps dot-segment variants from reaching the loopback wrapper through the
+// public preview ingress.
+func IsLocalPreviewControlPath(requestPath string) bool {
+	switch path.Clean(requestPath) {
+	case eleventyLocalPreviewReadyPath, eleventyLocalPreviewMetadataPath, eleventyLocalPreviewInvalidatePath:
+		return true
+	default:
+		return false
+	}
+}
+
+var (
+	errLocalPreviewShuttingDown         = errors.New("local preview manager is shutting down")
+	ErrLocalPreviewMetadataInvalidation = errors.New("local preview metadata invalidation failed")
+)
 
 type localPreviewCommandFactory func(context.Context, config.SiteRuntime, int, string) (*exec.Cmd, error)
 
@@ -56,6 +77,10 @@ func (p *managedLocalPreviewProcess) processError() error {
 	if err == nil {
 		err = errors.New("local preview process exited")
 	}
+	return p.errorWithStderr(err)
+}
+
+func (p *managedLocalPreviewProcess) errorWithStderr(err error) error {
 	if p.stderr == nil {
 		return err
 	}
@@ -138,10 +163,23 @@ func NewLocalPreviewManager(lifecycle *LocalPreviewLifecycle) *LocalPreviewManag
 		processes:      make(map[string]*managedLocalPreviewProcess),
 		siteLocks:      make(map[string]*sync.Mutex),
 		commandFactory: generatorLocalPreviewCommand,
-		startupTimeout: defaultLocalPreviewStartupTimeout,
+		startupTimeout: configuredLocalPreviewStartupTimeout(),
 		probeInterval:  defaultLocalPreviewProbeInterval,
 		startAttempts:  defaultLocalPreviewStartAttempts,
 	}
+}
+
+func configuredLocalPreviewStartupTimeout() time.Duration {
+	value := strings.TrimSpace(os.Getenv(localPreviewStartupTimeoutEnv))
+	if value == "" {
+		return defaultLocalPreviewStartupTimeout
+	}
+	timeout, err := time.ParseDuration(value)
+	if err == nil && timeout > 0 {
+		return timeout
+	}
+	slog.Warn("Invalid local preview startup timeout; using default", "value", value, "default", defaultLocalPreviewStartupTimeout)
+	return defaultLocalPreviewStartupTimeout
 }
 
 var defaultLocalPreviewManager = NewLocalPreviewManager(nil)
@@ -251,8 +289,14 @@ func (m *LocalPreviewManager) ensureReadyRuntime(runtime config.SiteRuntime) (Lo
 		m.cleanupFailedSlotLocked(runtime.ID, process, nil)
 	}
 
+	startAttempts := m.startAttempts
+	if isEleventyLocalPreviewGenerator(runtime.Generator) {
+		// A failed Eleventy initial build is usually expensive. Retrying it
+		// immediately repeats the same full build without changing the cause.
+		startAttempts = 1
+	}
 	var lastErr error
-	for attempt := 1; attempt <= m.startAttempts; attempt++ {
+	for attempt := 1; attempt <= startAttempts; attempt++ {
 		if m.isShuttingDown() {
 			return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
 		}
@@ -276,7 +320,7 @@ func (m *LocalPreviewManager) ensureReadyRuntime(runtime config.SiteRuntime) (Lo
 			return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
 		}
 
-		if err := m.waitUntilReady(process, slot.Port); err != nil {
+		if err := m.waitUntilReady(process, runtime, slot.Port); err != nil {
 			lastErr = err
 			m.cleanupFailedSlotLocked(runtime.ID, process, err)
 			continue
@@ -302,7 +346,7 @@ func (m *LocalPreviewManager) ensureReadyRuntime(runtime config.SiteRuntime) (Lo
 	if lastErr == nil {
 		lastErr = errors.New("local preview failed to start")
 	}
-	return LocalPreviewProcessSlot{}, fmt.Errorf("failed to start local preview for site %q after %d attempts: %w", runtime.ID, m.startAttempts, lastErr)
+	return LocalPreviewProcessSlot{}, fmt.Errorf("failed to start local preview for site %q after %d attempts: %w", runtime.ID, startAttempts, lastErr)
 }
 
 func (m *LocalPreviewManager) startProcess(runtime config.SiteRuntime, port int, previewURL string) (*managedLocalPreviewProcess, error) {
@@ -347,7 +391,7 @@ func (m *LocalPreviewManager) startProcess(runtime config.SiteRuntime, port int,
 	return process, nil
 }
 
-func (m *LocalPreviewManager) waitUntilReady(process *managedLocalPreviewProcess, port int) error {
+func (m *LocalPreviewManager) waitUntilReady(process *managedLocalPreviewProcess, runtime config.SiteRuntime, port int) error {
 	deadline := time.NewTimer(m.startupTimeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(m.probeInterval)
@@ -359,8 +403,20 @@ func (m *LocalPreviewManager) waitUntilReady(process *managedLocalPreviewProcess
 		case <-process.done:
 			return process.processError()
 		case <-deadline.C:
-			return fmt.Errorf("local preview did not become ready within %s", m.startupTimeout)
+			return process.errorWithStderr(fmt.Errorf("local preview did not become ready within %s", m.startupTimeout))
 		case <-ticker.C:
+			if isEleventyLocalPreviewGenerator(runtime.Generator) {
+				ready, err := localPreviewHTTPReady(address)
+				if err != nil || !ready {
+					continue
+				}
+				select {
+				case <-process.done:
+					return process.processError()
+				default:
+					return nil
+				}
+			}
 			conn, err := net.DialTimeout("tcp", address, 250*time.Millisecond)
 			if err != nil {
 				continue
@@ -374,6 +430,20 @@ func (m *LocalPreviewManager) waitUntilReady(process *managedLocalPreviewProcess
 			}
 		}
 	}
+}
+
+func localPreviewHTTPReady(address string) (bool, error) {
+	client := &http.Client{Timeout: 250 * time.Millisecond}
+	request, err := http.NewRequest(http.MethodGet, "http://"+address+eleventyLocalPreviewReadyPath, nil)
+	if err != nil {
+		return false, err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return false, err
+	}
+	defer response.Body.Close()
+	return response.StatusCode == http.StatusOK, nil
 }
 
 func (m *LocalPreviewManager) cleanupFailedSlotLocked(siteID string, process *managedLocalPreviewProcess, processErr error) {
@@ -498,6 +568,71 @@ func (m *LocalPreviewManager) Shutdown(ctx context.Context) error {
 
 func (m *LocalPreviewManager) Proxy(w http.ResponseWriter, r *http.Request, site config.SiteConfig) error {
 	return m.ProxyRuntime(w, r, config.NewSiteRuntime(site))
+}
+
+// InvalidateArticleURL marks the next Eleventy watch build as required before
+// shadow content is written. A running process is optional: a process started
+// after the write will always build the latest workspace content from scratch.
+func (m *LocalPreviewManager) InvalidateArticleURL(runtime config.SiteRuntime) error {
+	if !isEleventyLocalPreviewGenerator(runtime.Generator) {
+		return nil
+	}
+	process := m.process(runtime.ID)
+	if process == nil || process.exited() {
+		return nil
+	}
+	slot, ok := m.Status(runtime.ID)
+	if !ok || slot.State != LocalPreviewReady {
+		return nil
+	}
+	address := net.JoinHostPort(LocalPreviewBindAddress, strconv.Itoa(slot.Port))
+	request, err := http.NewRequest(http.MethodPost, "http://"+address+eleventyLocalPreviewInvalidatePath, nil)
+	if err != nil {
+		return fmt.Errorf("%w: create request: %v", ErrLocalPreviewMetadataInvalidation, err)
+	}
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	response, err := client.Do(request)
+	if err != nil {
+		if process.exited() {
+			return nil
+		}
+		return fmt.Errorf("%w: %v", ErrLocalPreviewMetadataInvalidation, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("%w: endpoint returned %s", ErrLocalPreviewMetadataInvalidation, response.Status)
+	}
+	return nil
+}
+
+// ResolveArticleURL resolves an Eleventy article through the metadata map kept
+// by the already-running preview process. Hugo keeps its existing resolver
+// because its list command is inexpensive and already reflects its watch state.
+func (m *LocalPreviewManager) ResolveArticleURL(ctx context.Context, runtime config.SiteRuntime, workspace LocalPreviewWorkspace, articlePath string) (string, error) {
+	if !isEleventyLocalPreviewGenerator(runtime.Generator) {
+		return ResolvePreviewArticleURL(ctx, runtime, workspace, articlePath)
+	}
+
+	articlePath = filepath.Clean(strings.TrimSpace(articlePath))
+	if articlePath == "." || filepath.IsAbs(articlePath) {
+		return "", fmt.Errorf("invalid preview article path")
+	}
+	if workspace.ContentDir == "" {
+		return "", fmt.Errorf("preview workspace content directory is required")
+	}
+	if workspace.ArticlePath != filepath.ToSlash(articlePath) {
+		return "", fmt.Errorf("preview workspace article does not match request")
+	}
+
+	slot, err := m.ensureReadyRuntime(runtime)
+	if err != nil {
+		return "", fmt.Errorf("ensure Eleventy local preview ready: %w", err)
+	}
+	process := m.process(runtime.ID)
+	if process == nil || process.exited() {
+		return "", fmt.Errorf("Eleventy local preview process is not running")
+	}
+	return resolveRunningEleventyArticleURL(ctx, runtime, slot.Port, articlePath)
 }
 
 func (m *LocalPreviewManager) ProxyRuntime(w http.ResponseWriter, r *http.Request, runtime config.SiteRuntime) error {
