@@ -29,6 +29,9 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install Eleventy integration fixture
+        run: npm install --prefix scripts/fixtures/eleventy-programmatic --no-package-lock --ignore-scripts
+
       - name: Go test
         run: go test ./...
 
