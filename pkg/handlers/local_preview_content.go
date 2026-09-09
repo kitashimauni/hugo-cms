@@ -69,7 +69,8 @@ func UpdateLocalPreviewContent(c *gin.Context) {
 		case errors.Is(err, services.ErrLocalPreviewSessionConflict),
 			errors.Is(err, services.ErrLocalPreviewSessionMismatch),
 			errors.Is(err, services.ErrLocalPreviewSessionExpired),
-			errors.Is(err, services.ErrLocalPreviewSessionReclaiming):
+			errors.Is(err, services.ErrLocalPreviewSessionReclaiming),
+			errors.Is(err, services.ErrLocalPreviewSessionReleasing):
 			ErrorConflict(c, err.Error())
 		case errors.Is(err, services.ErrLocalPreviewMetadataInvalidation):
 			ErrorInternal(c, "Failed to synchronize Local Live Preview metadata")
@@ -119,13 +120,19 @@ func ReleaseLocalPreviewContent(c *gin.Context) {
 		ErrorInternal(c, "Local preview workspace is unavailable")
 		return
 	}
-	workspace, active := workspaceManager.Active(runtime.ID)
-	if !active {
-		c.JSON(http.StatusOK, gin.H{"status": "released", "released": false})
+	claim, claimed, err := workspaceManager.ClaimRelease(runtime.ID, req.DraftID)
+	if err != nil {
+		if errors.Is(err, services.ErrLocalPreviewSessionConflict) ||
+			errors.Is(err, services.ErrLocalPreviewSessionReclaiming) ||
+			errors.Is(err, services.ErrLocalPreviewSessionReleasing) {
+			ErrorConflict(c, err.Error())
+			return
+		}
+		ErrorBadRequest(c, err.Error())
 		return
 	}
-	if workspace.DraftID != req.DraftID {
-		ErrorConflict(c, services.ErrLocalPreviewSessionConflict.Error())
+	if !claimed {
+		c.JSON(http.StatusOK, gin.H{"status": "released", "released": false})
 		return
 	}
 
@@ -134,17 +141,22 @@ func ReleaseLocalPreviewContent(c *gin.Context) {
 	cancel()
 	if stopErr != nil {
 		slog.Error("Failed to stop Local Live Preview process", "site", runtime.ID, "error", stopErr)
+		workspaceManager.CancelRelease(claim)
 		ErrorInternal(c, "Failed to stop Local Live Preview process")
 		return
 	}
 
-	released, err := workspaceManager.Release(runtime.ID, req.DraftID)
+	released, err := workspaceManager.FinishRelease(claim)
 	if err != nil {
-		if errors.Is(err, services.ErrLocalPreviewSessionConflict) || errors.Is(err, services.ErrLocalPreviewSessionReclaiming) {
+		workspaceManager.CancelRelease(claim)
+		slog.Error("Failed to detach Local Live Preview workspace", "site", runtime.ID, "error", err)
+		if errors.Is(err, services.ErrLocalPreviewSessionConflict) ||
+			errors.Is(err, services.ErrLocalPreviewSessionReclaiming) ||
+			errors.Is(err, services.ErrLocalPreviewSessionReleasing) {
 			ErrorConflict(c, err.Error())
 			return
 		}
-		ErrorBadRequest(c, err.Error())
+		ErrorInternal(c, "Failed to release Local Live Preview workspace")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "released", "released": released})

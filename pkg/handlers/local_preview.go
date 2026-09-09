@@ -41,6 +41,12 @@ func localPreviewIngress(manager localPreviewRuntimeProxy) gin.HandlerFunc {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
+		if workspaceManager, workspaceErr := services.DefaultLocalPreviewWorkspaceManager(); workspaceErr == nil && workspaceManager.IsTransitioning(site.ID) {
+			// A release/reclaim claim owns the stop-and-detach window. Do not
+			// fall back to saved content or restart the old workspace process.
+			c.AbortWithStatus(http.StatusServiceUnavailable)
+			return
+		}
 		if manager == nil {
 			slog.Error("Local preview manager is not configured", "site", site.ID)
 			c.AbortWithStatus(http.StatusServiceUnavailable)

@@ -169,7 +169,7 @@ Local Preview ownership IDはbrowser document/tabのmemory上だけに保持し�
 - stale workspaceは明示的なreclaim APIでCMS再起動なしに回収可能
 - liveなsessionはreclaimできない
 
-recovery時もgenerator processを先にstopしてからshadow workspaceを削除します。
+recovery時もgenerator processを先にstopします。release/reclaim中はsessionを論理的にdetachし、workspace rootを一意なcleanup領域へrenameしてから物理削除を非同期で実行します。その間のpreview ingressやsession更新は古いworkspaceを再利用せず、cleanupの遅延が記事切替の応答をブロックしないようにします。
 
 ## UI
 
@@ -220,7 +220,8 @@ article/site切替時はin-flight update完了を待ってsessionをreleaseし�
 
 ```text
 generator process stop
-  -> shadow workspace delete
+  -> workspace root detach/rename
+  -> shadow workspace delete (async)
 ```
 
 CMS shutdownでもgenerator child停止後にtemporary workspaceとEleventy temporary outputを削除します。workspaceは`PREVIEW_STATE_DIR`へ永続化しません。

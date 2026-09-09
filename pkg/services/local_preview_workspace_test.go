@@ -239,6 +239,111 @@ func TestLocalPreviewWorkspaceReleaseProtectsActiveDraft(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewWorkspaceReleaseClaimBlocksMutations(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	if _, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("draft")); err != nil {
+		t.Fatal(err)
+	}
+
+	claim, claimed, err := manager.ClaimRelease(runtime.ID, "draft-1")
+	if err != nil || !claimed {
+		t.Fatalf("ClaimRelease() claimed=%v err=%v", claimed, err)
+	}
+	if _, active, _ := manager.Status(runtime.ID); active {
+		t.Fatal("releasing session is still reported as active")
+	}
+	if _, err := manager.Heartbeat(runtime.ID, "draft-1"); !errors.Is(err, ErrLocalPreviewSessionReleasing) {
+		t.Fatalf("Heartbeat() error = %v, want releasing", err)
+	}
+	if _, _, _, err := manager.Update(runtime, "draft-1", "one.md", 2, []byte("race")); !errors.Is(err, ErrLocalPreviewSessionReleasing) {
+		t.Fatalf("Update() error = %v, want releasing", err)
+	}
+	if _, err := manager.Release(runtime.ID, "draft-1"); !errors.Is(err, ErrLocalPreviewSessionReleasing) {
+		t.Fatalf("Release() error = %v, want releasing", err)
+	}
+	if _, _, err := manager.ClaimRelease(runtime.ID, "draft-1"); !errors.Is(err, ErrLocalPreviewSessionReleasing) {
+		t.Fatalf("second ClaimRelease() error = %v, want releasing", err)
+	}
+
+	released, err := manager.FinishRelease(claim)
+	if err != nil || !released {
+		t.Fatalf("FinishRelease() released=%v err=%v", released, err)
+	}
+}
+
+func TestLocalPreviewWorkspaceReleaseDetachesBeforeCleanup(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	workspace, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cleanupStarted := make(chan struct{})
+	cleanupRelease := make(chan struct{}, 1)
+	cleanupFinished := make(chan struct{})
+	manager.removeWorkspace = func(path string) error {
+		close(cleanupStarted)
+		<-cleanupRelease
+		err := os.RemoveAll(path)
+		close(cleanupFinished)
+		return err
+	}
+
+	type releaseResult struct {
+		released bool
+		err      error
+	}
+	result := make(chan releaseResult, 1)
+	go func() {
+		released, err := manager.Release(runtime.ID, "draft-1")
+		result <- releaseResult{released: released, err: err}
+	}()
+
+	select {
+	case <-cleanupStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("workspace cleanup did not start")
+	}
+	select {
+	case got := <-result:
+		if got.err != nil || !got.released {
+			t.Fatalf("Release() released=%v err=%v", got.released, got.err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		cleanupRelease <- struct{}{}
+		t.Fatal("Release() waited for physical cleanup")
+	}
+	if _, err := os.Stat(workspace.ContentDir); !os.IsNotExist(err) {
+		t.Fatalf("detached workspace still exists at its active path: %v", err)
+	}
+
+	// Reusing the same site/draft path while the old tree is still being
+	// removed must be safe: cleanup owns the renamed old tree, not this one.
+	next, _, _, err := manager.Update(runtime, "draft-1", "one.md", 1, []byte("new"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupRelease <- struct{}{}
+	select {
+	case <-cleanupFinished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("workspace cleanup did not finish")
+	}
+	if got, err := os.ReadFile(filepath.Join(next.ContentDir, "one.md")); err != nil || string(got) != "new" {
+		t.Fatalf("new workspace content = %q err=%v", got, err)
+	}
+}
+
 func TestLocalPreviewWorkspaceLeaseAndHeartbeat(t *testing.T) {
 	repo := makeLocalPreviewWorkspaceRepo(t)
 	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
