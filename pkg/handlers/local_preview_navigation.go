@@ -17,8 +17,7 @@ type localPreviewNavigateRequest struct {
 }
 
 type localPreviewNavigationWorkspaceManager interface {
-	Status(siteID string) (services.LocalPreviewWorkspace, bool)
-	Touch(siteID string)
+	AcquireNavigation(siteID string) (services.LocalPreviewIngressLease, services.LocalPreviewWorkspace, bool, bool)
 }
 
 type localPreviewNavigationDependencies struct {
@@ -63,12 +62,16 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 			return
 		}
 	}
-	workspace, active := workspaceManager.Status(runtime.ID)
+	navigationLease, workspace, active, transitioning := workspaceManager.AcquireNavigation(runtime.ID)
+	defer navigationLease.Release()
+	if transitioning {
+		c.AbortWithStatus(http.StatusServiceUnavailable)
+		return
+	}
 	if !active {
 		ErrorConflict(c, "Local Live Preview workspace is not active")
 		return
 	}
-	workspaceManager.Touch(runtime.ID)
 	if dependencies.resolveArticleURL == nil {
 		ErrorInternal(c, "Local preview URL resolver is unavailable")
 		return

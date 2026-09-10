@@ -266,6 +266,14 @@ export function waitForLocalPreviewUpdates(pending = localPreviewInflight) {
     return Promise.allSettled(Array.from(pending));
 }
 
+// Stop is destructive for the site-scoped runtime. Cancel delayed writes and
+// drain requests already sent before asking the server to stop and detach it.
+export async function prepareLocalLivePreviewStop() {
+    cancelLocalPreviewTimer();
+    await waitForLocalPreviewUpdates();
+    resetLocalPreviewClientState();
+}
+
 // Article switching cancels the debounce timer, so explicitly send the
 // current editor payload after the previous preview writes have settled.
 // Keeping the pending set shared lets the final wait include this flush too.

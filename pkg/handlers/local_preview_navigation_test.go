@@ -12,22 +12,19 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 type fakeLocalPreviewNavigationWorkspaceManager struct {
-	workspace services.LocalPreviewWorkspace
-	active    bool
-	touched   bool
+	workspace     services.LocalPreviewWorkspace
+	active        bool
+	transitioning bool
 }
 
-func (m *fakeLocalPreviewNavigationWorkspaceManager) Status(string) (services.LocalPreviewWorkspace, bool) {
-	return m.workspace, m.active
-}
-
-func (m *fakeLocalPreviewNavigationWorkspaceManager) Touch(string) {
-	m.touched = true
+func (m *fakeLocalPreviewNavigationWorkspaceManager) AcquireNavigation(string) (services.LocalPreviewIngressLease, services.LocalPreviewWorkspace, bool, bool) {
+	return services.LocalPreviewIngressLease{}, m.workspace, m.active, m.transitioning
 }
 
 func TestNavigateLocalPreviewUsesShadowContentAndPreservesProductionContent(t *testing.T) {
@@ -134,8 +131,74 @@ func TestNavigateLocalPreviewReturnsErrorWhenResolverFails(t *testing.T) {
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", response.Code)
 	}
-	if !workspaceManager.touched {
-		t.Fatal("navigation did not record site activity")
+}
+
+func TestNavigateLocalPreviewHoldsReadGateDuringURLResolution(t *testing.T) {
+	site, runtime := localPreviewNavigationTestSite(t)
+	configureLocalPreviewNavigationTestSite(t, site)
+	manager, err := services.NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Shutdown() })
+	if _, _, _, err := manager.Update(runtime, "one.md", 1, []byte("draft")); err != nil {
+		t.Fatal(err)
+	}
+	resolverStarted := make(chan struct{})
+	allowResolve := make(chan struct{})
+	requestDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		requestDone <- executeLocalPreviewNavigationRequest(t, site.ID, localPreviewNavigationDependencies{
+			workspaceManager: manager,
+			resolveArticleURL: func(context.Context, config.SiteRuntime, services.LocalPreviewWorkspace, string) (string, error) {
+				close(resolverStarted)
+				<-allowResolve
+				return "https://tech.preview.example.com/one/", nil
+			},
+		}, "one.md")
+	}()
+	select {
+	case <-resolverStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("URL resolver did not start")
+	}
+	cleanupDone := make(chan *struct {
+		lease   *services.LocalPreviewCleanupLease
+		claimed bool
+		err     error
+	}, 1)
+	go func() {
+		lease, claimed, err := manager.BeginCleanup(site.ID)
+		cleanupDone <- &struct {
+			lease   *services.LocalPreviewCleanupLease
+			claimed bool
+			err     error
+		}{lease: &lease, claimed: claimed, err: err}
+	}()
+	select {
+	case <-cleanupDone:
+		t.Fatal("cleanup crossed the navigation read lease")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(allowResolve)
+	select {
+	case response := <-requestDone:
+		if response.Code != http.StatusOK {
+			t.Fatalf("navigation status = %d, body = %s", response.Code, response.Body.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("navigation did not finish")
+	}
+	select {
+	case result := <-cleanupDone:
+		if result.err != nil || !result.claimed {
+			t.Fatalf("cleanup claimed=%v err=%v", result.claimed, result.err)
+		}
+		if _, err := manager.FinishCleanup(result.lease); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanup did not acquire the gate after navigation")
 	}
 }
 

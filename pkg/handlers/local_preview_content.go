@@ -60,6 +60,10 @@ func UpdateLocalPreviewContent(c *gin.Context) {
 		return services.DefaultLocalPreviewManager().InvalidateArticleURL(runtime)
 	})
 	if err != nil {
+		if errors.Is(err, services.ErrLocalPreviewCleanupTransition) {
+			c.AbortWithStatus(http.StatusServiceUnavailable)
+			return
+		}
 		if errors.Is(err, services.ErrLocalPreviewMetadataInvalidation) {
 			ErrorInternal(c, "Failed to synchronize Local Live Preview metadata")
 			return

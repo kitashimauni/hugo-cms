@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 	"hugo-cms/pkg/config"
 	"io"
@@ -14,6 +15,10 @@ import (
 )
 
 const DefaultLocalPreviewIdleTimeout = 30 * time.Minute
+
+// ErrLocalPreviewCleanupTransition indicates that a request waited behind a
+// cleanup generation and must not recreate the workspace after cleanup.
+var ErrLocalPreviewCleanupTransition = errors.New("local preview cleanup transition in progress")
 
 // LocalPreviewWorkspace is the site-scoped unsaved-content workspace. It has
 // no browser owner: every editor tab may update the same site workspace and
@@ -49,10 +54,11 @@ func (lease *LocalPreviewIngressLease) Release() {
 // stopped and the shadow workspace is detached. It is a lifecycle lock, not a
 // browser/session ownership claim.
 type LocalPreviewCleanupLease struct {
-	manager *LocalPreviewWorkspaceManager
-	siteID  string
-	gate    *sync.RWMutex
-	once    sync.Once
+	manager    *LocalPreviewWorkspaceManager
+	siteID     string
+	gate       *sync.RWMutex
+	generation uint64
+	once       sync.Once
 }
 
 func (lease *LocalPreviewCleanupLease) Release() {
@@ -62,6 +68,13 @@ func (lease *LocalPreviewCleanupLease) Release() {
 	lease.once.Do(func() {
 		if lease.gate != nil {
 			lease.gate.Unlock()
+		}
+		if lease.manager != nil {
+			lease.manager.mu.Lock()
+			if lease.manager.generations[lease.siteID] == lease.generation {
+				delete(lease.manager.cleanupActive, lease.siteID)
+			}
+			lease.manager.mu.Unlock()
 		}
 	})
 }
@@ -75,6 +88,8 @@ type LocalPreviewWorkspaceManager struct {
 	workspaces      map[string]LocalPreviewWorkspace
 	activities      map[string]time.Time
 	siteGates       map[string]*sync.RWMutex
+	generations     map[string]uint64
+	cleanupActive   map[string]bool
 	closed          bool
 	now             func() time.Time
 	removeWorkspace func(string) error
@@ -97,6 +112,8 @@ func NewLocalPreviewWorkspaceManager(root string) (*LocalPreviewWorkspaceManager
 		workspaces:      make(map[string]LocalPreviewWorkspace),
 		activities:      make(map[string]time.Time),
 		siteGates:       make(map[string]*sync.RWMutex),
+		generations:     make(map[string]uint64),
+		cleanupActive:   make(map[string]bool),
 		now:             time.Now,
 		removeWorkspace: os.RemoveAll,
 	}, nil
@@ -141,15 +158,24 @@ func (m *LocalPreviewWorkspaceManager) siteGate(siteID string) *sync.RWMutex {
 	return gate
 }
 
+func (m *LocalPreviewWorkspaceManager) acquireReadGate(siteID string) (*sync.RWMutex, uint64, bool) {
+	gate := m.siteGate(siteID)
+	m.mu.Lock()
+	generation := m.generations[siteID]
+	transitioning := m.cleanupActive[siteID]
+	m.mu.Unlock()
+	gate.RLock()
+	return gate, generation, transitioning
+}
+
 // AcquireIngress returns one consistent workspace snapshot while holding the
 // site's read gate. Cleanup takes the corresponding write gate, so an ingress
 // request cannot capture a workspace while it is being detached.
 func (m *LocalPreviewWorkspaceManager) AcquireIngress(siteID string) (LocalPreviewIngressLease, LocalPreviewWorkspace, bool, bool) {
-	gate := m.siteGate(siteID)
-	gate.RLock()
+	gate, generation, transitioning := m.acquireReadGate(siteID)
 
 	m.mu.Lock()
-	if m.closed {
+	if m.closed || transitioning || m.generations[siteID] != generation {
 		m.mu.Unlock()
 		gate.RUnlock()
 		return LocalPreviewIngressLease{}, LocalPreviewWorkspace{}, false, true
@@ -165,15 +191,24 @@ func (m *LocalPreviewWorkspaceManager) AcquireIngress(siteID string) (LocalPrevi
 	return LocalPreviewIngressLease{gate: gate}, workspace, active, false
 }
 
+// AcquireNavigation protects the active workspace and generator URL
+// resolution from a concurrent cleanup transition. The lease must be held
+// until URL resolution has completed.
+func (m *LocalPreviewWorkspaceManager) AcquireNavigation(siteID string) (LocalPreviewIngressLease, LocalPreviewWorkspace, bool, bool) {
+	return m.AcquireIngress(siteID)
+}
+
 // Touch records activity for a site runtime even when it has not created a
 // shadow workspace yet, such as preview access using saved content.
 func (m *LocalPreviewWorkspaceManager) Touch(siteID string) {
 	if strings.TrimSpace(siteID) == "" {
 		return
 	}
+	gate, generation, transitioning := m.acquireReadGate(siteID)
+	defer gate.RUnlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.closed {
+	if !m.closed && !transitioning && m.generations[siteID] == generation {
 		m.activities[siteID] = m.currentTimeLocked()
 	}
 }
@@ -212,13 +247,15 @@ func (m *LocalPreviewWorkspaceManager) update(runtime config.SiteRuntime, articl
 		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("invalid local preview article path")
 	}
 
-	gate := m.siteGate(runtime.ID)
-	gate.RLock()
+	gate, generation, transitioning := m.acquireReadGate(runtime.ID)
 	defer gate.RUnlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("local preview workspace manager is closed")
+	}
+	if transitioning || m.generations[runtime.ID] != generation {
+		return LocalPreviewWorkspace{}, false, false, ErrLocalPreviewCleanupTransition
 	}
 	now := m.currentTimeLocked()
 	workspace, exists := m.workspaces[runtime.ID]
@@ -353,12 +390,16 @@ func (m *LocalPreviewWorkspaceManager) beginCleanup(siteID string, idleTimeout t
 			return LocalPreviewCleanupLease{}, false, nil
 		}
 	}
-	m.mu.Unlock()
 	if closed {
+		m.mu.Unlock()
 		gate.Unlock()
 		return LocalPreviewCleanupLease{}, false, fmt.Errorf("local preview workspace manager is closed")
 	}
-	return LocalPreviewCleanupLease{manager: m, siteID: siteID, gate: gate}, true, nil
+	m.generations[siteID]++
+	m.cleanupActive[siteID] = true
+	generation := m.generations[siteID]
+	m.mu.Unlock()
+	return LocalPreviewCleanupLease{manager: m, siteID: siteID, gate: gate, generation: generation}, true, nil
 }
 
 func (m *LocalPreviewWorkspaceManager) FinishCleanup(lease *LocalPreviewCleanupLease) (bool, error) {
@@ -411,13 +452,15 @@ func (m *LocalPreviewWorkspaceManager) SyncContentResource(runtime config.SiteRu
 		return false, nil
 	}
 
-	gate := m.siteGate(runtime.ID)
-	gate.RLock()
+	gate, generation, transitioning := m.acquireReadGate(runtime.ID)
 	defer gate.RUnlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return false, fmt.Errorf("local preview workspace manager is closed")
+	}
+	if transitioning || m.generations[runtime.ID] != generation {
+		return false, ErrLocalPreviewCleanupTransition
 	}
 	workspace, active := m.workspaces[runtime.ID]
 	if !active {

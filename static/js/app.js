@@ -601,6 +601,7 @@ async function stopLocalLivePreview() {
     if (!localPreviewEnabled || localPreviewOperationInProgress) return;
     localPreviewOperationInProgress = true;
     try {
+        await Editor.prepareLocalLivePreviewStop();
         await API.stopLocalPreviewContent();
         resetLocalPreviewArticleURL();
         closeEmbeddedLocalPreview();

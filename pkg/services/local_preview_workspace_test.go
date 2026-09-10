@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"hugo-cms/pkg/config"
 	"os"
 	"path/filepath"
@@ -140,6 +141,120 @@ func TestLocalPreviewWorkspaceCleanupGateBlocksIngressAndUpdates(t *testing.T) {
 	}
 	if _, err := manager.FinishCleanup(cleanup); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLocalPreviewCleanupRejectsRequestsThatArriveDuringCleanup(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	if _, _, _, err := manager.Update(runtime, "one.md", 1, []byte("draft")); err != nil {
+		t.Fatal(err)
+	}
+	cleanup, claimed, err := manager.BeginCleanup(runtime.ID)
+	if err != nil || !claimed {
+		t.Fatalf("BeginCleanup() claimed=%v err=%v", claimed, err)
+	}
+
+	type ingressResult struct{ transitioning bool }
+	ingressDone := make(chan ingressResult, 1)
+	go func() {
+		lease, _, _, transitioning := manager.AcquireIngress(runtime.ID)
+		lease.Release()
+		ingressDone <- ingressResult{transitioning: transitioning}
+	}()
+	updateDone := make(chan error, 1)
+	go func() {
+		_, _, _, updateErr := manager.Update(runtime, "one.md", 2, []byte("late"))
+		updateDone <- updateErr
+	}()
+	select {
+	case <-ingressDone:
+		t.Fatal("ingress completed while cleanup lease was held")
+	case <-time.After(50 * time.Millisecond):
+	}
+	select {
+	case <-updateDone:
+		t.Fatal("update completed while cleanup lease was held")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	if _, err := manager.FinishCleanup(&cleanup); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-ingressDone:
+		if !result.transitioning {
+			t.Fatal("ingress queued during cleanup was allowed to proceed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ingress did not finish after cleanup")
+	}
+	select {
+	case updateErr := <-updateDone:
+		if !errors.Is(updateErr, ErrLocalPreviewCleanupTransition) {
+			t.Fatalf("queued update error = %v, want cleanup transition", updateErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("update did not finish after cleanup")
+	}
+	if _, active := manager.Status(runtime.ID); active {
+		t.Fatal("queued requests recreated the detached workspace")
+	}
+}
+
+func TestLocalPreviewNavigationReadGateBlocksIdleCleanup(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return base }
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	if _, _, _, err := manager.Update(runtime, "one.md", 1, []byte("draft")); err != nil {
+		t.Fatal(err)
+	}
+	navigation, _, active, transitioning := manager.AcquireNavigation(runtime.ID)
+	if !active || transitioning {
+		navigation.Release()
+		t.Fatalf("navigation active=%v transitioning=%v", active, transitioning)
+	}
+	manager.now = func() time.Time { return base.Add(DefaultLocalPreviewIdleTimeout + time.Second) }
+	if got := manager.IdleSites(DefaultLocalPreviewIdleTimeout); len(got) != 1 || got[0] != runtime.ID {
+		navigation.Release()
+		t.Fatalf("idle sites = %v, want [%s]", got, runtime.ID)
+	}
+
+	cleanupDone := make(chan *LocalPreviewCleanupLease, 1)
+	go func() {
+		lease, claimed, err := manager.BeginIdleCleanup(runtime.ID, DefaultLocalPreviewIdleTimeout)
+		if err != nil || !claimed {
+			cleanupDone <- nil
+			return
+		}
+		cleanupDone <- &lease
+	}()
+	select {
+	case <-cleanupDone:
+		navigation.Release()
+		t.Fatal("idle cleanup crossed the navigation read lease")
+	case <-time.After(50 * time.Millisecond):
+	}
+	navigation.Release()
+	select {
+	case cleanup := <-cleanupDone:
+		if cleanup == nil {
+			t.Fatal("idle cleanup did not claim the site")
+		}
+		if _, err := manager.FinishCleanup(cleanup); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("idle cleanup did not acquire the gate after navigation")
 	}
 }
 
