@@ -35,7 +35,6 @@ func TestHugoPreviewURLResolverUsesShadowContentAndLocalOrigin(t *testing.T) {
 	}
 	workspace := LocalPreviewWorkspace{
 		SiteID:      "tech",
-		DraftID:     "draft-1",
 		ArticlePath: "posts/one.md",
 		ContentDir:  runtime.ContentDir,
 		Revision:    9,
@@ -137,7 +136,6 @@ func TestEleventyPreviewURLResolverUsesGeneratorMetadataAndLocalOrigin(t *testin
 	}
 	workspace := LocalPreviewWorkspace{
 		SiteID:      runtime.ID,
-		DraftID:     "draft-1",
 		ArticlePath: "posts/one.md",
 		ContentDir:  runtime.ContentDir,
 		Revision:    3,

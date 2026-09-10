@@ -14,9 +14,6 @@ let previewController = null;
 let previewRevision = 0;
 let localPreviewTimer = null;
 let localPreviewRevision = 0;
-let localPreviewSessionID = "";
-let localPreviewSessionPath = "";
-let localPreviewConflictNotified = false;
 const localPreviewInflight = new Set();
 
 const PREVIEW_DEBOUNCE_MS = 180;
@@ -61,13 +58,6 @@ export function getOrCreateDraftID(siteID, path, storage = window.sessionStorage
         storage.setItem(key, draftID);
     }
     return draftID;
-}
-
-// Local Preview ownership is scoped to this browser document/tab. Do not use
-// sessionStorage here: duplicated tabs can inherit the same sessionStorage and
-// would then bypass the server's same-site session conflict boundary.
-export function createLocalPreviewSessionID(createUUID = createDraftUUID) {
-    return createUUID();
 }
 
 export function getDraftID() {
@@ -234,9 +224,6 @@ function cancelLocalPreviewTimer() {
 
 function resetLocalPreviewClientState() {
     localPreviewRevision = 0;
-    localPreviewSessionID = "";
-    localPreviewSessionPath = "";
-    localPreviewConflictNotified = false;
 }
 
 function scheduleLocalLivePreview() {
@@ -252,17 +239,11 @@ export async function refreshLocalLivePreview() {
     if (!localPreviewEnabled() || !currentPath || currentPath === deletingPath) return null;
     cancelLocalPreviewTimer();
 
-    const requestPath = currentPath;
-    const sessionID = localPreviewSessionID || createLocalPreviewSessionID();
-    if (!sessionID) return null;
-
-    localPreviewSessionID = sessionID;
-    localPreviewSessionPath = requestPath;
     const revision = ++localPreviewRevision;
     const payload = getPayload();
     const frontMatterKey = JSON.stringify(payload.frontmatter ?? null);
 
-    const request = API.updateLocalPreviewContent(payload, sessionID, revision);
+    const request = API.updateLocalPreviewContent(payload, revision);
     localPreviewInflight.add(request);
     try {
         const result = await request;
@@ -271,14 +252,7 @@ export async function refreshLocalLivePreview() {
         }
         return result;
     } catch (e) {
-        if (e?.status === 409) {
-            if (!localPreviewConflictNotified) {
-                localPreviewConflictNotified = true;
-                UI.showToast("Local Live Preview is active in another tab for this site", "warning");
-            }
-        } else {
-            console.error("[LocalPreview] Update failed:", e);
-        }
+        console.error("[LocalPreview] Update failed:", e);
         throw e;
     } finally {
         localPreviewInflight.delete(request);
@@ -292,8 +266,12 @@ export function waitForLocalPreviewUpdates(pending = localPreviewInflight) {
     return Promise.allSettled(Array.from(pending));
 }
 
-export function isLocalPreviewOwnershipConflict(error) {
-    return error?.status === 409;
+// Stop is destructive for the site-scoped runtime. Cancel delayed writes and
+// drain requests already sent before asking the server to stop and detach it.
+export async function prepareLocalLivePreviewStop() {
+    cancelLocalPreviewTimer();
+    await waitForLocalPreviewUpdates();
+    resetLocalPreviewClientState();
 }
 
 // Article switching cancels the debounce timer, so explicitly send the
@@ -303,33 +281,6 @@ export async function flushLocalPreviewBeforeArticleSwitch(flush = refreshLocalL
     await waitForLocalPreviewUpdates(pending);
     await flush();
     await waitForLocalPreviewUpdates(pending);
-}
-
-export async function releaseLocalLivePreview() {
-    cancelLocalPreviewTimer();
-    const sessionID = localPreviewSessionID;
-    if (!sessionID) {
-        resetLocalPreviewClientState();
-        return false;
-    }
-
-    // Do not race release against an update that the server may still be
-    // applying even when the UI has moved on to another article/site.
-    await waitForLocalPreviewUpdates();
-    try {
-        const result = await API.releaseLocalPreviewContent(sessionID);
-        resetLocalPreviewClientState();
-        return result?.released === true;
-    } catch (e) {
-        // 409 proves this document no longer owns the site's active workspace.
-        // Network/5xx failures are ambiguous, so retain the session ID and
-        // revision to allow a later release/update to continue safely.
-        if (e?.status === 409) {
-            resetLocalPreviewClientState();
-            return false;
-        }
-        throw e;
-    }
 }
 
 export async function execAutoSave() {
@@ -405,16 +356,8 @@ export async function loadFile(path) {
         try {
             await flushLocalPreviewBeforeArticleSwitch();
         } catch (e) {
-            // A 409 means another document owns the site's preview workspace.
-            // Preview sync is unavailable for this tab, but normal article
-            // navigation must remain available. Production save errors above
-            // are still blocking.
-            if (isLocalPreviewOwnershipConflict(e)) {
-                // Continue with the article switch without a preview flush.
-            } else {
-                UI.showToast("Failed to prepare article before switching: " + e.message, "error");
-                return;
-            }
+            UI.showToast("Failed to prepare article before switching: " + e.message, "error");
+            return;
         }
     }
     await saveQueue.catch(() => {

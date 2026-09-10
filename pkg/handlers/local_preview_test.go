@@ -158,11 +158,14 @@ func TestLocalPreviewIngressReleasesGateBeforeStreaming(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime := config.NewSiteRuntime(config.Sites[0])
-	if _, _, _, err := workspaceManager.Update(runtime, "draft-1", "one.md", 1, []byte("draft")); err != nil {
+	if _, _, _, err := workspaceManager.Update(runtime, "one.md", 1, []byte("draft")); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = workspaceManager.Release(siteID, "draft-1")
+		cleanup, claimed, err := workspaceManager.BeginCleanup(siteID)
+		if err == nil && claimed {
+			_, _ = workspaceManager.FinishCleanup(&cleanup)
+		}
 	})
 
 	proxy := &localPreviewPreparedProxySpy{
@@ -194,12 +197,12 @@ func TestLocalPreviewIngressReleasesGateBeforeStreaming(t *testing.T) {
 		t.Fatal("streaming handler did not start")
 	}
 
-	claim, claimed, err := workspaceManager.ClaimRelease(siteID, "draft-1")
+	cleanup, claimed, err := workspaceManager.BeginCleanup(siteID)
 	if err != nil || !claimed {
-		t.Fatalf("ClaimRelease() claimed=%v err=%v while stream was active", claimed, err)
+		t.Fatalf("BeginCleanup() claimed=%v err=%v while stream was active", claimed, err)
 	}
-	if released, err := workspaceManager.FinishRelease(claim); err != nil || !released {
-		t.Fatalf("FinishRelease() released=%v err=%v", released, err)
+	if released, err := workspaceManager.FinishCleanup(&cleanup); err != nil || !released {
+		t.Fatalf("FinishCleanup() released=%v err=%v", released, err)
 	}
 	close(proxy.allow)
 	select {

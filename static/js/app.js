@@ -22,9 +22,7 @@ let deploymentController = null;
 let deploymentOperationInProgress = false;
 let localPreviewEnabled = false;
 let localPreviewState = null;
-let localPreviewSessionID = "";
 let localPreviewPollTimer = null;
-let localPreviewHeartbeatTimer = null;
 let localPreviewController = null;
 let localPreviewOperationInProgress = false;
 let localPreviewFrameController = null;
@@ -35,7 +33,6 @@ let localPreviewArticleURLKey = "";
 let localPreviewURLResolution = null;
 
 const LOCAL_PREVIEW_POLL_MS = 3000;
-const LOCAL_PREVIEW_HEARTBEAT_MS = 30000;
 
 init();
 
@@ -67,8 +64,6 @@ async function init() {
     window.createNewFile = () => Editor.createNewFile(refreshFileList);
     window.deleteFile = async () => {
         await Editor.deleteFile(refreshFileList);
-        await refreshLocalPreviewStatus();
-        if (!localPreviewState?.session_active) localPreviewSessionID = "";
     };
     window.insertImage = () => {
         const currentPath = Editor.getCurrentPath();
@@ -125,7 +120,6 @@ async function init() {
     window.toggleEmbeddedLocalPreview = toggleEmbeddedLocalPreview;
     window.showMarkdownFallback = () => switchView('markdown');
     window.stopLocalLivePreview = stopLocalLivePreview;
-    window.reclaimLocalLivePreview = reclaimLocalLivePreview;
     window.refreshLocalPreviewArticleURL = refreshLocalPreviewArticleURL;
 
     console.log("Hugo CMS Initialized");
@@ -147,7 +141,6 @@ function resetLocalPreviewArticleURL() {
 
 async function loadSiteData() {
     stopLocalPreviewMonitoring();
-    localPreviewSessionID = "";
     resetLocalPreviewArticleURL();
     localPreviewState = null;
 
@@ -184,15 +177,6 @@ async function switchSite(siteID) {
         return;
     }
 
-    try {
-        await Editor.releaseLocalLivePreview();
-        localPreviewSessionID = "";
-    } catch (e) {
-        UI.showToast("Site switch cancelled: Local Live Preview cleanup failed", "error");
-        UI.renderSiteSelector(siteRegistry, previousSiteID, switchSite);
-        return;
-    }
-
     stopLocalPreviewMonitoring();
     stopDeploymentPolling();
     closeEmbeddedLocalPreview();
@@ -219,13 +203,8 @@ async function loadFile(path) {
     stopDeploymentPolling();
     deploymentState = null;
     UI.renderDeploymentState(null);
-    const previousLocalPreviewSessionID = localPreviewSessionID;
     await Editor.loadFile(path);
     if (Editor.getCurrentPath() !== path) {
-        // Editor keeps its owner ID when release failed; keep the matching
-        // heartbeat handle so the live session does not expire while the user
-        // retries the switch.
-        localPreviewSessionID = previousLocalPreviewSessionID;
         await refreshLocalPreviewStatus();
         return;
     }
@@ -239,7 +218,7 @@ async function loadFile(path) {
             narrowViewport: isNarrowViewport(),
         }) ? 'split' : 'edit');
         try {
-            await ensureLocalPreviewSession();
+            await Editor.refreshLocalLivePreview();
             const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
             if (Editor.getCurrentPath() === path && !articleURL) {
                 throw new Error('generatorから記事URLを取得できませんでした');
@@ -297,7 +276,7 @@ function configureLocalPreviewPanel() {
     }
     if (!panel) return;
     localPreviewFrameController?.resetDismissed();
-    renderLocalPreviewState({ enabled: true, status: 'stopped', process_state: 'stopped', session_active: false });
+    renderLocalPreviewState({ enabled: true, status: 'stopped', process_state: 'stopped', workspace_active: false });
 }
 
 function initializeLocalPreviewFrame() {
@@ -377,7 +356,7 @@ function isLocalPreviewArticleURL(value) {
 }
 
 function localPreviewURLResolutionKey(frontMatterKey) {
-    return [API.getCurrentSite(), localPreviewSessionID, Editor.getCurrentPath(), frontMatterKey || ""].join("\u0000");
+    return [API.getCurrentSite(), Editor.getCurrentPath(), frontMatterKey || ""].join("\u0000");
 }
 
 function localPreviewResolutionAbortError() {
@@ -407,9 +386,8 @@ function waitForLocalPreviewRetry(delay, signal) {
 }
 
 function resolveLocalPreviewArticleURL(frontMatterKey = localPreviewFrontMatterKey) {
-    if (!localPreviewEnabled || !Editor.getCurrentPath() || !localPreviewSessionID) return null;
+    if (!localPreviewEnabled || !Editor.getCurrentPath()) return null;
     const requestPath = Editor.getCurrentPath();
-    const requestSessionID = localPreviewSessionID;
     const requestKey = localPreviewURLResolutionKey(frontMatterKey);
     if (localPreviewURLResolution?.key === requestKey) return localPreviewURLResolution.promise;
 
@@ -428,16 +406,14 @@ function resolveLocalPreviewArticleURL(frontMatterKey = localPreviewFrontMatterK
             if (controller.signal.aborted) throw localPreviewResolutionAbortError();
             if (
                 Editor.getCurrentPath() !== requestPath ||
-                localPreviewSessionID !== requestSessionID ||
                 localPreviewURLResolutionGeneration !== requestGeneration
             ) return null;
             try {
-                const result = await API.resolveLocalPreviewArticleURL(requestSessionID, requestPath, controller.signal);
+                const result = await API.resolveLocalPreviewArticleURL(requestPath, controller.signal);
                 const articleURL = UI.safeExternalURL(result?.article_url || "");
                 if (!isLocalPreviewArticleURL(articleURL)) throw new Error('generator returned an invalid local preview URL');
                 if (
                     Editor.getCurrentPath() !== requestPath ||
-                    localPreviewSessionID !== requestSessionID ||
                     localPreviewURLResolutionGeneration !== requestGeneration
                 ) return null;
                 localPreviewArticleURL = articleURL;
@@ -460,7 +436,6 @@ function resolveLocalPreviewArticleURL(frontMatterKey = localPreviewFrontMatterK
 }
 
 async function refreshLocalPreviewArticleURL(updateResult, frontMatterKey = "") {
-    if (updateResult?.session_id) localPreviewSessionID = updateResult.session_id;
     const requestKey = localPreviewURLResolutionKey(frontMatterKey);
     if (localPreviewArticleURL && localPreviewArticleURLKey === requestKey) {
         return localPreviewArticleURL;
@@ -484,7 +459,7 @@ async function refreshLocalPreviewArticleURL(updateResult, frontMatterKey = "") 
 function localPreviewStatusClass(status) {
     if (status === 'ready') return 'ready';
     if (status === 'starting') return 'queued';
-    if (status === 'failed' || status === 'stale' || status === 'conflict') return 'failed';
+    if (status === 'failed') return 'failed';
     return 'idle';
 }
 
@@ -495,8 +470,6 @@ function localPreviewStatusLabel(status) {
         ready: 'Ready',
         failed: '失敗',
         stopping: '停止中',
-        stale: '期限切れ',
-        conflict: '別タブ使用中',
         disabled: '無効',
     })[status] || status || '停止';
 }
@@ -507,8 +480,6 @@ function renderLocalPreviewState(state) {
     const statusEl = document.getElementById('local-preview-status');
     const messageEl = document.getElementById('local-preview-message');
     const loadingEl = document.getElementById('local-preview-loading');
-    const advancedEl = document.getElementById('local-preview-advanced');
-    const reclaimBtn = document.getElementById('local-preview-reclaim-btn');
     const stopBtn = document.getElementById('local-preview-stop-btn');
     if (!statusEl || !messageEl) return;
 
@@ -520,21 +491,14 @@ function renderLocalPreviewState(state) {
     if (status === 'ready') message = 'Hugo Live Preview is ready. 編集内容はLiveReloadで反映されます。';
     else if (status === 'starting') message = 'Hugoを起動しています…';
     else if (status === 'failed') message = state?.process_error || 'Hugo Live Previewの起動に失敗しました。';
-    else if (status === 'stale') message = '以前のタブのpreview sessionが期限切れです。安全に回収して再開できます。';
-    else if (status === 'conflict') message = 'このsiteのLocal Live Previewは別のタブで使用中です。';
-    else if (state?.session_active && state?.session_owned) message = '未保存内容は同期済みです。Previewを開くとHugoを起動します。';
-    else if (state?.session_active) message = 'このsiteには別の編集sessionがあります。';
+    else if (state?.workspace_active) message = '未保存内容は同期済みです。Previewを開くとgeneratorを起動します。';
     messageEl.textContent = message;
 
     if (loadingEl) loadingEl.classList.toggle('hidden', status !== 'starting');
 
-    const processRunning = state?.process_state && state.process_state !== 'stopped';
-    const canManage = Boolean(state?.session_owned || state?.session_stale || (!state?.session_active && processRunning));
-    if (advancedEl) advancedEl.classList.toggle('hidden', !canManage);
-
-    if (reclaimBtn) reclaimBtn.classList.toggle('hidden', !state?.session_stale);
     if (stopBtn) {
-        stopBtn.classList.toggle('hidden', !(state?.session_owned || (!state?.session_active && processRunning)));
+        const processRunning = state?.process_state && state.process_state !== 'stopped';
+        stopBtn.classList.toggle('hidden', !processRunning);
     }
 
     const hasCurrentPath = Boolean(Editor.getCurrentPath());
@@ -542,7 +506,6 @@ function renderLocalPreviewState(state) {
         closeEmbeddedLocalPreview();
     } else if (shouldAutoShowEmbeddedLocalPreview({
         status,
-        sessionOwned: state?.session_owned,
         hasCurrentPath,
         dismissed: localPreviewFrameController?.isDismissed(),
     })) {
@@ -552,31 +515,9 @@ function renderLocalPreviewState(state) {
     }
 }
 
-async function ensureLocalPreviewSession() {
-    if (!localPreviewEnabled || !Editor.getCurrentPath()) return null;
-    try {
-        const result = await Editor.refreshLocalLivePreview();
-        if (result?.session_id) localPreviewSessionID = result.session_id;
-        return result;
-    } catch (e) {
-        if (e?.status === 409) {
-            renderLocalPreviewState({
-                ...(localPreviewState || {}),
-                enabled: true,
-                status: 'conflict',
-                session_active: true,
-                session_owned: false,
-            });
-        }
-        throw e;
-    }
-}
-
 function stopLocalPreviewMonitoring() {
     if (localPreviewPollTimer) clearTimeout(localPreviewPollTimer);
-    if (localPreviewHeartbeatTimer) clearTimeout(localPreviewHeartbeatTimer);
     localPreviewPollTimer = null;
-    localPreviewHeartbeatTimer = null;
     if (localPreviewController) localPreviewController.abort();
     localPreviewController = null;
 }
@@ -590,19 +531,6 @@ function scheduleLocalPreviewMonitoring() {
             scheduleLocalPreviewMonitoring();
         }, LOCAL_PREVIEW_POLL_MS);
     }
-    if (!localPreviewHeartbeatTimer) {
-        localPreviewHeartbeatTimer = setTimeout(async () => {
-            localPreviewHeartbeatTimer = null;
-            if (localPreviewSessionID) {
-                try {
-                    await API.heartbeatLocalPreviewContent(localPreviewSessionID);
-                } catch (e) {
-                    if (e?.status !== 409) console.error('[LocalPreview] heartbeat failed', e);
-                }
-            }
-            scheduleLocalPreviewMonitoring();
-        }, LOCAL_PREVIEW_HEARTBEAT_MS);
-    }
 }
 
 async function refreshLocalPreviewStatus() {
@@ -611,7 +539,7 @@ async function refreshLocalPreviewStatus() {
     const controller = new AbortController();
     localPreviewController = controller;
     try {
-        const state = await API.fetchLocalPreviewStatus(localPreviewSessionID, controller.signal);
+        const state = await API.fetchLocalPreviewStatus(controller.signal);
         renderLocalPreviewState(state);
         return localPreviewState;
     } catch (e) {
@@ -629,7 +557,7 @@ async function openLocalLivePreview() {
     }
     try {
         if (Editor.getCurrentPath()) {
-            await ensureLocalPreviewSession();
+            await Editor.refreshLocalLivePreview();
             const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
             if (!articleURL) throw new Error('generatorから記事URLを取得できませんでした');
         }
@@ -657,7 +585,7 @@ async function toggleEmbeddedLocalPreview() {
     try {
         localPreviewFrameController?.resetDismissed();
         if (Editor.getCurrentPath()) {
-            await ensureLocalPreviewSession();
+            await Editor.refreshLocalLivePreview();
             const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
             if (!articleURL) throw new Error('generatorから記事URLを取得できませんでした');
         }
@@ -673,39 +601,13 @@ async function stopLocalLivePreview() {
     if (!localPreviewEnabled || localPreviewOperationInProgress) return;
     localPreviewOperationInProgress = true;
     try {
-        const released = await Editor.releaseLocalLivePreview();
-        localPreviewSessionID = "";
+        await Editor.prepareLocalLivePreviewStop();
+        await API.stopLocalPreviewContent();
         resetLocalPreviewArticleURL();
-        if (!released) await API.stopLocalPreviewContent("");
         closeEmbeddedLocalPreview();
         UI.showToast('Local Live Previewを停止しました', 'success');
     } catch (e) {
         UI.showToast('Local Live Previewを停止できません: ' + e.message, 'error');
-    } finally {
-        localPreviewOperationInProgress = false;
-        await refreshLocalPreviewStatus();
-    }
-}
-
-async function reclaimLocalLivePreview() {
-    if (!localPreviewEnabled || localPreviewOperationInProgress) return;
-    if (!confirm('期限切れのLocal Live Preview sessionを回収して再開しますか？')) return;
-    localPreviewOperationInProgress = true;
-    try {
-        await API.reclaimStaleLocalPreview();
-        localPreviewSessionID = "";
-        resetLocalPreviewArticleURL();
-        localPreviewFrameController?.resetDismissed();
-        if (Editor.getCurrentPath()) {
-            await ensureLocalPreviewSession();
-            const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
-            if (!articleURL) throw new Error('generatorから記事URLを取得できませんでした');
-            showEmbeddedLocalPreview({ reload: true });
-        }
-        UI.showToast('Local Live Preview sessionを回収しました', 'success');
-    } catch (e) {
-        showLocalPreviewResolutionError(e);
-        UI.showToast('Local Live Previewを回収できません: ' + e.message, 'error');
     } finally {
         localPreviewOperationInProgress = false;
         await refreshLocalPreviewStatus();

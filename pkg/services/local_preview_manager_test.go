@@ -200,7 +200,6 @@ func TestLocalPreviewManagerResolvesEleventyURLFromRunningProcess(t *testing.T) 
 	runtime := config.NewSiteRuntime(site)
 	workspace := LocalPreviewWorkspace{
 		SiteID:      site.ID,
-		DraftID:     "draft-1",
 		ArticlePath: "posts/one.md",
 		ContentDir:  filepath.Join(t.TempDir(), "content"),
 	}

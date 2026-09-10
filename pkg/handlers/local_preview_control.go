@@ -2,19 +2,13 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"hugo-cms/pkg/services"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
-
-type localPreviewControlRequest struct {
-	DraftID string `json:"draft_id"`
-}
 
 func GetLocalPreviewStatus(c *gin.Context) {
 	runtime, err := requestedRuntime(c)
@@ -36,9 +30,7 @@ func GetLocalPreviewStatus(c *gin.Context) {
 		ErrorInternal(c, "Local preview workspace is unavailable")
 		return
 	}
-	workspace, active, stale := workspaceManager.Status(runtime.ID)
-	draftID := strings.TrimSpace(c.Query("draft_id"))
-	owned := active && draftID != "" && workspace.DraftID == draftID
+	workspace, active := workspaceManager.Status(runtime.ID)
 
 	processState := services.LocalPreviewStopped
 	processError := ""
@@ -47,69 +39,22 @@ func GetLocalPreviewStatus(c *gin.Context) {
 		processError = slot.Error
 	}
 
-	status := string(processState)
-	if stale {
-		status = "stale"
-	} else if active && draftID != "" && !owned {
-		status = "conflict"
-	}
-
 	response := gin.H{
-		"enabled":           true,
-		"status":            status,
-		"process_state":     processState,
-		"process_error":     processError,
-		"preview_url":       runtime.LocalPreview.URL,
-		"session_active":    active,
-		"session_owned":     owned,
-		"session_stale":     stale,
-		"lease_seconds":     int(workspaceManager.LeaseTTL().Seconds()),
-		"has_current_owner": active && !stale,
+		"enabled":          true,
+		"status":           string(processState),
+		"process_state":    processState,
+		"process_error":    processError,
+		"preview_url":      runtime.LocalPreview.URL,
+		"workspace_active": active,
 	}
-	if active && !workspace.LastSeenAt.IsZero() {
-		age := time.Since(workspace.LastSeenAt)
+	if active && !workspace.LastActivityAt.IsZero() {
+		age := time.Since(workspace.LastActivityAt)
 		if age < 0 {
 			age = 0
 		}
-		response["last_seen_age_seconds"] = int(age.Seconds())
+		response["last_activity_age_seconds"] = int(age.Seconds())
 	}
 	c.JSON(http.StatusOK, response)
-}
-
-func HeartbeatLocalPreviewContent(c *gin.Context) {
-	runtime, err := requestedRuntime(c)
-	if err != nil {
-		ErrorBadRequest(c, err.Error())
-		return
-	}
-	var req localPreviewControlRequest
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.DraftID) == "" {
-		ErrorBadRequest(c, "draft_id is required")
-		return
-	}
-	workspaceManager, err := services.DefaultLocalPreviewWorkspaceManager()
-	if err != nil {
-		ErrorInternal(c, "Local preview workspace is unavailable")
-		return
-	}
-	workspace, err := workspaceManager.Heartbeat(runtime.ID, req.DraftID)
-	if err != nil {
-		switch {
-		case errors.Is(err, services.ErrLocalPreviewSessionConflict),
-			errors.Is(err, services.ErrLocalPreviewSessionNotFound),
-			errors.Is(err, services.ErrLocalPreviewSessionExpired),
-			errors.Is(err, services.ErrLocalPreviewSessionReclaiming),
-			errors.Is(err, services.ErrLocalPreviewSessionReleasing):
-			ErrorConflict(c, err.Error())
-		default:
-			ErrorBadRequest(c, err.Error())
-		}
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"status":   "active",
-		"revision": workspace.Revision,
-	})
 }
 
 func StopLocalPreview(c *gin.Context) {
@@ -118,38 +63,18 @@ func StopLocalPreview(c *gin.Context) {
 		ErrorBadRequest(c, err.Error())
 		return
 	}
-	var req localPreviewControlRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		ErrorBadRequest(c, "Invalid JSON")
-		return
-	}
-
 	workspaceManager, err := services.DefaultLocalPreviewWorkspaceManager()
 	if err != nil {
 		ErrorInternal(c, "Local preview workspace is unavailable")
 		return
 	}
-	workspace, active := workspaceManager.Active(runtime.ID)
-	var releaseClaim services.LocalPreviewRelease
-	claimed := false
-	if active {
-		if strings.TrimSpace(req.DraftID) == "" || workspace.DraftID != req.DraftID {
-			ErrorConflict(c, services.ErrLocalPreviewSessionConflict.Error())
-			return
-		}
-		releaseClaim, claimed, err = workspaceManager.ClaimRelease(runtime.ID, req.DraftID)
-		if err != nil {
-			if errors.Is(err, services.ErrLocalPreviewSessionConflict) ||
-				errors.Is(err, services.ErrLocalPreviewSessionReclaiming) ||
-				errors.Is(err, services.ErrLocalPreviewSessionReleasing) {
-				ErrorConflict(c, err.Error())
-				return
-			}
-			ErrorBadRequest(c, err.Error())
-			return
-		}
-	} else if workspaceManager.IsTransitioning(runtime.ID) {
-		ErrorConflict(c, services.ErrLocalPreviewSessionReleasing.Error())
+	cleanup, claimed, err := workspaceManager.BeginCleanup(runtime.ID)
+	if err != nil {
+		ErrorInternal(c, "Failed to prepare Local Live Preview cleanup")
+		return
+	}
+	if !claimed {
+		ErrorInternal(c, "Failed to prepare Local Live Preview cleanup")
 		return
 	}
 
@@ -158,73 +83,15 @@ func StopLocalPreview(c *gin.Context) {
 	cancel()
 	if stopErr != nil {
 		slog.Error("Failed to stop Local Live Preview process", "site", runtime.ID, "error", stopErr)
-		if claimed {
-			workspaceManager.CancelRelease(releaseClaim)
-		}
+		workspaceManager.CancelCleanup(&cleanup)
 		ErrorInternal(c, "Failed to stop Local Live Preview process")
 		return
 	}
-	if claimed {
-		if _, err := workspaceManager.FinishRelease(releaseClaim); err != nil {
-			workspaceManager.CancelRelease(releaseClaim)
-			slog.Error("Failed to detach Local Live Preview workspace", "site", runtime.ID, "error", err)
-			if errors.Is(err, services.ErrLocalPreviewSessionConflict) ||
-				errors.Is(err, services.ErrLocalPreviewSessionReclaiming) ||
-				errors.Is(err, services.ErrLocalPreviewSessionReleasing) {
-				ErrorConflict(c, err.Error())
-				return
-			}
-			ErrorInternal(c, "Failed to release Local Live Preview workspace")
-			return
-		}
+	if _, err := workspaceManager.FinishCleanup(&cleanup); err != nil {
+		workspaceManager.CancelCleanup(&cleanup)
+		slog.Error("Failed to detach Local Live Preview workspace", "site", runtime.ID, "error", err)
+		ErrorInternal(c, "Failed to clean up Local Live Preview workspace")
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "stopped"})
-}
-
-func ReclaimStaleLocalPreview(c *gin.Context) {
-	runtime, err := requestedRuntime(c)
-	if err != nil {
-		ErrorBadRequest(c, err.Error())
-		return
-	}
-	workspaceManager, err := services.DefaultLocalPreviewWorkspaceManager()
-	if err != nil {
-		ErrorInternal(c, "Local preview workspace is unavailable")
-		return
-	}
-
-	claim, claimed, err := workspaceManager.ClaimStale(runtime.ID)
-	if err != nil {
-		if errors.Is(err, services.ErrLocalPreviewSessionNotStale) || errors.Is(err, services.ErrLocalPreviewSessionReclaiming) {
-			ErrorConflict(c, err.Error())
-			return
-		}
-		ErrorBadRequest(c, err.Error())
-		return
-	}
-	if !claimed {
-		c.JSON(http.StatusOK, gin.H{"status": "stopped", "reclaimed": false})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), services.DefaultLocalPreviewStopTimeout)
-	stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
-	cancel()
-	if stopErr != nil {
-		slog.Error("Failed to stop stale Local Live Preview process", "site", runtime.ID, "error", stopErr)
-		workspaceManager.CancelReclaim(claim)
-		ErrorInternal(c, "Failed to stop stale Local Live Preview process")
-		return
-	}
-	reclaimed, err := workspaceManager.FinishReclaim(claim)
-	if err != nil {
-		workspaceManager.CancelReclaim(claim)
-		if errors.Is(err, services.ErrLocalPreviewSessionConflict) || errors.Is(err, services.ErrLocalPreviewSessionReclaiming) {
-			ErrorConflict(c, err.Error())
-			return
-		}
-		ErrorBadRequest(c, err.Error())
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": "stopped", "reclaimed": reclaimed})
 }

@@ -63,8 +63,8 @@ func localPreviewIngress(manager localPreviewRuntimeProxy) gin.HandlerFunc {
 			var active bool
 			ingressLease, workspace, active, transitioning = workspaceManager.AcquireIngress(site.ID)
 			if transitioning {
-				// A release/reclaim claim owns the stop-and-detach window. Do not
-				// fall back to saved content or restart the old workspace process.
+				// Cleanup owns the stop-and-detach window. Do not fall back to saved
+				// content or restart the old workspace process.
 				ingressLease.Release()
 				c.AbortWithStatus(http.StatusServiceUnavailable)
 				return

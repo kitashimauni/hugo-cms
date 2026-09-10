@@ -13,12 +13,11 @@ import (
 )
 
 type localPreviewNavigateRequest struct {
-	DraftID string `json:"draft_id"`
-	Path    string `json:"path"`
+	Path string `json:"path"`
 }
 
 type localPreviewNavigationWorkspaceManager interface {
-	Status(siteID string) (services.LocalPreviewWorkspace, bool, bool)
+	AcquireNavigation(siteID string) (services.LocalPreviewIngressLease, services.LocalPreviewWorkspace, bool, bool)
 }
 
 type localPreviewNavigationDependencies struct {
@@ -49,10 +48,9 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 		ErrorBadRequest(c, "Invalid JSON")
 		return
 	}
-	req.DraftID = strings.TrimSpace(req.DraftID)
 	req.Path = filepath.Clean(strings.TrimSpace(req.Path))
-	if req.DraftID == "" || req.Path == "." || filepath.IsAbs(req.Path) {
-		ErrorBadRequest(c, "draft_id and a relative path are required")
+	if req.Path == "." || filepath.IsAbs(req.Path) {
+		ErrorBadRequest(c, "a relative path is required")
 		return
 	}
 
@@ -64,17 +62,14 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 			return
 		}
 	}
-	workspace, active, stale := workspaceManager.Status(runtime.ID)
+	navigationLease, workspace, active, transitioning := workspaceManager.AcquireNavigation(runtime.ID)
+	defer navigationLease.Release()
+	if transitioning {
+		c.AbortWithStatus(http.StatusServiceUnavailable)
+		return
+	}
 	if !active {
-		ErrorConflict(c, services.ErrLocalPreviewSessionNotFound.Error())
-		return
-	}
-	if stale {
-		ErrorConflict(c, services.ErrLocalPreviewSessionExpired.Error())
-		return
-	}
-	if workspace.DraftID != req.DraftID {
-		ErrorConflict(c, services.ErrLocalPreviewSessionConflict.Error())
+		ErrorConflict(c, "Local Live Preview workspace is not active")
 		return
 	}
 	if dependencies.resolveArticleURL == nil {
@@ -100,7 +95,6 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 		"article_url":  articleURL,
 		"revision":     workspace.Revision,
 		"preview_url":  runtime.LocalPreview.URL,
-		"session_id":   req.DraftID,
 		"article_path": workspace.ArticlePath,
 	})
 }

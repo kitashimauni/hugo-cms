@@ -159,15 +159,15 @@ OS temporary directory/
 Hugoは従来どおり元repositoryをsource rootとして読み、`--contentDir`だけをshadow directoryのabsolute pathへ差し替える。Eleventyはtemporary project-root overlayをcwdにして`--input <content_dir>`、`--output <temporary-project-public-dir>`で実行する。overlayでは`content_dir`をshadowへmaterializeし、`public_dir`を空のpreview専用directoryにする。それ以外のroot-relativeなconfig、collection glob、includes/layouts/data、passthrough asset、pluginの相対pathはEleventy自身の通常のproject-root解決へ委譲する。生成出力はproductionのpublic directoryへ書き込まれない。
 repo外のabsolute pathや環境変数で指定された外部pathはこのoverlayの保証対象外とする。
 
-workspaceは`PREVIEW_STATE_DIR`へ永続化しない。site runtimeの明示的なrelease、stale reclaim、idle timeoutまたはCMS shutdown時に削除する。idle timeoutは`HUGO_CMS_LOCAL_PREVIEW_IDLE_TIMEOUT`で指定し、初期値は30分、`0`で無効化する。editorのsession IDはworkspaceの物理パスではなく、site runtimeの所有権だけを表す。
+workspaceは`PREVIEW_STATE_DIR`へ永続化しない。site runtimeの明示的なStop、idle timeoutまたはCMS shutdown時に削除する。idle timeoutは`HUGO_CMS_LOCAL_PREVIEW_IDLE_TIMEOUT`で指定し、初期値は30分、`0`で無効化する。browser tabのsession IDはworkspace管理に使用しない。
 
 ### editor update ordering
 
-browserはLocal Preview専用session IDと単調増加`revision`を送る。
+browserはdocumentごとの単調増加`revision`を送る。
 
 - `revision == 0`は拒否
-- serverの現在revision以下のupdateはno-op
-- response順が逆転しても古いrequestは新しい内容を上書きしない
+- server側でsite単位のrevisionを採番し、client revisionをtab間のordering判定に使わない
+- 複数tabのupdateはlast-write-winsで受理する
 - 対象記事はtemporary fileからreplaceする
 
 ### content resource同期
@@ -176,18 +176,11 @@ browserはLocal Preview専用session IDと単調増加`revision`を送る。
 
 static配下はHugoが元repositoryを直接参照するためshadow同期しない。media本体の保存が成功した後にpreview-only同期が失敗した場合、media APIを失敗扱いにはせずserver logへ残す。
 
-### session競合
+### site runtime activity / cleanup
 
-初期実装では**同一siteにつきactive Local Live Preview sessionは1つ**とする。
+Local Previewは完全にsite-scopedであり、browser tab ownership、lease、heartbeat、stale reclaimを持たない。同じsiteへの複数tabのupdateは同じshadow workspaceへlast-write-winsで適用する。update、記事URL解決、preview ingress、content resource同期はsite runtimeの`lastActivity`を更新する。
 
-- 同一siteへの別tab/session update -> `409 Conflict`
-- active sessionと異なるarticle path -> 同じsite workspaceへ反映
-- 別siteは独立workspaceを利用可能
-- stale tabは別tabのworkspaceをreleaseできない
-
-article切替ではbrowserがproduction saveとin-flight update完了を待ち、同じsite workspaceへ選択pathを反映する。generator process、Eleventy project overlay、shadow workspaceは再作成しない。serverはarticle update時に現在記事のpath/revision metadataを更新し、watch rebuild後に要求pathのURLを解決する。site切替、明示的な停止、stale reclaim、idle timeoutではrelease claimでsessionをreleasing状態にしてからgenerator processを停止し、workspace rootを一意なcleanup領域へrenameして論理的にdetachする。その後のshadow directoryの物理削除は非同期で行い、cleanup中のpreview requestや更新が古いworkspaceを再利用しないようにする。Ingressはworkspace snapshot取得からprocess/portとproxy targetの準備完了まで同じsiteのread gateを保持し、release/reclaimのwrite gateとTOCTOU raceにならないようにする。準備後のHTTP/WebSocket streamingはgate外で実行する。
-
-ブラウザtabを切替操作なしで閉じた場合の確実なlease解放はPhase 4の停止UI/lease運用で扱う。それまではCMS shutdownで全workspaceをcleanupする。
+article切替ではbrowserがproduction saveとin-flight update完了を待ち、同じsite workspaceへ選択pathを反映する。generator process、Eleventy project overlay、shadow workspaceは再作成しない。serverは受理したupdateごとにserver側revisionと現在記事pathを更新し、watch rebuild後に要求pathのURLを解決する。明示的な停止またはidle timeoutではcleanup leaseがsiteのwrite gateを取得してgenerator processを停止し、workspace rootを一意なcleanup領域へrenameして論理的にdetachする。その間、ingress、update、resource同期、記事URL解決はread gateを保持し、cleanup開始時のgenerationを跨いでgate待ちした要求は503またはno-opとして古いworkspaceを再作成しない。その後のshadow directoryの物理削除は非同期で行い、準備後のHTTP/WebSocket streamingはgate外で実行する。
 
 ### filesystem境界
 
@@ -196,7 +189,7 @@ article切替ではbrowserがproduction saveとin-flight update完了を待ち�
 - Eleventy overlayのproduction directory referenceは一時overlay内だけに作成し、`content_dir`と`public_dir`はproductionから分離
 - regular fileだけをmirror
 - production contentはLocal Preview updateによって変更しない
-- site IDとsession IDは事前validation済みの値だけをworkspace pathに使用する
+- site IDは事前validation済みの値だけをworkspace pathに使用する
 
 ### Hugo Modules
 
@@ -212,7 +205,6 @@ POST /admin/api/preview/local
 
 ```json
 {
-  "draft_id": "<local-preview-session-id>",
   "revision": 12,
   "path": "posts/example.md",
   "frontmatter": {"title": "Draft"},
@@ -229,15 +221,15 @@ POST /admin/api/preview/local
 POST /admin/api/preview/local/navigate
 ```
 
-記事選択時にCMSが`draft_id`と記事pathを`/admin/api/preview/local/navigate`へ送り、serverはactive sessionの所有者を検証する。検証後、Hugoは`hugo list all`、Eleventyは稼働中wrapperの`/__hugo_cms_metadata`へ問い合わせて要求pathの`article_url`を返す。Eleventyがbuild中ならmap更新まで待ち、初回起動も同じprocessのreadinessを待つ。この処理はproduction content、Git、editor revisionを変更しない。network error、408/425/429、5xxに限ってclientが250ms・750msのbackoffで最大3回まで再試行し、409やその他の4xxは再試行しない。通常の本文編集はLiveReloadを利用し、URL関連front matter変更時は再解決する。解決失敗時はpreview rootへ黙ってフォールバックしない。
+記事選択時にCMSが記事pathを`/admin/api/preview/local/navigate`へ送り、Hugoは`hugo list all`、Eleventyは稼働中wrapperの`/__hugo_cms_metadata`へ問い合わせて要求pathの`article_url`を返す。Eleventyがbuild中ならmap更新まで待ち、初回起動も同じprocessのreadinessを待つ。この処理はproduction content、Git、browser revisionを変更しない。network error、408/425/429、5xxに限ってclientが250ms・750msのbackoffで最大3回まで再試行し、その他の4xxは再試行しない。通常の本文編集はLiveReloadを利用し、URL関連front matter変更時は再解決する。解決失敗時はpreview rootへ黙ってフォールバックしない。
 
-### release
+### stop
 
 ```text
-POST /admin/api/preview/local/release
+POST /admin/api/preview/local/stop
 ```
 
-release時はgenerator process停止後にworkspaceをdetachし、物理削除は非同期で行う。active shadow sessionがなければ次のpreview requestは保存済みrepository contentを使う。Eleventyのtemporary outputも同時に削除する。release/reclaim claimの保持中はsession更新とpreview ingressを拒否し、停止前に古いworkspaceでgeneratorを再起動しない。
+Stop時はgenerator process停止後にworkspaceをdetachし、物理削除は非同期で行う。active shadow workspaceがなければ次のpreview requestは保存済みrepository contentを使う。Eleventyのtemporary outputも同時に削除する。
 
 ## Phase 4への契約
 
@@ -246,8 +238,8 @@ release時はgenerator process停止後にworkspaceをdetachし、物理削除�
 - iframe loading、応答未確認のbest-effort表示、新規tab fallback。preview側がCMS originをtarget originに指定して`homecms-local-preview-ready`の`postMessage`を送る場合は明示的なready通知として扱う
 - 記事選択時の`PreviewURLResolver`によるgenerator準拠の実ページURL解決と、解決済みURLのiframe/新規タブ表示
 - Local Preview有効siteの`Edit` / `Preview` / `Split`統合。無効siteではMarkdown Previewを維持
-- starting / ready / failed / conflict / stale状態表示
-- Local Previewの明示停止とstale session recovery/lease方針
+- starting / ready / failed状態表示
+- Local Previewの明示停止とsite runtime activity/idle cleanup方針
 - private network/Tailscale運用例
 - wildcard DNS / TLS ingress構成例
 - Deployment Previewとの役割差のUI明記

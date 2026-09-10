@@ -237,36 +237,31 @@ func (m *LocalPreviewManager) IdleTimeout() time.Duration {
 	return m.idleTimeout
 }
 
-// StopIdle releases workspaces that have exceeded the runtime idle timeout.
-// It uses the same claim -> process stop -> workspace detach sequence as an
-// explicit stop, so an article switch never enters this path.
+// StopIdle stops site runtimes that have exceeded the runtime idle timeout.
+// The workspace cleanup lease blocks ingress and updates until the process is
+// stopped and the old workspace has been detached.
 func (m *LocalPreviewManager) StopIdle(ctx context.Context, workspaceManager *LocalPreviewWorkspaceManager) error {
 	if workspaceManager == nil || m.idleTimeout <= 0 {
 		return nil
 	}
 	var errs []error
-	for _, workspace := range workspaceManager.IdleWorkspaces(m.idleTimeout) {
-		claim, claimed, err := workspaceManager.ClaimIdle(workspace.SiteID, workspace.DraftID, m.idleTimeout)
+	for _, siteID := range workspaceManager.IdleSites(m.idleTimeout) {
+		cleanup, claimed, err := workspaceManager.BeginIdleCleanup(siteID, m.idleTimeout)
 		if err != nil {
-			if errors.Is(err, ErrLocalPreviewSessionConflict) ||
-				errors.Is(err, ErrLocalPreviewSessionReleasing) ||
-				errors.Is(err, ErrLocalPreviewSessionReclaiming) {
-				continue
-			}
-			errs = append(errs, fmt.Errorf("claim idle local preview workspace for site %q: %w", workspace.SiteID, err))
+			errs = append(errs, fmt.Errorf("begin idle local preview cleanup for site %q: %w", siteID, err))
 			continue
 		}
 		if !claimed {
 			continue
 		}
-		if err := m.Stop(ctx, workspace.SiteID); err != nil {
-			workspaceManager.CancelRelease(claim)
-			errs = append(errs, fmt.Errorf("stop idle local preview for site %q: %w", workspace.SiteID, err))
+		if err := m.Stop(ctx, siteID); err != nil {
+			workspaceManager.CancelCleanup(&cleanup)
+			errs = append(errs, fmt.Errorf("stop idle local preview for site %q: %w", siteID, err))
 			continue
 		}
-		if _, err := workspaceManager.FinishRelease(claim); err != nil {
-			workspaceManager.CancelRelease(claim)
-			errs = append(errs, fmt.Errorf("detach idle local preview workspace for site %q: %w", workspace.SiteID, err))
+		if _, err := workspaceManager.FinishCleanup(&cleanup); err != nil {
+			workspaceManager.CancelCleanup(&cleanup)
+			errs = append(errs, fmt.Errorf("detach idle local preview workspace for site %q: %w", siteID, err))
 		}
 	}
 	return errors.Join(errs...)
