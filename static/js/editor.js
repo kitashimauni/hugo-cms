@@ -14,6 +14,7 @@ let previewController = null;
 let previewRevision = 0;
 let localPreviewTimer = null;
 let localPreviewRevision = 0;
+let gitSyncInProgress = false;
 const localPreviewInflight = new Set();
 
 const PREVIEW_DEBOUNCE_MS = 180;
@@ -26,6 +27,18 @@ export function getCurrentPath() {
 export function hasUnsavedChanges() {
     if (!currentPath || currentPath === deletingPath) return false;
     return JSON.stringify(getPayload()) !== lastSavedPayload;
+}
+
+function setEditorWritePaused(paused) {
+    const editor = document.getElementById('editor');
+    if (editor) editor.disabled = paused;
+
+    const fmContainer = document.getElementById('fm-container');
+    if (fmContainer && typeof fmContainer.querySelectorAll === 'function') {
+        fmContainer.querySelectorAll('input, textarea, select, button').forEach(control => {
+            control.disabled = paused;
+        });
+    }
 }
 
 export function getCurrentLocalPreviewFrontMatterKey() {
@@ -107,6 +120,7 @@ export function clearEditor() {
         fmContainer.innerHTML = "";
         fmContainer.style.display = 'none';
     }
+    setEditorWritePaused(gitSyncInProgress);
 
     UI.clearMarkdownPreview();
 }
@@ -123,6 +137,7 @@ export function initAutoSave() {
 }
 
 function handleEditorChange() {
+    if (gitSyncInProgress) return;
     triggerAutoSave();
     scheduleMarkdownPreview();
     scheduleLocalLivePreview();
@@ -130,7 +145,7 @@ function handleEditorChange() {
 }
 
 function triggerAutoSave() {
-    if (!currentPath) return;
+    if (gitSyncInProgress || !currentPath) return;
     if (currentPath === deletingPath) return;
     clearAutoSaveTimer();
 
@@ -177,7 +192,7 @@ function cancelMarkdownPreview() {
 }
 
 function scheduleMarkdownPreview() {
-    if (!currentPath || currentPath === deletingPath) return;
+    if (gitSyncInProgress || !currentPath || currentPath === deletingPath) return;
     if (previewTimer) clearTimeout(previewTimer);
     previewTimer = setTimeout(() => {
         previewTimer = null;
@@ -185,8 +200,8 @@ function scheduleMarkdownPreview() {
     }, PREVIEW_DEBOUNCE_MS);
 }
 
-export async function refreshMarkdownPreview() {
-    if (!currentPath || currentPath === deletingPath) {
+export async function refreshMarkdownPreview({ allowDuringGitSync = false } = {}) {
+    if ((gitSyncInProgress && !allowDuringGitSync) || !currentPath || currentPath === deletingPath) {
         UI.clearMarkdownPreview();
         return;
     }
@@ -232,7 +247,7 @@ function resetLocalPreviewClientState() {
 }
 
 function scheduleLocalLivePreview() {
-    if (!localPreviewEnabled() || !currentPath || currentPath === deletingPath) return;
+    if (gitSyncInProgress || !localPreviewEnabled() || !currentPath || currentPath === deletingPath) return;
     if (localPreviewTimer) clearTimeout(localPreviewTimer);
     localPreviewTimer = setTimeout(() => {
         localPreviewTimer = null;
@@ -241,7 +256,7 @@ function scheduleLocalLivePreview() {
 }
 
 export async function refreshLocalLivePreview() {
-    if (!localPreviewEnabled() || !currentPath || currentPath === deletingPath) return null;
+    if (gitSyncInProgress || !localPreviewEnabled() || !currentPath || currentPath === deletingPath) return null;
     cancelLocalPreviewTimer();
 
     const revision = ++localPreviewRevision;
@@ -279,6 +294,30 @@ export async function prepareLocalLivePreviewStop() {
     resetLocalPreviewClientState();
 }
 
+// Git Sync updates the production repository tree. Pause every editor write
+// source before it starts so an old autosave or preview request cannot race
+// the pull and recreate the pre-sync state afterwards.
+export async function prepareForGitSync() {
+    if (gitSyncInProgress) return;
+    gitSyncInProgress = true;
+    setEditorWritePaused(true);
+    clearAutoSaveTimer();
+    cancelMarkdownPreview();
+    cancelLocalPreviewTimer();
+    await saveQueue.catch(() => undefined);
+    await waitForLocalPreviewUpdates();
+    resetLocalPreviewClientState();
+}
+
+export function finishForGitSync() {
+    gitSyncInProgress = false;
+    setEditorWritePaused(false);
+}
+
+export function isGitSyncInProgress() {
+    return gitSyncInProgress;
+}
+
 // Article switching cancels the debounce timer, so explicitly send the
 // current editor payload after the previous preview writes have settled.
 // Keeping the pending set shared lets the final wait include this flush too.
@@ -289,6 +328,7 @@ export async function flushLocalPreviewBeforeArticleSwitch(flush = refreshLocalL
 }
 
 export async function execAutoSave() {
+    if (gitSyncInProgress) return false;
     return queueCurrentSave("Auto Saving...");
 }
 
@@ -346,7 +386,8 @@ export async function flushPendingSave() {
     await queueCurrentSave("Saving before publish...");
 }
 
-export async function loadFile(path) {
+export async function loadFile(path, { allowDuringGitSync = false } = {}) {
+    if (gitSyncInProgress && !allowDuringGitSync) return;
     clearAutoSaveTimer();
     cancelMarkdownPreview();
     cancelLocalPreviewTimer();
@@ -383,11 +424,13 @@ export async function loadFile(path) {
 
         lastSavedPayload = JSON.stringify(getPayload());
         lastQueuedPayload = "";
-        await refreshMarkdownPreview();
+        await refreshMarkdownPreview({ allowDuringGitSync });
 
     } catch (e) {
         UI.showEditorError(e);
         UI.showToast("Failed to load file: " + e.message, "error");
+    } finally {
+        setEditorWritePaused(gitSyncInProgress);
     }
 }
 

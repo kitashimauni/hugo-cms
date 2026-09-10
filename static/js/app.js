@@ -623,18 +623,21 @@ async function runSync() {
 
     const btn = document.querySelector('button[onclick="runSync()"]');
     const originalText = btn ? btn.textContent : "Sync";
-    if (btn) btn.textContent = "Syncing...";
+    const originalDisabled = btn ? btn.disabled : false;
+    if (btn) {
+        btn.textContent = "Syncing...";
+        btn.disabled = true;
+    }
 
     const currentPath = Editor.getCurrentPath();
-    const editorHasUnsavedChanges = Editor.hasUnsavedChanges();
     let previewPrepared = false;
     let syncResponseReceived = false;
     let syncCompleted = false;
     try {
-        // Stop sending editor payloads while the server pulls production and
-        // detaches the site-scoped shadow workspace. This prevents a delayed
-        // client update from recreating the pre-sync workspace afterwards.
-        await Editor.prepareLocalLivePreviewStop();
+        // Pause and drain every editor write source while the server pulls
+        // production. This prevents a delayed AutoSave or preview update from
+        // recreating the pre-sync workspace afterwards.
+        await Editor.prepareForGitSync();
         previewPrepared = true;
 
         const data = await API.runSync();
@@ -650,6 +653,10 @@ async function runSync() {
             }
             const files = await refreshFileList();
             if (currentPath && Array.isArray(files)) {
+                // The user may have edited the article while Sync was
+                // running. Evaluate the state after the response, not before
+                // the gate was installed.
+                const editorHasUnsavedChanges = Editor.hasUnsavedChanges();
                 const currentFileStillExists = files.some(file => file.path === currentPath);
                 if (!currentFileStillExists) {
                     if (editorHasUnsavedChanges) {
@@ -661,7 +668,7 @@ async function runSync() {
                     // A clean editor may still contain the pre-sync remote
                     // payload. Reload it without starting Local Preview so the
                     // next explicit Preview uses the current production tree.
-                    await Editor.loadFile(currentPath);
+                    await Editor.loadFile(currentPath, { allowDuringGitSync: true });
                 }
             }
             await refreshLocalPreviewStatus();
@@ -679,6 +686,9 @@ async function runSync() {
             closeEmbeddedLocalPreview();
         }
     } finally {
+        if (previewPrepared || Editor.isGitSyncInProgress()) {
+            Editor.finishForGitSync();
+        }
         if (previewPrepared && syncResponseReceived && !syncCompleted) {
             // If Git sync failed before the server reset, restore the current
             // editor payload so an unsuccessful sync does not silently stop
@@ -689,7 +699,10 @@ async function runSync() {
                 console.error('[LocalPreview] failed to restore after Git sync', previewError);
             }
         }
-        if (btn) btn.textContent = originalText;
+        if (btn) {
+            btn.textContent = originalText;
+            btn.disabled = originalDisabled;
+        }
     }
 }
 
