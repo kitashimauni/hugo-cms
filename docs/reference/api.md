@@ -364,9 +364,12 @@ provider deploymentとremote draft branchをcleanupします。失敗時は再�
 ```json
 {
     "status": "ok",
-    "log": "Already up to date."
+    "log": "Already up to date.",
+    "local_preview_reset": true
 }
 ```
+
+Git Sync成功後は、対象siteのLocal Live Preview processとshadow workspaceを既存のcleanup gateで停止・detachします。次回Preview利用時に、更新後のproduction repository treeからlazy startします。`local_preview_reset`が`false`の場合もGit Sync自体は成功しており、`local_preview_reset_error`とserver logでPreview側の失敗を確認できます。
 
 ### POST /admin/api/publish
 

@@ -23,6 +23,11 @@ export function getCurrentPath() {
     return currentPath;
 }
 
+export function hasUnsavedChanges() {
+    if (!currentPath || currentPath === deletingPath) return false;
+    return JSON.stringify(getPayload()) !== lastSavedPayload;
+}
+
 export function getCurrentLocalPreviewFrontMatterKey() {
     if (!currentPath) return "";
     return JSON.stringify(getPayload().frontmatter ?? null);

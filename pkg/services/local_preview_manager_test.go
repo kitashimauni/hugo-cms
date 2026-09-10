@@ -323,6 +323,60 @@ func TestLocalPreviewManagerStopReleasesSlot(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewManagerResetRuntimeStopsAndDetachesWorkspace(t *testing.T) {
+	manager, site := newTestLocalPreviewManager(t)
+	defer shutdownTestLocalPreviewManager(t, manager)
+
+	repo := t.TempDir()
+	contentDir := filepath.Join(repo, "content")
+	if err := os.MkdirAll(contentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	productionPath := filepath.Join(contentDir, "one.md")
+	if err := os.WriteFile(productionPath, []byte("production before sync"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	site.RepoPath = repo
+
+	workspaceManager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.NewSiteRuntime(site)
+	workspace, created, applied, err := workspaceManager.Update(runtime, "one.md", 1, []byte("unsaved draft"))
+	if err != nil || !created || !applied {
+		t.Fatalf("Update() created=%v applied=%v err=%v", created, applied, err)
+	}
+
+	if _, err := manager.EnsureReady(site); err != nil {
+		t.Fatalf("EnsureReady() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := manager.ResetRuntime(ctx, site.ID, workspaceManager); err != nil {
+		t.Fatalf("ResetRuntime() error = %v", err)
+	}
+	if _, ok := manager.Status(site.ID); ok {
+		t.Fatal("ResetRuntime() should release the generator lifecycle slot")
+	}
+	if _, active := workspaceManager.Status(site.ID); active {
+		t.Fatal("ResetRuntime() should detach the shadow workspace")
+	}
+	if _, err := os.Stat(workspace.ContentDir); !os.IsNotExist(err) {
+		t.Fatalf("detached workspace content still exists: %v", err)
+	}
+	assertFileContent(t, productionPath, "production before sync")
+
+	if err := os.WriteFile(productionPath, []byte("production after sync"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	latest, created, applied, err := workspaceManager.Update(runtime, "one.md", 2, []byte("production after sync"))
+	if err != nil || !created || applied {
+		t.Fatalf("post-reset Update() created=%v applied=%v err=%v", created, applied, err)
+	}
+	assertWorkspaceFileContent(t, filepath.Join(latest.ContentDir, "one.md"), "production after sync")
+}
+
 func TestLocalPreviewManagerStopDoesNotWaitForCleanup(t *testing.T) {
 	lifecycle, err := NewLocalPreviewLifecycle(14100, 14100)
 	if err != nil {

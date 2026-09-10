@@ -235,10 +235,14 @@ async function loadFile(path) {
 async function refreshFileList() {
     try {
         const files = await API.fetchArticles();
-        if (files) UI.renderFileList(files, cmsConfig);
+        if (files) {
+            UI.renderFileList(files, cmsConfig);
+            return files;
+        }
     } catch (e) {
         UI.showToast("Failed to fetch file list", "error");
     }
+    return null;
 }
 
 async function switchView(viewName) {
@@ -621,17 +625,70 @@ async function runSync() {
     const originalText = btn ? btn.textContent : "Sync";
     if (btn) btn.textContent = "Syncing...";
 
+    const currentPath = Editor.getCurrentPath();
+    const editorHasUnsavedChanges = Editor.hasUnsavedChanges();
+    let previewPrepared = false;
+    let syncResponseReceived = false;
+    let syncCompleted = false;
     try {
+        // Stop sending editor payloads while the server pulls production and
+        // detaches the site-scoped shadow workspace. This prevents a delayed
+        // client update from recreating the pre-sync workspace afterwards.
+        await Editor.prepareLocalLivePreviewStop();
+        previewPrepared = true;
+
         const data = await API.runSync();
+        syncResponseReceived = true;
         if (data.status === 'ok') {
-            UI.showToast("Sync Complete", "success");
-            await refreshFileList();
+            syncCompleted = true;
+            resetLocalPreviewArticleURL();
+            closeEmbeddedLocalPreview();
+            if (data.local_preview_reset === false) {
+                UI.showToast("Sync Complete, but Local Live Preview reset failed", "warning");
+            } else {
+                UI.showToast("Sync Complete", "success");
+            }
+            const files = await refreshFileList();
+            if (currentPath && Array.isArray(files)) {
+                const currentFileStillExists = files.some(file => file.path === currentPath);
+                if (!currentFileStillExists) {
+                    if (editorHasUnsavedChanges) {
+                        UI.showToast("Current article was removed remotely; unsaved editor content was kept", "warning");
+                    } else {
+                        Editor.clearEditor();
+                    }
+                } else if (!editorHasUnsavedChanges) {
+                    // A clean editor may still contain the pre-sync remote
+                    // payload. Reload it without starting Local Preview so the
+                    // next explicit Preview uses the current production tree.
+                    await Editor.loadFile(currentPath);
+                }
+            }
+            await refreshLocalPreviewStatus();
         } else {
             UI.showToast("Sync Error: " + data.log, "error");
         }
     } catch (e) {
         UI.showToast("Network Error", "error");
+        if (previewPrepared && !syncResponseReceived) {
+            // The server may have completed the pull/reset even if the
+            // response was lost. Do not send the old editor payload back into
+            // a possibly-reset workspace; force the next Preview action to
+            // perform the authoritative resync instead.
+            resetLocalPreviewArticleURL();
+            closeEmbeddedLocalPreview();
+        }
     } finally {
+        if (previewPrepared && syncResponseReceived && !syncCompleted) {
+            // If Git sync failed before the server reset, restore the current
+            // editor payload so an unsuccessful sync does not silently stop
+            // the existing Local Preview update path.
+            try {
+                await Editor.refreshLocalLivePreview();
+            } catch (previewError) {
+                console.error('[LocalPreview] failed to restore after Git sync', previewError);
+            }
+        }
         if (btn) btn.textContent = originalText;
     }
 }

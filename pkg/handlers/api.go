@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"hugo-cms/pkg/config"
 	"hugo-cms/pkg/models"
 	"hugo-cms/pkg/services"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,7 +35,23 @@ func HandleSync(c *gin.Context) {
 		ErrorInternal(c, "Sync failed: "+log)
 		return
 	}
-	RespondOK(c, log)
+
+	response := gin.H{
+		"status":              "ok",
+		"log":                 log,
+		"local_preview_reset": true,
+	}
+	// Keep the cleanup independent of the browser connection: production sync
+	// has succeeded and the old preview must not survive a client disconnect.
+	if resetErr := services.ResetLocalPreviewForRuntime(context.Background(), runtime); resetErr != nil {
+		// Git sync has already succeeded. Keep the successful HTTP response but
+		// expose a separate diagnostic so the frontend can ask the user to
+		// reopen/retry Local Preview without misreporting the repository sync.
+		slog.Error("Git sync succeeded but Local Live Preview reset failed", "site", runtime.ID, "error", resetErr)
+		response["local_preview_reset"] = false
+		response["local_preview_reset_error"] = "Local Live Preview reset failed; see server log"
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func ListArticles(c *gin.Context) {

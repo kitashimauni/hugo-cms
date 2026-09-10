@@ -186,6 +186,8 @@ article切替ではbrowserがproduction saveとin-flight update完了を待ち�
 
 Eleventyでは同一contentのupdateをno-opにしてwatch rebuildを発生させない。content変更時のmetadata invalidationには対象pathを渡し、wrapperは一定時間build開始を観測できなければ対象fileのmtimeを再通知する。metadata endpointはinvalidation/build generationと最終build完了時刻を返し、URL解決timeoutやarticle not foundのserver logでbuild停滞とpath不一致を切り分けられる。
 
+Git Sync成功後はsite runtimeを既存のcleanup gateでresetする。generator processとshadow workspaceを停止・detachし、次回Preview requestで最新production treeからlazy startするため、content以外のconfig、layout、asset、dependency変更も古いprocessやEleventy overlayへ引き継がない。
+
 ### filesystem境界
 
 - article/resource pathは既存`SafeJoin`境界で検証

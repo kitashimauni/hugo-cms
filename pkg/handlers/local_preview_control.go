@@ -68,29 +68,13 @@ func StopLocalPreview(c *gin.Context) {
 		ErrorInternal(c, "Local preview workspace is unavailable")
 		return
 	}
-	cleanup, claimed, err := workspaceManager.BeginCleanup(runtime.ID)
-	if err != nil {
-		ErrorInternal(c, "Failed to prepare Local Live Preview cleanup")
-		return
-	}
-	if !claimed {
-		ErrorInternal(c, "Failed to prepare Local Live Preview cleanup")
-		return
-	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), services.DefaultLocalPreviewStopTimeout)
-	stopErr := services.DefaultLocalPreviewManager().Stop(ctx, runtime.ID)
+	resetErr := services.DefaultLocalPreviewManager().ResetRuntime(ctx, runtime.ID, workspaceManager)
 	cancel()
-	if stopErr != nil {
-		slog.Error("Failed to stop Local Live Preview process", "site", runtime.ID, "error", stopErr)
-		workspaceManager.CancelCleanup(&cleanup)
-		ErrorInternal(c, "Failed to stop Local Live Preview process")
-		return
-	}
-	if _, err := workspaceManager.FinishCleanup(&cleanup); err != nil {
-		workspaceManager.CancelCleanup(&cleanup)
-		slog.Error("Failed to detach Local Live Preview workspace", "site", runtime.ID, "error", err)
-		ErrorInternal(c, "Failed to clean up Local Live Preview workspace")
+	if resetErr != nil {
+		slog.Error("Failed to reset Local Live Preview", "site", runtime.ID, "error", resetErr)
+		ErrorInternal(c, "Failed to reset Local Live Preview")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "stopped"})
