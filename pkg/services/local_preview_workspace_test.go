@@ -51,6 +51,30 @@ func TestLocalPreviewWorkspaceAllowsIndependentTabsAndUsesServerRevision(t *test
 	assertFileContent(t, filepath.Join(third.ContentDir, "one.md"), "tab C")
 }
 
+func TestLocalPreviewWorkspaceSkipsIdenticalContentUpdates(t *testing.T) {
+	repo := makeLocalPreviewWorkspaceRepo(t)
+	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{ID: "tech", RepoPath: repo, ContentDir: "content"}
+	first, created, applied, err := manager.Update(runtime, "one.md", 1, []byte("same"))
+	if err != nil || !created || !applied || first.Revision != 1 {
+		t.Fatalf("first update = %#v created=%v applied=%v err=%v", first, created, applied, err)
+	}
+	hookCalled := false
+	second, created, applied, err := manager.UpdateWithBeforeWrite(runtime, "one.md", 2, []byte("same"), func() error {
+		hookCalled = true
+		return nil
+	})
+	if err != nil || created || applied || hookCalled {
+		t.Fatalf("identical update = %#v created=%v applied=%v hook=%v err=%v", second, created, applied, hookCalled, err)
+	}
+	if second.Revision != first.Revision || second.ContentDir != first.ContentDir {
+		t.Fatalf("identical update changed workspace metadata: first=%#v second=%#v", first, second)
+	}
+}
+
 func TestLocalPreviewWorkspaceReusesWorkspaceWhenArticleChanges(t *testing.T) {
 	repo := makeLocalPreviewWorkspaceRepo(t)
 	manager, err := NewLocalPreviewWorkspaceManager(t.TempDir())

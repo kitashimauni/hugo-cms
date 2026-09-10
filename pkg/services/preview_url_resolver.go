@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hugo-cms/pkg/config"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -290,7 +291,10 @@ func (resolver *eleventyPreviewURLResolver) ResolveArticleURL(ctx context.Contex
 }
 
 type eleventyRunningMetadata struct {
-	URL string `json:"url"`
+	URL                    string `json:"url"`
+	InvalidationGeneration uint64 `json:"invalidation_generation"`
+	ActiveBuildGeneration  uint64 `json:"active_build_generation"`
+	LastBuildCompletedAt   int64  `json:"last_build_completed_at"`
 }
 
 // resolveRunningEleventyArticleURL reads the URL map exposed by the running
@@ -328,12 +332,15 @@ func resolveRunningEleventyArticleURL(ctx context.Context, runtime config.SiteRu
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	ticker := time.NewTicker(defaultLocalPreviewProbeInterval)
 	defer ticker.Stop()
+	lastMetadataStatus := "not_observed"
+	var lastMetadata eleventyRunningMetadata
 
 	for {
 		request, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 		if requestErr == nil {
 			response, requestErr := client.Do(request)
 			if requestErr == nil {
+				lastMetadataStatus = response.Status
 				switch response.StatusCode {
 				case http.StatusOK:
 					var metadata eleventyRunningMetadata
@@ -347,10 +354,19 @@ func resolveRunningEleventyArticleURL(ctx context.Context, runtime config.SiteRu
 					}
 					return localPreviewArticleURL(previewURL, metadata.URL)
 				case http.StatusNotFound:
+					decodeErr := json.NewDecoder(response.Body).Decode(&lastMetadata)
 					_ = response.Body.Close()
+					if decodeErr != nil {
+						lastMetadata = eleventyRunningMetadata{}
+					}
+					slog.Warn("Eleventy metadata article not found", "site", runtime.ID, "article_path", articlePath, "metadata_status", lastMetadataStatus, "metadata_generation", lastMetadata.InvalidationGeneration, "active_build_generation", lastMetadata.ActiveBuildGeneration, "last_build_completed_at", lastMetadata.LastBuildCompletedAt)
 					return "", fmt.Errorf("eleventy did not resolve article %q", articlePath)
 				case http.StatusServiceUnavailable:
+					decodeErr := json.NewDecoder(response.Body).Decode(&lastMetadata)
 					_ = response.Body.Close()
+					if decodeErr != nil {
+						lastMetadata = eleventyRunningMetadata{}
+					}
 				default:
 					status := response.Status
 					_ = response.Body.Close()
@@ -362,6 +378,7 @@ func resolveRunningEleventyArticleURL(ctx context.Context, runtime config.SiteRu
 		select {
 		case <-ctx.Done():
 			if ctx.Err() == context.DeadlineExceeded {
+				slog.Warn("Eleventy metadata stuck building", "site", runtime.ID, "article_path", articlePath, "metadata_status", lastMetadataStatus, "metadata_generation", lastMetadata.InvalidationGeneration, "active_build_generation", lastMetadata.ActiveBuildGeneration, "last_build_completed_at", lastMetadata.LastBuildCompletedAt)
 				return "", fmt.Errorf("eleventy running preview URL resolution timed out after %s", timeout)
 			}
 			return "", ctx.Err()

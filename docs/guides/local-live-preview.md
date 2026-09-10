@@ -206,7 +206,7 @@ CMS側iframeにはsandboxを付け、top-level navigation等を許可しませ�
 
 ## article/site切替とcleanup
 
-article切替では、現在記事のproduction保存とin-flight Local Preview updateの完了を待ってから、同じsite workspaceへ新しい記事pathを反映します。generator process、project overlay、shadow workspaceは再利用し、watch rebuildとgenerator準拠のURL解決だけを行います。browser tab ownershipを持たないため、記事切替でstop/releaseは実行しません。
+article切替では、現在記事のproduction保存とin-flight Local Preview updateの完了を待ってから、同じsite workspaceへ新しい記事pathを反映します。generator process、project overlay、shadow workspaceは再利用し、watch rebuildとgenerator準拠のURL解決だけを行います。browser tab ownershipを持たないため、記事切替でstop/releaseは実行しません。Previewの再表示では、現在のeditor payloadがshadowへ同期済みでruntimeもactiveなら既存workspaceをそのままURL解決し、不要なupdate/invalidationを発生させません。
 
 UIの明示的な停止では、clientがdebounce済みの更新をキャンセルし、送信済みの更新完了を待ってからsite runtimeを停止します。idle timeout、CMS shutdownを含め、site runtimeは次の順で終了します。
 

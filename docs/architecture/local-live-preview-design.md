@@ -168,6 +168,7 @@ browserはdocumentごとの単調増加`revision`を送る。
 - `revision == 0`は拒否
 - server側でsite単位のrevisionを採番し、client revisionをtab間のordering判定に使わない
 - 複数tabのupdateはlast-write-winsで受理する
+- shadow上の対象contentが受信contentと同一ならrevision、atomic replace、metadata invalidationを行わずactivityだけ更新する
 - 対象記事はtemporary fileからreplaceする
 
 ### content resource同期
@@ -181,6 +182,8 @@ static配下はHugoが元repositoryを直接参照するためshadow同期しな
 Local Previewは完全にsite-scopedであり、browser tab ownership、lease、heartbeat、stale reclaimを持たない。同じsiteへの複数tabのupdateは同じshadow workspaceへlast-write-winsで適用する。update、記事URL解決、preview ingress、content resource同期はsite runtimeの`lastActivity`を更新する。
 
 article切替ではbrowserがproduction saveとin-flight update完了を待ち、同じsite workspaceへ選択pathを反映する。generator process、Eleventy project overlay、shadow workspaceは再作成しない。serverは受理したupdateごとにserver側revisionと現在記事pathを更新し、watch rebuild後に要求pathのURLを解決する。明示的な停止またはidle timeoutではcleanup leaseがsiteのwrite gateを取得してgenerator processを停止し、workspace rootを一意なcleanup領域へrenameして論理的にdetachする。その間、ingress、update、resource同期、記事URL解決はread gateを保持し、cleanup開始時のgenerationを跨いでgate待ちした要求は503またはno-opとして古いworkspaceを再作成しない。その後のshadow directoryの物理削除は非同期で行い、準備後のHTTP/WebSocket streamingはgate外で実行する。
+
+Eleventyでは同一contentのupdateをno-opにしてwatch rebuildを発生させない。content変更時のmetadata invalidationには対象pathを渡し、wrapperは一定時間build開始を観測できなければ対象fileのmtimeを再通知する。metadata endpointはinvalidation/build generationと最終build完了時刻を返し、URL解決timeoutやarticle not foundのserver logでbuild停滞とpath不一致を切り分けられる。
 
 ### filesystem境界
 

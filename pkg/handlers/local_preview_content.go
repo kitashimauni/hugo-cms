@@ -57,7 +57,7 @@ func UpdateLocalPreviewContent(c *gin.Context) {
 		return
 	}
 	workspace, created, applied, err := workspaceManager.UpdateWithBeforeWrite(runtime, req.Path, req.Revision, finalContent, func() error {
-		return services.DefaultLocalPreviewManager().InvalidateArticleURL(runtime)
+		return services.DefaultLocalPreviewManager().InvalidateArticleURL(runtime, req.Path)
 	})
 	if err != nil {
 		if errors.Is(err, services.ErrLocalPreviewCleanupTransition) {

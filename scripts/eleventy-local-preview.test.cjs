@@ -10,6 +10,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  createBuildState,
   createLoopbackServer,
   configureProjectDirectories,
   findOutputFile,
@@ -259,6 +260,26 @@ test("uses the project-root overlay in JSON mode", () => {
   }
 });
 
+test("re-notifies a missed watcher event after invalidation", async () => {
+  const input = fs.mkdtempSync(path.join(os.tmpdir(), "homecms-eleventy-recovery-"));
+  const article = path.join(input, "posts", "one.md");
+  fs.mkdirSync(path.dirname(article), { recursive: true });
+  fs.writeFileSync(article, "# one\n");
+  const state = createBuildState(input);
+  try {
+    const before = fs.statSync(article).mtimeMs;
+    assert.equal(state.invalidate("posts/one.md"), 1);
+    assert.equal(state.diagnostics().invalidation_generation, 1);
+    await new Promise(resolve => setTimeout(resolve, 900));
+    assert.ok(fs.statSync(article).mtimeMs > before, "watcher recovery did not touch the article");
+  } finally {
+    state.activeBuildGeneration = state.invalidationGeneration;
+    state.update([]);
+    state.stopRecovery();
+    fs.rmSync(input, { recursive: true, force: true });
+  }
+});
+
 test("resolves a real Eleventy 3.x project in JSON mode", { skip: !hasRealEleventy() }, () => {
   const fixture = createEleventyFixture();
   try {
@@ -367,24 +388,13 @@ test("starts real Eleventy serve and broadcasts LiveReload", { skip: !hasRealEle
       });
       reloadSocket.once("error", reject);
     });
-    const invalidated = await requestHTTP(port, "/__hugo_cms_invalidate", "POST");
+    const invalidated = await requestHTTP(port, "/__hugo_cms_invalidate?path=posts%2Fone.md", "POST");
     assert.equal(invalidated.statusCode, 202);
     const invalidatedMetadata = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
     assert.equal(invalidatedMetadata.statusCode, 503);
     const updatedArticle = ["---", "title: Changed", "permalink: /custom/changed/", "---", "", "# {{ title }}", ""].join("\n");
     fs.writeFileSync(fixture.article, updatedArticle);
-    // The first filesystem event can be coalesced with Eleventy's initial
-    // watch setup on a busy runner. Repeat the same write until the watcher
-    // acknowledges the rebuild so the test checks the LiveReload contract
-    // instead of depending on one platform-specific event delivery.
-    const retryWrite = setInterval(() => {
-      if (!reloadReceived) fs.writeFileSync(fixture.article, updatedArticle);
-    }, 1000);
-    try {
-      await reload;
-    } finally {
-      clearInterval(retryWrite);
-    }
+    await reload;
     const updatedMetadata = await waitForHTTPStatus(port, "/__hugo_cms_metadata?path=posts%2Fone.md", 200);
     assert.equal(updatedMetadata.statusCode, 200);
     assert.equal(JSON.parse(updatedMetadata.body).url, "/custom/changed/");
