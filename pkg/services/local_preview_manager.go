@@ -681,7 +681,9 @@ func (m *LocalPreviewManager) Proxy(w http.ResponseWriter, r *http.Request, site
 // InvalidateArticleURL marks the next Eleventy watch build as required before
 // shadow content is written. A running process is optional: a process started
 // after the write will always build the latest workspace content from scratch.
-func (m *LocalPreviewManager) InvalidateArticleURL(runtime config.SiteRuntime) error {
+// The optional article path lets the wrapper re-notify its watcher if the
+// first filesystem event is coalesced.
+func (m *LocalPreviewManager) InvalidateArticleURL(runtime config.SiteRuntime, articlePaths ...string) error {
 	if !isEleventyLocalPreviewGenerator(runtime.Generator) {
 		return nil
 	}
@@ -694,7 +696,16 @@ func (m *LocalPreviewManager) InvalidateArticleURL(runtime config.SiteRuntime) e
 		return nil
 	}
 	address := net.JoinHostPort(LocalPreviewBindAddress, strconv.Itoa(slot.Port))
-	request, err := http.NewRequest(http.MethodPost, "http://"+address+eleventyLocalPreviewInvalidatePath, nil)
+	endpoint := url.URL{Scheme: "http", Host: address, Path: eleventyLocalPreviewInvalidatePath}
+	if len(articlePaths) > 0 {
+		articlePath := filepath.Clean(strings.TrimSpace(articlePaths[0]))
+		if articlePath != "." && !filepath.IsAbs(articlePath) {
+			query := endpoint.Query()
+			query.Set("path", filepath.ToSlash(articlePath))
+			endpoint.RawQuery = query.Encode()
+		}
+	}
+	request, err := http.NewRequest(http.MethodPost, endpoint.String(), nil)
 	if err != nil {
 		return fmt.Errorf("%w: create request: %v", ErrLocalPreviewMetadataInvalidation, err)
 	}
@@ -736,7 +747,12 @@ func (m *LocalPreviewManager) ResolveArticleURL(ctx context.Context, runtime con
 	if process == nil || process.exited() {
 		return "", fmt.Errorf("Eleventy local preview process is not running")
 	}
-	return resolveRunningEleventyArticleURL(ctx, runtime, slot.Port, articlePath)
+	articleURL, err := resolveRunningEleventyArticleURL(ctx, runtime, slot.Port, articlePath)
+	if err != nil {
+		slog.Warn("Eleventy local preview URL resolution failed", "site", runtime.ID, "article_path", articlePath, "process_state", slot.State, "error", err)
+		return "", err
+	}
+	return articleURL, nil
 }
 
 func (m *LocalPreviewManager) ProxyRuntime(w http.ResponseWriter, r *http.Request, runtime config.SiteRuntime) error {

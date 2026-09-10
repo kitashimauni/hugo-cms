@@ -13,6 +13,8 @@ const RELOAD_SOCKET_PATH = "/__hugo_cms_live_reload";
 const READY_PATH = "/__hugo_cms_ready";
 const METADATA_PATH = "/__hugo_cms_metadata";
 const INVALIDATE_PATH = "/__hugo_cms_invalidate";
+const WATCH_RECOVERY_DELAY_MS = 750;
+const WATCH_RECOVERY_INTERVAL_MS = 1000;
 const RELOAD_SCRIPT = `(() => {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(protocol + "//" + location.host + "${RELOAD_SOCKET_PATH}");
@@ -66,6 +68,37 @@ function createBuildState(input) {
     entries: new Map(),
     invalidationGeneration: 0,
     activeBuildGeneration: 0,
+    invalidationAt: 0,
+    invalidationPath: "",
+    lastBuildCompletedAt: 0,
+    recoveryTimer: null,
+  };
+  const clearRecoveryTimer = () => {
+    if (state.recoveryTimer !== null) {
+      clearTimeout(state.recoveryTimer);
+      state.recoveryTimer = null;
+    }
+  };
+  const scheduleRecovery = () => {
+    if (state.recoveryTimer !== null) return;
+    const recover = () => {
+      state.recoveryTimer = null;
+      if (state.ready || state.activeBuildGeneration >= state.invalidationGeneration || !state.invalidationPath) return;
+      const articlePath = path.resolve(state.inputRoot, state.invalidationPath);
+      try {
+        const inputRoot = path.resolve(state.inputRoot);
+        const relativePath = path.relative(inputRoot, articlePath);
+        if (relativePath.startsWith(".." + path.sep) || path.isAbsolute(relativePath)) return;
+        fs.utimesSync(articlePath, new Date(), new Date());
+      } catch (_) {
+        // The update may still be writing the file. Keep retrying until a
+        // build observes the invalidation or the process is stopped.
+      }
+      state.recoveryTimer = setTimeout(recover, WATCH_RECOVERY_INTERVAL_MS);
+      state.recoveryTimer.unref?.();
+    };
+    state.recoveryTimer = setTimeout(recover, WATCH_RECOVERY_DELAY_MS);
+    state.recoveryTimer.unref?.();
   };
   state.begin = () => {
     state.activeBuildGeneration = state.invalidationGeneration;
@@ -94,13 +127,33 @@ function createBuildState(input) {
     state.entries = entries;
     state.ready = state.activeBuildGeneration >= state.invalidationGeneration;
     state.building = !state.ready;
+    state.lastBuildCompletedAt = Date.now();
+    if (state.ready) {
+      state.invalidationAt = 0;
+      state.invalidationPath = "";
+      clearRecoveryTimer();
+    }
   };
-  state.invalidate = () => {
+  state.invalidate = (articlePath = "") => {
     state.invalidationGeneration += 1;
     state.ready = false;
     state.building = true;
+    state.invalidationAt = Date.now();
+    const absoluteArticlePath = path.resolve(state.inputRoot, articlePath);
+    const relativeArticlePath = path.relative(state.inputRoot, absoluteArticlePath);
+    state.invalidationPath = articlePath && relativeArticlePath && !relativeArticlePath.startsWith(".." + path.sep) && !path.isAbsolute(relativeArticlePath)
+      ? normalizeMetadataPath(relativeArticlePath)
+      : "";
+    clearRecoveryTimer();
+    scheduleRecovery();
     return state.invalidationGeneration;
   };
+  state.diagnostics = () => ({
+    invalidation_generation: state.invalidationGeneration,
+    active_build_generation: state.activeBuildGeneration,
+    last_build_completed_at: state.lastBuildCompletedAt,
+    invalidation_at: state.invalidationAt,
+  });
   state.get = (articlePath) => {
     const absoluteArticlePath = path.resolve(state.inputRoot, articlePath);
     const relativeArticlePath = path.relative(state.inputRoot, absoluteArticlePath);
@@ -109,6 +162,7 @@ function createBuildState(input) {
     }
     return state.entries.get(normalizeMetadataPath(relativeArticlePath)) || null;
   };
+  state.stopRecovery = clearRecoveryTimer;
   return state;
 }
 
@@ -234,22 +288,22 @@ function createLoopbackServer(outputRoot, buildState = { ready: true, building: 
         sendJSON(response, 405, { status: "method_not_allowed" });
         return;
       }
-      const generation = buildState.invalidate?.() || 0;
-      sendJSON(response, 202, { status: "invalidated", generation });
+      const generation = buildState.invalidate?.(requestURL.searchParams.get("path") || "") || 0;
+      sendJSON(response, 202, { status: "invalidated", generation, ...buildState.diagnostics?.() });
       return;
     }
     if (requestURL.pathname === METADATA_PATH) {
       if (!buildState.ready) {
-        sendJSON(response, 503, { status: "building" });
+        sendJSON(response, 503, { status: "building", ...buildState.diagnostics?.() });
         return;
       }
       const articlePath = requestURL.searchParams.get("path");
       const metadata = articlePath ? buildState.get(articlePath) : null;
       if (!metadata) {
-        sendJSON(response, 404, { status: "not_found" });
+        sendJSON(response, 404, { status: "not_found", ...buildState.diagnostics?.() });
         return;
       }
-      sendJSON(response, 200, { status: "resolved", ...metadata });
+      sendJSON(response, 200, { status: "resolved", ...buildState.diagnostics?.(), ...metadata });
       return;
     }
     if (requestURL.pathname === RELOAD_SCRIPT_PATH) {
@@ -368,6 +422,7 @@ async function main(argv = process.argv.slice(2)) {
     await eleventy.init();
     await eleventy.watch();
   } catch (error) {
+    buildState?.stopRecovery?.();
     await closeServer(server);
     throw error;
   }
@@ -376,6 +431,7 @@ async function main(argv = process.argv.slice(2)) {
     if (stopping) return;
     stopping = true;
     await eleventy.stopWatch();
+    buildState?.stopRecovery?.();
     await closeServer(server);
     process.exit(0);
   };

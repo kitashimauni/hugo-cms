@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"hugo-cms/pkg/config"
@@ -304,6 +305,17 @@ func (m *LocalPreviewWorkspaceManager) update(runtime config.SiteRuntime, articl
 			_ = os.RemoveAll(filepath.Dir(workspace.ContentDir))
 		}
 		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("invalid local preview workspace path")
+	}
+	if existing, err := os.ReadFile(target); err == nil && bytes.Equal(existing, content) {
+		workspace.LastActivityAt = now
+		m.workspaces[runtime.ID] = workspace
+		m.activities[runtime.ID] = now
+		return workspace, created, false, nil
+	} else if err != nil && !os.IsNotExist(err) {
+		if created {
+			_ = os.RemoveAll(filepath.Dir(workspace.ContentDir))
+		}
+		return LocalPreviewWorkspace{}, false, false, fmt.Errorf("read local preview target: %w", err)
 	}
 	if beforeWrite != nil {
 		if err := beforeWrite(); err != nil {
