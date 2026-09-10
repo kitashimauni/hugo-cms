@@ -218,7 +218,7 @@ async function loadFile(path) {
             narrowViewport: isNarrowViewport(),
         }) ? 'split' : 'edit');
         try {
-            if (localPreviewContentNeedsSync()) await Editor.refreshLocalLivePreview();
+            await Editor.refreshLocalLivePreview();
             const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
             if (Editor.getCurrentPath() === path && !articleURL) {
                 throw new Error('generatorから記事URLを取得できませんでした');
@@ -258,10 +258,6 @@ function localPreviewURL() {
 
 function currentLocalPreviewURL() {
     return Editor.getCurrentPath() ? localPreviewArticleURL : localPreviewURL();
-}
-
-function localPreviewContentNeedsSync() {
-    return !Editor.isLocalLivePreviewCurrent() || localPreviewState?.workspace_active === false;
 }
 
 function isNarrowViewport() {
@@ -561,7 +557,7 @@ async function openLocalLivePreview() {
     }
     try {
         if (Editor.getCurrentPath()) {
-            if (localPreviewContentNeedsSync()) await Editor.refreshLocalLivePreview();
+            await Editor.refreshLocalLivePreview();
             const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
             if (!articleURL) throw new Error('generatorから記事URLを取得できませんでした');
         }
@@ -589,7 +585,7 @@ async function toggleEmbeddedLocalPreview() {
     try {
         localPreviewFrameController?.resetDismissed();
         if (Editor.getCurrentPath()) {
-            if (localPreviewContentNeedsSync()) await Editor.refreshLocalLivePreview();
+            await Editor.refreshLocalLivePreview();
             const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
             if (!articleURL) throw new Error('generatorから記事URLを取得できませんでした');
         }
