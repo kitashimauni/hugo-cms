@@ -169,6 +169,7 @@ browserはdocumentごとの単調増加`revision`を送る。
 - server側でsite単位のrevisionを採番し、client revisionをtab間のordering判定に使わない
 - 複数tabのupdateはlast-write-winsで受理する
 - shadow上の対象contentが受信contentと同一ならrevision、atomic replace、metadata invalidationを行わずactivityだけ更新する
+- Previewの明示的な再表示ではclient-localな同期済み判定を使わず、現在のeditor payloadを再送する。同一contentなら上記no-opで処理する
 - 対象記事はtemporary fileからreplaceする
 
 ### content resource同期

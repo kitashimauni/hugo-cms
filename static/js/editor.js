@@ -14,7 +14,6 @@ let previewController = null;
 let previewRevision = 0;
 let localPreviewTimer = null;
 let localPreviewRevision = 0;
-let localPreviewSyncedPayloadKey = "";
 const localPreviewInflight = new Set();
 
 const PREVIEW_DEBOUNCE_MS = 180;
@@ -225,7 +224,6 @@ function cancelLocalPreviewTimer() {
 
 function resetLocalPreviewClientState() {
     localPreviewRevision = 0;
-    localPreviewSyncedPayloadKey = "";
 }
 
 function scheduleLocalLivePreview() {
@@ -243,16 +241,12 @@ export async function refreshLocalLivePreview() {
 
     const revision = ++localPreviewRevision;
     const payload = getPayload();
-    const payloadKey = JSON.stringify(payload);
     const frontMatterKey = JSON.stringify(payload.frontmatter ?? null);
 
     const request = API.updateLocalPreviewContent(payload, revision);
     localPreviewInflight.add(request);
     try {
         const result = await request;
-        if (currentPath === payload.path && currentPath !== deletingPath) {
-            localPreviewSyncedPayloadKey = payloadKey;
-        }
         if (typeof window.refreshLocalPreviewArticleURL === 'function') {
             window.refreshLocalPreviewArticleURL(result, frontMatterKey).catch(() => undefined);
         }
@@ -263,11 +257,6 @@ export async function refreshLocalLivePreview() {
     } finally {
         localPreviewInflight.delete(request);
     }
-}
-
-export function isLocalLivePreviewCurrent() {
-    if (!localPreviewEnabled() || !currentPath || currentPath === deletingPath) return false;
-    return localPreviewSyncedPayloadKey === JSON.stringify(getPayload());
 }
 
 // Destructive article/site operations must wait for preview writes that have
