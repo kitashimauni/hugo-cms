@@ -421,6 +421,7 @@ export async function loadFile(path, { allowDuringGitSync = false } = {}) {
         const data = await API.fetchArticle(path);
         currentData = data;
         UI.updateEditorContent(data, path, cmsConfig);
+        setEditorWritePaused(gitSyncInProgress);
 
         lastSavedPayload = JSON.stringify(getPayload());
         lastQueuedPayload = "";
