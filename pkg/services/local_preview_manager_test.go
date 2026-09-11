@@ -360,6 +360,9 @@ func TestLocalPreviewManagerProcessExitDoesNotReleaseStoppingSlot(t *testing.T) 
 	if slot.State != LocalPreviewStopping {
 		t.Fatalf("slot.State = %q, want stopping", slot.State)
 	}
+	if manager.process(siteID) != process {
+		t.Fatal("process exit callback removed the process mapping while stopping")
+	}
 }
 
 func TestLocalPreviewManagerResetRuntimeStopsAndDetachesWorkspace(t *testing.T) {

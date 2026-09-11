@@ -592,12 +592,17 @@ func (m *LocalPreviewManager) handleProcessExit(siteID string, process *managedL
 	if m.process(siteID) != process {
 		return
 	}
-	m.removeProcessIfCurrent(siteID, process)
-
 	slot, ok := m.lifecycle.Get(siteID)
 	if !ok {
 		return
 	}
+	if slot.State == LocalPreviewStopping {
+		// Stop owns the process mapping and lifecycle release while a process
+		// tree termination is in flight. The parent may have exited while a
+		// wrapper child still holds the process group alive.
+		return
+	}
+	m.removeProcessIfCurrent(siteID, process)
 	switch slot.State {
 	case LocalPreviewReady:
 		_, _ = m.lifecycle.Transition(siteID, LocalPreviewFailed, process.processError())
