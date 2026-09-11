@@ -100,6 +100,40 @@ func TestNavigateLocalPreviewAcceptsAnyTabAndArticle(t *testing.T) {
 	}
 }
 
+func TestNavigateLocalPreviewReturnsMetadataFreshness(t *testing.T) {
+	site, _ := localPreviewNavigationTestSite(t)
+	configureLocalPreviewNavigationTestSite(t, site)
+	workspaceManager := &fakeLocalPreviewNavigationWorkspaceManager{
+		workspace: services.LocalPreviewWorkspace{SiteID: site.ID, ArticlePath: "one.md", ContentDir: filepath.Join(site.RepoPath, "shadow", "content"), Revision: 4},
+		active:    true,
+	}
+	response := executeLocalPreviewNavigationRequest(t, site.ID, localPreviewNavigationDependencies{
+		workspaceManager: workspaceManager,
+		resolveArticleURLWithMetadata: func(context.Context, config.SiteRuntime, services.LocalPreviewWorkspace, string) (services.PreviewArticleURLResolution, error) {
+			return services.PreviewArticleURLResolution{
+				URL:                    "https://tech.preview.example.com/old/",
+				Fresh:                  false,
+				Status:                 "stale",
+				InvalidationGeneration: 12,
+				ActiveBuildGeneration:  11,
+			}, nil
+		},
+	}, "one.md")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var payload map[string]interface{}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["fresh"] != false || payload["metadata_status"] != "stale" || payload["article_url"] != "https://tech.preview.example.com/old/" {
+		t.Fatalf("response = %#v", payload)
+	}
+	if int(payload["invalidation_generation"].(float64)) != 12 || int(payload["active_build_generation"].(float64)) != 11 {
+		t.Fatalf("response generations = %#v", payload)
+	}
+}
+
 func TestNavigateLocalPreviewRequiresActiveWorkspace(t *testing.T) {
 	site, _ := localPreviewNavigationTestSite(t)
 	configureLocalPreviewNavigationTestSite(t, site)

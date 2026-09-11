@@ -160,6 +160,9 @@ export function initAutoSave() {
 
 function handleEditorChange() {
     if (gitSyncInProgress) return;
+    if (currentData && typeof currentData.raw_content === 'string') {
+        currentData.raw_content = '';
+    }
     triggerAutoSave();
     scheduleMarkdownPreview();
     scheduleLocalLivePreview();
@@ -463,6 +466,9 @@ export async function loadFile(path, { allowDuringGitSync = false } = {}) {
 }
 
 function getPayload() {
+    if (currentData?.path === currentPath && typeof currentData.raw_content === 'string' && currentData.raw_content !== '') {
+        return { path: currentPath, content: currentData.raw_content };
+    }
     const payload = { path: currentPath };
     const fm = UI.collectFrontMatter();
     if (fm) {

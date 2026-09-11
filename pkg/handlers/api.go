@@ -100,6 +100,7 @@ func GetArticle(c *gin.Context) {
 
 	c.JSON(http.StatusOK, models.Article{
 		Path:        targetPath,
+		RawContent:  string(content),
 		FrontMatter: fm,
 		Body:        body,
 		Format:      format,
