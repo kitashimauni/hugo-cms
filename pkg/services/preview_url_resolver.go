@@ -28,6 +28,19 @@ type PreviewURLResolver interface {
 	ResolveArticleURL(context.Context, config.SiteRuntime, LocalPreviewWorkspace, string) (string, error)
 }
 
+// PreviewArticleURLResolution describes both the URL currently known by the
+// generator and whether it came from the completed build generation. Eleventy
+// can return a last-known URL while a watch build is running; callers may use
+// Fresh to navigate immediately and reconcile with the authoritative URL once
+// the build completes.
+type PreviewArticleURLResolution struct {
+	URL                    string
+	Fresh                  bool
+	Status                 string
+	InvalidationGeneration uint64
+	ActiveBuildGeneration  uint64
+}
+
 func NewPreviewURLResolver(generator string) (PreviewURLResolver, error) {
 	switch strings.ToLower(strings.TrimSpace(generator)) {
 	case "", "hugo":
@@ -292,26 +305,36 @@ func (resolver *eleventyPreviewURLResolver) ResolveArticleURL(ctx context.Contex
 
 type eleventyRunningMetadata struct {
 	URL                    string `json:"url"`
+	Status                 string `json:"status"`
+	Fresh                  *bool  `json:"fresh"`
 	InvalidationGeneration uint64 `json:"invalidation_generation"`
 	ActiveBuildGeneration  uint64 `json:"active_build_generation"`
 	LastBuildCompletedAt   int64  `json:"last_build_completed_at"`
 }
 
 // resolveRunningEleventyArticleURL reads the URL map exposed by the running
-// Eleventy helper. A 503 means the watcher is still building (or rebuilding),
-// so the request waits for the next completed build instead of starting a
-// second Eleventy process.
+// Eleventy helper. A known article may return a stale last-known URL while the
+// watcher is rebuilding; a 503 means no URL is known yet, so the request waits
+// for the next completed build instead of starting a second Eleventy process.
 func resolveRunningEleventyArticleURL(ctx context.Context, runtime config.SiteRuntime, port int, articlePath string) (string, error) {
-	previewURL, err := localPreviewResolverURL(runtime)
+	resolution, err := resolveRunningEleventyArticleURLResolution(ctx, runtime, port, articlePath)
 	if err != nil {
 		return "", err
 	}
+	return resolution.URL, nil
+}
+
+func resolveRunningEleventyArticleURLResolution(ctx context.Context, runtime config.SiteRuntime, port int, articlePath string) (PreviewArticleURLResolution, error) {
+	previewURL, err := localPreviewResolverURL(runtime)
+	if err != nil {
+		return PreviewArticleURLResolution{}, err
+	}
 	articlePath = filepath.Clean(strings.TrimSpace(articlePath))
 	if articlePath == "." || filepath.IsAbs(articlePath) {
-		return "", fmt.Errorf("invalid preview article path")
+		return PreviewArticleURLResolution{}, fmt.Errorf("invalid preview article path")
 	}
 	if port < 1 || port > 65535 {
-		return "", fmt.Errorf("invalid local preview port %d", port)
+		return PreviewArticleURLResolution{}, fmt.Errorf("invalid local preview port %d", port)
 	}
 
 	if ctx == nil {
@@ -347,12 +370,34 @@ func resolveRunningEleventyArticleURL(ctx context.Context, runtime config.SiteRu
 					decodeErr := json.NewDecoder(response.Body).Decode(&metadata)
 					_ = response.Body.Close()
 					if decodeErr != nil {
-						return "", fmt.Errorf("decode Eleventy metadata: %w", decodeErr)
+						return PreviewArticleURLResolution{}, fmt.Errorf("decode Eleventy metadata: %w", decodeErr)
 					}
 					if strings.TrimSpace(metadata.URL) == "" {
-						return "", fmt.Errorf("Eleventy metadata did not provide a URL for article %q", articlePath)
+						return PreviewArticleURLResolution{}, fmt.Errorf("Eleventy metadata did not provide a URL for article %q", articlePath)
 					}
-					return localPreviewArticleURL(previewURL, metadata.URL)
+					fresh := metadata.Status != "stale"
+					if metadata.Fresh != nil {
+						fresh = *metadata.Fresh
+					}
+					status := strings.TrimSpace(metadata.Status)
+					if status == "" {
+						if fresh {
+							status = "resolved"
+						} else {
+							status = "stale"
+						}
+					}
+					resolvedURL, urlErr := localPreviewArticleURL(previewURL, metadata.URL)
+					if urlErr != nil {
+						return PreviewArticleURLResolution{}, urlErr
+					}
+					return PreviewArticleURLResolution{
+						URL:                    resolvedURL,
+						Fresh:                  fresh,
+						Status:                 status,
+						InvalidationGeneration: metadata.InvalidationGeneration,
+						ActiveBuildGeneration:  metadata.ActiveBuildGeneration,
+					}, nil
 				case http.StatusNotFound:
 					decodeErr := json.NewDecoder(response.Body).Decode(&lastMetadata)
 					_ = response.Body.Close()
@@ -360,7 +405,7 @@ func resolveRunningEleventyArticleURL(ctx context.Context, runtime config.SiteRu
 						lastMetadata = eleventyRunningMetadata{}
 					}
 					slog.Warn("Eleventy metadata article not found", "site", runtime.ID, "article_path", articlePath, "metadata_status", lastMetadataStatus, "metadata_generation", lastMetadata.InvalidationGeneration, "active_build_generation", lastMetadata.ActiveBuildGeneration, "last_build_completed_at", lastMetadata.LastBuildCompletedAt)
-					return "", fmt.Errorf("eleventy did not resolve article %q", articlePath)
+					return PreviewArticleURLResolution{}, fmt.Errorf("eleventy did not resolve article %q", articlePath)
 				case http.StatusServiceUnavailable:
 					decodeErr := json.NewDecoder(response.Body).Decode(&lastMetadata)
 					_ = response.Body.Close()
@@ -370,7 +415,7 @@ func resolveRunningEleventyArticleURL(ctx context.Context, runtime config.SiteRu
 				default:
 					status := response.Status
 					_ = response.Body.Close()
-					return "", fmt.Errorf("Eleventy metadata endpoint returned %s", status)
+					return PreviewArticleURLResolution{}, fmt.Errorf("Eleventy metadata endpoint returned %s", status)
 				}
 			}
 		}
@@ -379,9 +424,9 @@ func resolveRunningEleventyArticleURL(ctx context.Context, runtime config.SiteRu
 		case <-ctx.Done():
 			if ctx.Err() == context.DeadlineExceeded {
 				slog.Warn("Eleventy metadata stuck building", "site", runtime.ID, "article_path", articlePath, "metadata_status", lastMetadataStatus, "metadata_generation", lastMetadata.InvalidationGeneration, "active_build_generation", lastMetadata.ActiveBuildGeneration, "last_build_completed_at", lastMetadata.LastBuildCompletedAt)
-				return "", fmt.Errorf("eleventy running preview URL resolution timed out after %s", timeout)
+				return PreviewArticleURLResolution{}, fmt.Errorf("eleventy running preview URL resolution timed out after %s", timeout)
 			}
-			return "", ctx.Err()
+			return PreviewArticleURLResolution{}, ctx.Err()
 		case <-ticker.C:
 		}
 	}

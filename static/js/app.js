@@ -27,12 +27,14 @@ let localPreviewController = null;
 let localPreviewOperationInProgress = false;
 let localPreviewFrameController = null;
 let localPreviewArticleURL = "";
+let localPreviewArticleURLFresh = false;
 let localPreviewURLResolutionGeneration = 0;
 let localPreviewFrontMatterKey = "";
 let localPreviewArticleURLKey = "";
 let localPreviewURLResolution = null;
 
 const LOCAL_PREVIEW_POLL_MS = 3000;
+const LOCAL_PREVIEW_FRESH_NAVIGATION_MAX_ATTEMPTS = 120;
 
 init();
 
@@ -135,6 +137,7 @@ function resetLocalPreviewArticleURL() {
     cancelLocalPreviewURLResolution();
     localPreviewURLResolutionGeneration += 1;
     localPreviewArticleURL = "";
+    localPreviewArticleURLFresh = false;
     localPreviewArticleURLKey = "";
     localPreviewFrontMatterKey = "";
 }
@@ -223,7 +226,7 @@ async function loadFile(path) {
             if (Editor.getCurrentPath() === path && !articleURL) {
                 throw new Error('generatorから記事URLを取得できませんでした');
             }
-            if (Editor.getCurrentPath() === path) showEmbeddedLocalPreview({ reload: true });
+            if (Editor.getCurrentPath() === path) showEmbeddedLocalPreview();
         } catch (error) {
             showLocalPreviewResolutionError(error);
         }
@@ -389,24 +392,36 @@ function waitForLocalPreviewRetry(delay, signal) {
     });
 }
 
-function resolveLocalPreviewArticleURL(frontMatterKey = localPreviewFrontMatterKey) {
-    if (!localPreviewEnabled || !Editor.getCurrentPath()) return null;
+function resolveLocalPreviewArticleURLState(frontMatterKey = localPreviewFrontMatterKey, { requireFresh = false } = {}) {
+    if (!localPreviewEnabled || !Editor.getCurrentPath()) return Promise.resolve(null);
     const requestPath = Editor.getCurrentPath();
     const requestKey = localPreviewURLResolutionKey(frontMatterKey);
-    if (localPreviewURLResolution?.key === requestKey) return localPreviewURLResolution.promise;
+    if (!requireFresh && localPreviewArticleURL && localPreviewArticleURLKey === requestKey) {
+        return Promise.resolve({
+            url: localPreviewArticleURL,
+            fresh: localPreviewArticleURLFresh,
+            result: null,
+            generation: localPreviewURLResolutionGeneration,
+        });
+    }
+    const resolutionKey = `${requestKey}\u0000${requireFresh ? 'fresh' : 'cached'}`;
+    if (localPreviewURLResolution?.key === resolutionKey) return localPreviewURLResolution.promise;
 
     cancelLocalPreviewURLResolution();
     localPreviewURLResolutionGeneration += 1;
     const requestGeneration = localPreviewURLResolutionGeneration;
     const controller = new AbortController();
+    const maxAttempts = requireFresh
+        ? LOCAL_PREVIEW_FRESH_NAVIGATION_MAX_ATTEMPTS
+        : LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS;
 
     const resolution = {
         controller,
-        key: requestKey,
+        key: resolutionKey,
         promise: null,
     };
     resolution.promise = (async () => {
-        for (let attempt = 1; attempt <= LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS; attempt++) {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             if (controller.signal.aborted) throw localPreviewResolutionAbortError();
             if (
                 Editor.getCurrentPath() !== requestPath ||
@@ -416,16 +431,23 @@ function resolveLocalPreviewArticleURL(frontMatterKey = localPreviewFrontMatterK
                 const result = await API.resolveLocalPreviewArticleURL(requestPath, controller.signal);
                 const articleURL = UI.safeExternalURL(result?.article_url || "");
                 if (!isLocalPreviewArticleURL(articleURL)) throw new Error('generator returned an invalid local preview URL');
+                const fresh = result?.fresh !== false && result?.metadata_status !== 'stale' && result?.status !== 'stale';
+                if (requireFresh && !fresh) {
+                    await waitForLocalPreviewRetry(localPreviewNavigationRetryDelay(attempt), controller.signal);
+                    continue;
+                }
                 if (
                     Editor.getCurrentPath() !== requestPath ||
                     localPreviewURLResolutionGeneration !== requestGeneration
                 ) return null;
                 localPreviewArticleURL = articleURL;
+                localPreviewArticleURLFresh = fresh;
                 localPreviewArticleURLKey = requestKey;
-                return articleURL;
+                return { url: articleURL, fresh, result, generation: requestGeneration };
             } catch (error) {
                 if (error?.name === 'AbortError') throw error;
-                if (!shouldRetryLocalPreviewNavigation({ error, attempt })) throw error;
+                const transient = error?.status === undefined || error?.status === 408 || error?.status === 425 || error?.status === 429 || error?.status >= 500;
+                if (!(requireFresh && attempt < maxAttempts && transient) && !shouldRetryLocalPreviewNavigation({ error, attempt })) throw error;
                 await waitForLocalPreviewRetry(localPreviewNavigationRetryDelay(attempt), controller.signal);
             }
         }
@@ -439,13 +461,39 @@ function resolveLocalPreviewArticleURL(frontMatterKey = localPreviewFrontMatterK
     return resolution.promise;
 }
 
+function reconcileFreshLocalPreviewArticleURL(frontMatterKey, cachedURL) {
+    const requestPath = Editor.getCurrentPath();
+    if (!requestPath || !cachedURL) return;
+    void resolveLocalPreviewArticleURLState(frontMatterKey, { requireFresh: true }).then((resolution) => {
+        if (!resolution || Editor.getCurrentPath() !== requestPath || resolution.generation !== localPreviewURLResolutionGeneration) return;
+        if (resolution.url !== cachedURL && !localPreviewFrameController?.isDismissed()) {
+            showEmbeddedLocalPreview({ reload: true });
+        }
+    }).catch((error) => {
+        if (error?.name !== 'AbortError') console.warn('[LocalPreview] fresh URL reconciliation failed', error);
+    });
+}
+
+async function resolveLocalPreviewArticleURL(frontMatterKey = localPreviewFrontMatterKey) {
+    const resolution = await resolveLocalPreviewArticleURLState(frontMatterKey);
+    if (resolution?.url && !resolution.fresh) {
+        reconcileFreshLocalPreviewArticleURL(frontMatterKey, resolution.url);
+    }
+    return resolution?.url || null;
+}
+
 async function refreshLocalPreviewArticleURL(updateResult, frontMatterKey = "") {
     const requestKey = localPreviewURLResolutionKey(frontMatterKey);
-    if (localPreviewArticleURL && localPreviewArticleURLKey === requestKey) {
+    if (localPreviewArticleURL && localPreviewArticleURLKey === requestKey && localPreviewArticleURLFresh) {
         return localPreviewArticleURL;
     }
     localPreviewFrontMatterKey = frontMatterKey;
+    if (localPreviewArticleURL && localPreviewArticleURLKey === requestKey && !localPreviewArticleURLFresh) {
+        reconcileFreshLocalPreviewArticleURL(frontMatterKey, localPreviewArticleURL);
+        return localPreviewArticleURL;
+    }
     localPreviewArticleURL = "";
+    localPreviewArticleURLFresh = false;
     localPreviewArticleURLKey = "";
     if (!localPreviewEnabled || !Editor.getCurrentPath()) return null;
     try {

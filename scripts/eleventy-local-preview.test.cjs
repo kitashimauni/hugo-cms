@@ -317,7 +317,7 @@ test("re-notifies the input root when invalidation has no specific path", async 
   }
 });
 
-test("hides stale metadata immediately after a resource invalidation", async () => {
+test("serves stale metadata immediately after a resource invalidation", async () => {
   const input = fs.mkdtempSync(path.join(os.tmpdir(), "homecms-eleventy-resource-barrier-"));
   const output = fs.mkdtempSync(path.join(os.tmpdir(), "homecms-eleventy-resource-output-"));
   const state = createBuildState(input);
@@ -338,7 +338,17 @@ test("hides stale metadata immediately after a resource invalidation", async () 
     const invalidated = await requestHTTP(port, "/__hugo_cms_invalidate", "POST");
     assert.equal(invalidated.statusCode, 202);
     const duringMutation = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
-    assert.equal(duringMutation.statusCode, 503);
+    assert.equal(duringMutation.statusCode, 200);
+    const stale = JSON.parse(duringMutation.body);
+    assert.equal(stale.status, "stale");
+    assert.equal(stale.fresh, false);
+    assert.equal(stale.invalidation_generation, 1);
+    assert.equal(stale.active_build_generation, 0);
+    assert.equal(stale.last_build_completed_at, 0);
+    assert.equal(typeof stale.invalidation_at, "number");
+    assert.equal(stale.inputPath, path.join(input, "posts", "one.md"));
+    assert.equal(stale.outputPath, path.join(output, "posts", "one", "index.html"));
+    assert.equal(stale.url, "/posts/one/");
   } finally {
     state.stopRecovery();
     server.closeAll();
@@ -459,7 +469,9 @@ test("starts real Eleventy serve and broadcasts LiveReload", { skip: !hasRealEle
     const invalidated = await requestHTTP(port, "/__hugo_cms_invalidate?path=posts%2Fone.md", "POST");
     assert.equal(invalidated.statusCode, 202);
     const invalidatedMetadata = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
-    assert.equal(invalidatedMetadata.statusCode, 503);
+    assert.equal(invalidatedMetadata.statusCode, 200);
+    assert.equal(JSON.parse(invalidatedMetadata.body).status, "stale");
+    assert.equal(JSON.parse(invalidatedMetadata.body).fresh, false);
     const updatedArticle = ["---", "title: Changed", "permalink: /custom/changed/", "---", "", "# {{ title }}", ""].join("\n");
     fs.writeFileSync(fixture.article, updatedArticle);
     await reload;

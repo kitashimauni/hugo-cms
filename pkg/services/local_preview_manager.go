@@ -785,31 +785,47 @@ func (m *LocalPreviewManager) InvalidateArticleURL(runtime config.SiteRuntime, a
 // by the already-running preview process. Hugo keeps its existing resolver
 // because its list command is inexpensive and already reflects its watch state.
 func (m *LocalPreviewManager) ResolveArticleURL(ctx context.Context, runtime config.SiteRuntime, workspace LocalPreviewWorkspace, articlePath string) (string, error) {
+	resolution, err := m.ResolveArticleURLWithMetadata(ctx, runtime, workspace, articlePath)
+	if err != nil {
+		return "", err
+	}
+	return resolution.URL, nil
+}
+
+// ResolveArticleURLWithMetadata is the navigation-aware variant of
+// ResolveArticleURL. Eleventy can answer from its last completed metadata map
+// while a watch build is active, so the caller can use the cached URL now and
+// reconcile it after the build returns a fresh map.
+func (m *LocalPreviewManager) ResolveArticleURLWithMetadata(ctx context.Context, runtime config.SiteRuntime, workspace LocalPreviewWorkspace, articlePath string) (PreviewArticleURLResolution, error) {
 	if !isEleventyLocalPreviewGenerator(runtime.Generator) {
-		return ResolvePreviewArticleURL(ctx, runtime, workspace, articlePath)
+		articleURL, err := ResolvePreviewArticleURL(ctx, runtime, workspace, articlePath)
+		if err != nil {
+			return PreviewArticleURLResolution{}, err
+		}
+		return PreviewArticleURLResolution{URL: articleURL, Fresh: true, Status: "resolved"}, nil
 	}
 
 	articlePath = filepath.Clean(strings.TrimSpace(articlePath))
 	if articlePath == "." || filepath.IsAbs(articlePath) {
-		return "", fmt.Errorf("invalid preview article path")
+		return PreviewArticleURLResolution{}, fmt.Errorf("invalid preview article path")
 	}
 	if workspace.ContentDir == "" {
-		return "", fmt.Errorf("preview workspace content directory is required")
+		return PreviewArticleURLResolution{}, fmt.Errorf("preview workspace content directory is required")
 	}
 	slot, err := m.ensureReadyRuntime(runtime)
 	if err != nil {
-		return "", fmt.Errorf("ensure Eleventy local preview ready: %w", err)
+		return PreviewArticleURLResolution{}, fmt.Errorf("ensure Eleventy local preview ready: %w", err)
 	}
 	process := m.process(runtime.ID)
 	if process == nil || process.exited() {
-		return "", fmt.Errorf("Eleventy local preview process is not running")
+		return PreviewArticleURLResolution{}, fmt.Errorf("Eleventy local preview process is not running")
 	}
-	articleURL, err := resolveRunningEleventyArticleURL(ctx, runtime, slot.Port, articlePath)
+	resolution, err := resolveRunningEleventyArticleURLResolution(ctx, runtime, slot.Port, articlePath)
 	if err != nil {
 		slog.Warn("Eleventy local preview URL resolution failed", "site", runtime.ID, "article_path", articlePath, "process_state", slot.State, "error", err)
-		return "", err
+		return PreviewArticleURLResolution{}, err
 	}
-	return articleURL, nil
+	return resolution, nil
 }
 
 func (m *LocalPreviewManager) ProxyRuntime(w http.ResponseWriter, r *http.Request, runtime config.SiteRuntime) error {

@@ -107,7 +107,6 @@ function createBuildState(input) {
     state.recoveryTimer.unref?.();
   };
   state.begin = () => {
-    state.activeBuildGeneration = state.invalidationGeneration;
     state.ready = false;
     state.building = true;
   };
@@ -131,6 +130,7 @@ function createBuildState(input) {
       });
     }
     state.entries = entries;
+    state.activeBuildGeneration = state.invalidationGeneration;
     state.ready = state.activeBuildGeneration >= state.invalidationGeneration;
     state.building = !state.ready;
     state.lastBuildCompletedAt = Date.now();
@@ -299,17 +299,26 @@ function createLoopbackServer(outputRoot, buildState = { ready: true, building: 
       return;
     }
     if (requestURL.pathname === METADATA_PATH) {
+      const articlePath = requestURL.searchParams.get("path");
+      const metadata = articlePath ? buildState.get(articlePath) : null;
       if (!buildState.ready) {
+        if (metadata) {
+          sendJSON(response, 200, {
+            status: "stale",
+            fresh: false,
+            ...buildState.diagnostics?.(),
+            ...metadata,
+          });
+          return;
+        }
         sendJSON(response, 503, { status: "building", ...buildState.diagnostics?.() });
         return;
       }
-      const articlePath = requestURL.searchParams.get("path");
-      const metadata = articlePath ? buildState.get(articlePath) : null;
       if (!metadata) {
         sendJSON(response, 404, { status: "not_found", ...buildState.diagnostics?.() });
         return;
       }
-      sendJSON(response, 200, { status: "resolved", ...buildState.diagnostics?.(), ...metadata });
+      sendJSON(response, 200, { status: "resolved", fresh: true, ...buildState.diagnostics?.(), ...metadata });
       return;
     }
     if (requestURL.pathname === RELOAD_SCRIPT_PATH) {

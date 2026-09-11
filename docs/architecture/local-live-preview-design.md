@@ -9,6 +9,7 @@ Issue #32のLocal Live Previewは段階的に実装する。
 - Phase 3 (#35): shadow content workspace + editor debounce + content resource同期
 - Phase 4: UI/運用導線、generator別URL解決
 - Issue #46: Eleventy `--serve`、project-root overlay、generator metadata URL解決
+- Issue #68: Eleventyのlast-known metadataを使ったcached URL先行navigationとfresh URL収束
 - Issue #37: 実blog・wildcard ingressでのHugo/Eleventy受け入れ確認は実環境で継続する
 
 Local Live PreviewはMarkdown本文プレビューとDeployment Previewを置き換えず、両者の中間を担う。
@@ -113,7 +114,7 @@ Eleventyは対象siteのpackage managerを再利用し、production repository�
 
 CMSのNodeラッパーはEleventyのprogrammatic `watch`で再ビルドし、Eleventyの初回build前にCMS側のHTTP/LiveReload WebSocket serverを`127.0.0.1`へbindする。`/__hugo_cms_ready`は初回build中に503、build完了後に200を返す。Eleventy標準Dev Serverのhost省略時のbind挙動や`HOST`環境変数には依存しない。出力ディレクトリはproductionの`public`/`_site`を上書きせず、停止時にtemporary outputを削除する。
 
-記事選択時の初回起動では、shadow workspaceを含むtemporary project-root overlayをgeneratorの入力として使う。CMSはgeneratorに依存しないURL解決契約を介して解決する。Hugo実装はserverと同じ`--environment development`を指定し、`HUGO_CONTENTDIR`と`HUGO_BASEURL`のenvironment variableでshadow contentとLocal Preview URLをoverrideし、`--noBuildLock`を渡す。Eleventy実装は稼働中wrapperが`eleventy.after`の結果から作る`inputPath -> url` mapを`/__hugo_cms_metadata`で公開し、CMSは同じprocessへ問い合わせる。workspace updateはshadow fileの書き換え直前にmetadataをinvalidateし、次のwatch build generationが完了するまでreadinessとmetadataを未完了として扱う。watch rebuild完了ごとにmapを置き換えるため、通常経路でresolver専用のJSON full buildやpreview outputの共有・resetは行わない。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalink、slug、Data Cascade、paginationを再実装しない。以降の同一記事の編集はgeneratorのwatch/live reloadを利用する。
+記事選択時の初回起動では、shadow workspaceを含むtemporary project-root overlayをgeneratorの入力として使う。CMSはgeneratorに依存しないURL解決契約を介して解決する。Hugo実装はserverと同じ`--environment development`を指定し、`HUGO_CONTENTDIR`と`HUGO_BASEURL`のenvironment variableでshadow contentとLocal Preview URLをoverrideし、`--noBuildLock`を渡す。Eleventy実装は稼働中wrapperが`eleventy.after`の結果から作る`inputPath -> url` mapを`/__hugo_cms_metadata`で公開し、CMSは同じprocessへ問い合わせる。workspace updateはshadow fileの書き換え直前にmetadataをinvalidateする。既知の記事はwatch build generation中もlast-known mapを`stale`として返し、未知の記事や初回build前の記事だけはfresh mapまで待つ。記事切替はcached URLを先に表示し、build後にfresh URLが変わった場合だけ再遷移する。watch rebuild完了ごとにmapを置き換えるため、通常経路でresolver専用のJSON full buildやpreview outputの共有・resetは行わない。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalink、slug、Data Cascade、paginationを再実装しない。以降の同一記事の編集はgeneratorのwatch/live reloadを利用する。
 
 ## Reverse proxy / LiveReload
 
@@ -227,7 +228,7 @@ POST /admin/api/preview/local
 POST /admin/api/preview/local/navigate
 ```
 
-記事選択時にCMSが記事pathを`/admin/api/preview/local/navigate`へ送り、Hugoは`hugo list all`、Eleventyは稼働中wrapperの`/__hugo_cms_metadata`へ問い合わせて要求pathの`article_url`を返す。Eleventyがbuild中ならmap更新まで待ち、初回起動も同じprocessのreadinessを待つ。この処理はproduction content、Git、browser revisionを変更しない。network error、408/425/429、5xxに限ってclientが250ms・750msのbackoffで最大3回まで再試行し、その他の4xxは再試行しない。通常の本文編集はLiveReloadを利用し、URL関連front matter変更時は再解決する。解決失敗時はpreview rootへ黙ってフォールバックしない。
+記事選択時にCMSが記事pathを`/admin/api/preview/local/navigate`へ送り、Hugoは`hugo list all`、Eleventyは稼働中wrapperの`/__hugo_cms_metadata`へ問い合わせて要求pathの`article_url`を返す。レスポンスには`fresh`、`metadata_status`、build generationを含める。Eleventyが既知の記事をbuild中に解決した場合はcached URLを即時返し、clientはfresh mapをバックグラウンドで待ってURL変更時だけ再遷移する。未知の記事や初回起動は同じprocessのfresh metadata/readinessを待つ。この処理はproduction content、Git、browser revisionを変更しない。network error、408/425/429、5xxに限ってclientが250ms・750msのbackoffで最大3回まで再試行し、その他の4xxは再試行しない。通常の本文編集はLiveReloadを利用し、URL関連front matter変更時は再解決する。解決失敗時はpreview rootへ黙ってフォールバックしない。
 
 ### stop
 

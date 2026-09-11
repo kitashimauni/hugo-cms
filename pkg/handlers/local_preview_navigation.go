@@ -21,15 +21,16 @@ type localPreviewNavigationWorkspaceManager interface {
 }
 
 type localPreviewNavigationDependencies struct {
-	workspaceManager  localPreviewNavigationWorkspaceManager
-	resolveArticleURL func(context.Context, config.SiteRuntime, services.LocalPreviewWorkspace, string) (string, error)
+	workspaceManager              localPreviewNavigationWorkspaceManager
+	resolveArticleURL             func(context.Context, config.SiteRuntime, services.LocalPreviewWorkspace, string) (string, error)
+	resolveArticleURLWithMetadata func(context.Context, config.SiteRuntime, services.LocalPreviewWorkspace, string) (services.PreviewArticleURLResolution, error)
 }
 
 // NavigateLocalPreview resolves the selected shadow article through the
 // configured generator and returns the URL to open in the local preview.
 func NavigateLocalPreview(c *gin.Context) {
 	navigateLocalPreview(c, localPreviewNavigationDependencies{
-		resolveArticleURL: services.DefaultLocalPreviewManager().ResolveArticleURL,
+		resolveArticleURLWithMetadata: services.DefaultLocalPreviewManager().ResolveArticleURLWithMetadata,
 	})
 }
 
@@ -72,7 +73,7 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 		ErrorConflict(c, "Local Live Preview workspace is not active")
 		return
 	}
-	if dependencies.resolveArticleURL == nil {
+	if dependencies.resolveArticleURL == nil && dependencies.resolveArticleURLWithMetadata == nil {
 		ErrorInternal(c, "Local preview URL resolver is unavailable")
 		return
 	}
@@ -83,7 +84,14 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 		resolverRuntime.RepoPath = workspace.ProjectDir
 		resolverRuntime.LocalPreviewProjectDir = workspace.ProjectDir
 	}
-	articleURL, err := dependencies.resolveArticleURL(c.Request.Context(), resolverRuntime, workspace, req.Path)
+	var resolution services.PreviewArticleURLResolution
+	if dependencies.resolveArticleURLWithMetadata != nil {
+		resolution, err = dependencies.resolveArticleURLWithMetadata(c.Request.Context(), resolverRuntime, workspace, req.Path)
+	} else {
+		var articleURL string
+		articleURL, err = dependencies.resolveArticleURL(c.Request.Context(), resolverRuntime, workspace, req.Path)
+		resolution = services.PreviewArticleURLResolution{URL: articleURL, Fresh: true, Status: "resolved"}
+	}
 	if err != nil {
 		slog.Error("Failed to resolve Local Live Preview article URL", "site", runtime.ID, "article_path", req.Path, "error", err)
 		ErrorInternal(c, "Failed to resolve Local Live Preview article URL")
@@ -91,10 +99,14 @@ func navigateLocalPreview(c *gin.Context, dependencies localPreviewNavigationDep
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":       "resolved",
-		"article_url":  articleURL,
-		"revision":     workspace.Revision,
-		"preview_url":  runtime.LocalPreview.URL,
-		"article_path": workspace.ArticlePath,
+		"status":                  "resolved",
+		"article_url":             resolution.URL,
+		"fresh":                   resolution.Fresh,
+		"metadata_status":         resolution.Status,
+		"invalidation_generation": resolution.InvalidationGeneration,
+		"active_build_generation": resolution.ActiveBuildGeneration,
+		"revision":                workspace.Revision,
+		"preview_url":             runtime.LocalPreview.URL,
+		"article_path":            workspace.ArticlePath,
 	})
 }

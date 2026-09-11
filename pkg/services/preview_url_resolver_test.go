@@ -201,6 +201,44 @@ func TestResolveRunningEleventyArticleURLWaitsForMetadataAndRewritesOrigin(t *te
 	}
 }
 
+func TestResolveRunningEleventyArticleURLReturnsLastKnownURLWhileBuilding(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"stale","fresh":false,"invalidation_generation":12,"active_build_generation":11,"url":"/old/one/"}`))
+	}))
+	defer server.Close()
+
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := config.SiteRuntime{
+		ID:           "daily-blog",
+		Generator:    "eleventy",
+		LocalPreview: config.LocalPreviewConfig{URL: "https://daily.preview.example.com/"},
+	}
+
+	resolution, err := resolveRunningEleventyArticleURLResolution(context.Background(), runtime, port, "posts/one.md")
+	if err != nil {
+		t.Fatalf("resolveRunningEleventyArticleURLResolution() error = %v", err)
+	}
+	if resolution.URL != "https://daily.preview.example.com/old/one/" || resolution.Fresh || resolution.Status != "stale" {
+		t.Fatalf("resolution = %#v, want stale last-known URL", resolution)
+	}
+	if resolution.InvalidationGeneration != 12 || resolution.ActiveBuildGeneration != 11 {
+		t.Fatalf("resolution generations = %#v", resolution)
+	}
+	if attempts != 1 {
+		t.Fatalf("metadata requests = %d, want one immediate response", attempts)
+	}
+}
+
 func TestEleventyResolverUsesDedicatedProjectAndOutput(t *testing.T) {
 	production := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(production, "src", "posts"), 0755); err != nil {
