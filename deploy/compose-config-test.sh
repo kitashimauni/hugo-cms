@@ -7,7 +7,8 @@ trap 'rm -rf "${test_env_dir}"' EXIT
 printf 'HUGO_CMS_REPOS=/data/repos/legacy\n' >"${test_env_dir}/legacy.env"
 printf 'HOMECMS_REPOS=/data/repos/canonical\nHUGO_CMS_REPOS=/data/repos/legacy\n' >"${test_env_dir}/canonical.env"
 
-if docker compose --profile tools --env-file "${test_env_dir}/empty.env" config --quiet >/dev/null 2>&1; then
+if env -u HOMECMS_REPOS -u HUGO_CMS_REPOS \
+  docker compose --profile tools --env-file "${test_env_dir}/empty.env" config --quiet >/dev/null 2>&1; then
   echo "compose config unexpectedly succeeded without a repository allowlist" >&2
   exit 1
 fi
@@ -28,8 +29,10 @@ assert_repository_settings() {
   done
 }
 
-legacy_json="$(docker compose --profile tools --env-file "${test_env_dir}/legacy.env" config --format json)"
+legacy_json="$(env -u HOMECMS_REPOS -u HUGO_CMS_REPOS HUGO_CMS_REPOS=/data/repos/legacy \
+  docker compose --profile tools --env-file "${test_env_dir}/legacy.env" config --format json)"
 assert_repository_settings "${legacy_json}" "/data/repos/legacy"
 
-canonical_json="$(docker compose --profile tools --env-file "${test_env_dir}/canonical.env" config --format json)"
+canonical_json="$(env -u HOMECMS_REPOS -u HUGO_CMS_REPOS HOMECMS_REPOS=/data/repos/canonical HUGO_CMS_REPOS=/data/repos/legacy \
+  docker compose --profile tools --env-file "${test_env_dir}/canonical.env" config --format json)"
 assert_repository_settings "${canonical_json}" "/data/repos/canonical"

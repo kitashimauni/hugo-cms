@@ -67,6 +67,7 @@ jobs:
           sed -i 's|^HOMECMS_REPOS=.*|HOMECMS_REPOS=/data/repos/ci|' .env
           sed -i 's|^HOMECMS_UID=.*|HOMECMS_UID=1000|' .env
           sed -i 's|^HOMECMS_GID=.*|HOMECMS_GID=27|' .env
+          echo 'HOMECMS_REPOS=/data/repos/ci' >> "$GITHUB_ENV"
 
       - name: Verify repository allowlist interpolation
         run: bash deploy/compose-config-test.sh
