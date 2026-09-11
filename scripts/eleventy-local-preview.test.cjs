@@ -358,6 +358,56 @@ test("serves stale metadata immediately after a resource invalidation", async ()
   }
 });
 
+test("does not mark an older build fresh after a second invalidation", async () => {
+  const input = fs.mkdtempSync(path.join(os.tmpdir(), "homecms-eleventy-generation-race-"));
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), "homecms-eleventy-generation-output-"));
+  const state = createBuildState(input);
+  const result = {
+    inputPath: path.join(input, "posts", "one.md"),
+    outputPath: path.join(output, "posts", "one", "index.html"),
+    url: "/posts/one/",
+  };
+  state.ready = true;
+  state.building = false;
+  state.invalidationGeneration = 10;
+  state.activeBuildGeneration = 10;
+  state.entries.set("posts/one.md", result);
+  const server = createLoopbackServer(output, state);
+  try {
+    await listen(server, 0, "127.0.0.1");
+    const port = server.address().port;
+
+    assert.equal(state.invalidate("posts/one.md"), 11);
+    state.begin();
+    assert.equal(state.diagnostics().active_build_generation, 11);
+    assert.equal(state.invalidate("posts/one.md"), 12);
+    state.update([result]);
+
+    assert.equal(state.ready, false);
+    assert.equal(state.diagnostics().active_build_generation, 11);
+    assert.equal(state.diagnostics().invalidation_generation, 12);
+    const stale = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    assert.equal(stale.statusCode, 200);
+    assert.equal(JSON.parse(stale.body).status, "stale");
+    assert.equal(JSON.parse(stale.body).fresh, false);
+
+    state.begin();
+    state.update([result]);
+    assert.equal(state.ready, true);
+    assert.equal(state.diagnostics().active_build_generation, 12);
+    const fresh = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    assert.equal(fresh.statusCode, 200);
+    assert.equal(JSON.parse(fresh.body).status, "resolved");
+    assert.equal(JSON.parse(fresh.body).fresh, true);
+  } finally {
+    state.stopRecovery();
+    server.closeAll();
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(input, { recursive: true, force: true });
+    fs.rmSync(output, { recursive: true, force: true });
+  }
+});
+
 test("resolves a real Eleventy 3.x project in JSON mode", { skip: !hasRealEleventy() }, () => {
   const fixture = createEleventyFixture();
   try {

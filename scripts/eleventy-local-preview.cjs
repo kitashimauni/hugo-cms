@@ -107,6 +107,7 @@ function createBuildState(input) {
     state.recoveryTimer.unref?.();
   };
   state.begin = () => {
+    state.activeBuildGeneration = state.invalidationGeneration;
     state.ready = false;
     state.building = true;
   };
@@ -130,7 +131,6 @@ function createBuildState(input) {
       });
     }
     state.entries = entries;
-    state.activeBuildGeneration = state.invalidationGeneration;
     state.ready = state.activeBuildGeneration >= state.invalidationGeneration;
     state.building = !state.ready;
     state.lastBuildCompletedAt = Date.now();
