@@ -61,6 +61,13 @@ func UploadMedia(c *gin.Context) {
 		return
 	}
 
+	// The generated filename is only known after the upload is accepted, so
+	// establish a root metadata barrier before changing any production resource.
+	if err := services.DefaultLocalPreviewManager().InvalidateArticleURL(runtime); err != nil {
+		ErrorInternal(c, "Failed to prepare Local Live Preview metadata: "+err.Error())
+		return
+	}
+
 	info, err := services.SaveMediaFileForRuntime(runtime, file, mode, articlePath)
 	if err != nil {
 		if errors.Is(err, services.ErrInvalidMedia) {
@@ -101,6 +108,11 @@ func DeleteMedia(c *gin.Context) {
 		return
 	}
 
+	if err := services.DefaultLocalPreviewManager().InvalidateArticleURL(runtime, localPreviewResourcePath(runtime, req.RepoPath)); err != nil {
+		ErrorInternal(c, "Failed to prepare Local Live Preview metadata: "+err.Error())
+		return
+	}
+
 	if err := services.DeleteMediaFileForRuntime(runtime, req.RepoPath); err != nil {
 		ErrorInternal(c, "Failed to delete: "+err.Error())
 		return
@@ -131,14 +143,7 @@ func syncLocalPreviewContentResource(runtime config.SiteRuntime, repoPath string
 	// resources are linked from the production project. Invalidate both paths
 	// after the shadow sync; the wrapper uses a directory recovery fallback for
 	// deleted resources and a full-input fallback when no relative path exists.
-	articlePath := ""
-	contentRoot := services.SafeJoin(runtime.RepoPath, "", runtime.ContentDir)
-	resourcePath := services.SafeJoin(runtime.RepoPath, "", repoPath)
-	if contentRoot != "" && resourcePath != "" {
-		if relative, relErr := filepath.Rel(contentRoot, resourcePath); relErr == nil && relative != "." && !filepath.IsAbs(relative) && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			articlePath = filepath.ToSlash(relative)
-		}
-	}
+	articlePath := localPreviewResourcePath(runtime, repoPath)
 	if !synced && articlePath != "" {
 		// There is no active shadow workspace to rebuild, but an active Eleventy
 		// process may still observe a production-linked resource.
@@ -147,6 +152,19 @@ func syncLocalPreviewContentResource(runtime config.SiteRuntime, repoPath string
 	if err := services.DefaultLocalPreviewManager().InvalidateArticleURL(runtime, articlePath); err != nil {
 		slog.Warn("Failed to invalidate Local Live Preview metadata after media sync", "site", runtime.ID, "path", repoPath, "error", err)
 	}
+}
+
+func localPreviewResourcePath(runtime config.SiteRuntime, repoPath string) string {
+	contentRoot := services.SafeJoin(runtime.RepoPath, "", runtime.ContentDir)
+	resourcePath := services.SafeJoin(runtime.RepoPath, "", repoPath)
+	if contentRoot == "" || resourcePath == "" {
+		return ""
+	}
+	relative, err := filepath.Rel(contentRoot, resourcePath)
+	if err != nil || relative == "." || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return filepath.ToSlash(relative)
 }
 
 func ServeMediaRaw(c *gin.Context) {
