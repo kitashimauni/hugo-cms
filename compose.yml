@@ -19,7 +19,7 @@ services:
       MISE_DATA_DIR: /data/mise
       MISE_CACHE_DIR: /data/mise/cache
       PREVIEW_STATE_DIR: /data/homecms/preview-deployments
-      HOMECMS_REPOS: ${HOMECMS_REPOS-${HUGO_CMS_REPOS:?Set HOMECMS_REPOS in .env}}
+      HOMECMS_REPOS: ${HOMECMS_REPOS:-${HUGO_CMS_REPOS:?Set HOMECMS_REPOS in .env}}
       MISE_TRUSTED_CONFIG_PATHS: ${HOMECMS_REPOS:-${HUGO_CMS_REPOS-}}
     volumes:
       - ./repos:/data/repos
@@ -53,7 +53,7 @@ services:
       HOME: /home/hugo-cms
       MISE_DATA_DIR: /data/mise
       MISE_CACHE_DIR: /data/mise/cache
-      HOMECMS_REPOS: ${HOMECMS_REPOS-${HUGO_CMS_REPOS:?Set HOMECMS_REPOS in .env}}
+      HOMECMS_REPOS: ${HOMECMS_REPOS:-${HUGO_CMS_REPOS:?Set HOMECMS_REPOS in .env}}
       MISE_TRUSTED_CONFIG_PATHS: ${HOMECMS_REPOS:-${HUGO_CMS_REPOS-}}
     volumes:
       - ./repos:/data/repos
