@@ -106,7 +106,7 @@ Eleventy siteでは、対象siteのlock fileから検出したpackage manager経
 
 CMSのNodeラッパーはtemporary project-root overlayをcwdにしてEleventyのprogrammatic `watch`を実行します。overlayでは`content_dir`をshadow workspaceへ、`public_dir`をtemporary outputへ置き換え、package.json、node_modules、config、includes/layouts/data、その他のproject-root相対パスはproduction repositoryを参照します。HTTP配信とLiveReload WebSocketはCMS側のloopback serverが担当し、Eleventyの初回build前にlistenerを`127.0.0.1`へbindします。`/__hugo_cms_ready`はbuild中に503、初回build完了後に200を返すため、重いsiteでも起動処理が固定秒数で同じbuildを繰り返しません。Eleventy標準Dev Serverの未指定hostや`HOST`環境変数には依存しません。
 
-process停止はgeneratorの`cmd.Wait()`完了を成功条件とし、temporary outputのfilesystem cleanup完了を待ちません。workspaceが所有するEleventyのproject/outputはsite runtimeのStopまたはidle cleanupで削除し、process cleanupとの二重削除や次世代workspaceとの競合を避けます。workspace外のEleventy previewは起動ごとに一意なtemporary project rootを割り当て、停止後に所有projectだけを非同期cleanupします。cleanupの遅延・失敗はserver logへ記録しますが、generator processの停止失敗とは区別します。
+process停止はgeneratorの`cmd.Wait()`完了を成功条件とし、temporary outputのfilesystem cleanup完了を待ちません。Unix/Linuxではgenerator commandを独立したprocess groupで起動し、Stop・idle cleanup・Git Sync reset・CMS shutdownの共通経路からgroup全体へ`SIGTERM`を送り、grace period後も残る場合は`SIGKILL`へ移行します。package managerや`mise`のwrapper配下にあるNode/Eleventyも同じgroupで終了させ、stdio pipeを保持した孤児化で`Wait()`が無期限に待たないよう待機上限も設定します。停止時のtimeoutには親PIDとprocess groupをserver logへ記録します。workspaceが所有するEleventyのproject/outputはsite runtimeのStopまたはidle cleanupで削除し、process cleanupとの二重削除や次世代workspaceとの競合を避けます。workspace外のEleventy previewは起動ごとに一意なtemporary project rootを割り当て、停止後に所有projectだけを非同期cleanupします。cleanupの遅延・失敗はserver logへ記録しますが、generator processの停止失敗とは区別します。
 
 Eleventy設定はoverlayのproject rootで通常どおり解決します。そのため`getFilteredByGlob("src/posts/**")`、`addPassthroughCopy("src/images")`、pluginの`outputDir: "./public/img/"`のようなproject-root相対指定も、CMS側で解析・推定せずpreview側のcontent/publicを参照します。通常の記事URL解決では、稼働中wrapperが`eleventy.after`の`inputPath`/`url`を保持する`/__hugo_cms_metadata?path=...`を利用します。workspace updateはshadow fileを書き換える直前にmetadataをinvalidateします。既知の記事はwatch build中も旧mapを`status: stale`、`fresh: false`として返し、未知の記事だけはbuild完了まで503で待機します。watch rebuildごとにmapを更新するため、resolver専用の追加full buildを発生させません。既存の直接resolver呼び出しにはJSONモードのfallbackを残します。
 repo外のabsolute pathや環境変数で指定された外部pathはこのfilesystem overlayの保証対象外です。
@@ -211,7 +211,10 @@ article切替では、現在記事のproduction保存とin-flight Local Preview 
 UIの明示的な停止では、clientがdebounce済みの更新をキャンセルし、送信済みの更新完了を待ってからsite runtimeを停止します。idle timeout、CMS shutdownを含め、site runtimeは次の順で終了します。
 
 ```text
-generator process stop
+SIGTERM -> generator process group
+  -> grace period
+  -> SIGKILL (if still running)
+  -> cmd.Wait() / process tree termination
   -> workspace root detach/rename
   -> shadow workspace delete (async)
 ```
