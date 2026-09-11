@@ -364,6 +364,14 @@ func DeleteArticle(c *gin.Context) {
 	unlock := services.LockRepositoryOperation()
 	defer unlock()
 
+	// Invalidate Eleventy metadata before deleting the shadow article. This
+	// makes URL resolution return a rebuilding state while the old file is
+	// being removed, instead of briefly serving its stale URL.
+	if err := services.DefaultLocalPreviewManager().InvalidateArticleURL(runtime, filepath.ToSlash(req.Path)); err != nil {
+		ErrorInternal(c, "Delete failed: "+err.Error())
+		return
+	}
+
 	if err := services.DeleteFileForRuntime(runtime, req.Path); err != nil {
 		ErrorInternal(c, "Delete failed: "+err.Error())
 		return
@@ -374,7 +382,7 @@ func DeleteArticle(c *gin.Context) {
 	services.UpdateCacheForRuntime(runtime, req.Path)
 	// Keep an active site-scoped Local Live Preview workspace in sync without
 	// releasing the generator runtime for the next article.
-	syncLocalPreviewContentResource(runtime, filepath.ToSlash(filepath.Join(runtime.ContentDir, req.Path)), true)
+	syncLocalPreviewContentResource(runtime, filepath.ToSlash(filepath.Join(runtime.ContentDir, req.Path)), true, false)
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 

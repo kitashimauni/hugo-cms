@@ -280,6 +280,43 @@ test("re-notifies a missed watcher event after invalidation", async () => {
   }
 });
 
+test("re-notifies the parent directory when an invalidated article was deleted", async () => {
+  const input = fs.mkdtempSync(path.join(os.tmpdir(), "homecms-eleventy-delete-recovery-"));
+  const article = path.join(input, "posts", "one.md");
+  const articleDirectory = path.dirname(article);
+  fs.mkdirSync(articleDirectory, { recursive: true });
+  fs.writeFileSync(article, "# one\n");
+  const state = createBuildState(input);
+  try {
+    const before = fs.statSync(articleDirectory).mtimeMs;
+    assert.equal(state.invalidate("posts/one.md"), 1);
+    fs.rmSync(article);
+    await new Promise(resolve => setTimeout(resolve, 900));
+    assert.ok(fs.statSync(articleDirectory).mtimeMs > before, "watcher recovery did not touch the parent directory");
+  } finally {
+    state.activeBuildGeneration = state.invalidationGeneration;
+    state.update([]);
+    state.stopRecovery();
+    fs.rmSync(input, { recursive: true, force: true });
+  }
+});
+
+test("re-notifies the input root when invalidation has no specific path", async () => {
+  const input = fs.mkdtempSync(path.join(os.tmpdir(), "homecms-eleventy-root-recovery-"));
+  const state = createBuildState(input);
+  try {
+    const before = fs.statSync(input).mtimeMs;
+    assert.equal(state.invalidate(), 1);
+    await new Promise(resolve => setTimeout(resolve, 900));
+    assert.ok(fs.statSync(input).mtimeMs > before, "watcher recovery did not touch the input root");
+  } finally {
+    state.activeBuildGeneration = state.invalidationGeneration;
+    state.update([]);
+    state.stopRecovery();
+    fs.rmSync(input, { recursive: true, force: true });
+  }
+});
+
 test("resolves a real Eleventy 3.x project in JSON mode", { skip: !hasRealEleventy() }, () => {
   const fixture = createEleventyFixture();
   try {

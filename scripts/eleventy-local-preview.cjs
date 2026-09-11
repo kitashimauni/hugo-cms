@@ -84,12 +84,18 @@ function createBuildState(input) {
     const recover = () => {
       state.recoveryTimer = null;
       if (state.ready || state.activeBuildGeneration >= state.invalidationGeneration || !state.invalidationPath) return;
-      const articlePath = path.resolve(state.inputRoot, state.invalidationPath);
       try {
         const inputRoot = path.resolve(state.inputRoot);
-        const relativePath = path.relative(inputRoot, articlePath);
+        let recoveryPath = path.resolve(inputRoot, state.invalidationPath);
+        const relativePath = path.relative(inputRoot, recoveryPath);
         if (relativePath.startsWith(".." + path.sep) || path.isAbsolute(relativePath)) return;
-        fs.utimesSync(articlePath, new Date(), new Date());
+        // A deleted article no longer has an mtime to touch. Walk up to the
+        // nearest existing directory so the watcher still receives a
+        // notification after a coalesced delete event.
+        while (!fs.existsSync(recoveryPath) && recoveryPath !== inputRoot) {
+          recoveryPath = path.dirname(recoveryPath);
+        }
+        fs.utimesSync(recoveryPath, new Date(), new Date());
       } catch (_) {
         // The update may still be writing the file. Keep retrying until a
         // build observes the invalidation or the process is stopped.
@@ -143,7 +149,7 @@ function createBuildState(input) {
     const relativeArticlePath = path.relative(state.inputRoot, absoluteArticlePath);
     state.invalidationPath = articlePath && relativeArticlePath && !relativeArticlePath.startsWith(".." + path.sep) && !path.isAbsolute(relativeArticlePath)
       ? normalizeMetadataPath(relativeArticlePath)
-      : "";
+      : ".";
     clearRecoveryTimer();
     scheduleRecovery();
     return state.invalidationGeneration;

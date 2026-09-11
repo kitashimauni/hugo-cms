@@ -6,6 +6,7 @@ import (
 	"hugo-cms/pkg/services"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -69,7 +70,7 @@ func UploadMedia(c *gin.Context) {
 		ErrorInternal(c, "Failed to save file: "+err.Error())
 		return
 	}
-	syncLocalPreviewContentResource(runtime, info.RepoPath, false)
+	syncLocalPreviewContentResource(runtime, info.RepoPath, false, true)
 	info.URL = addSiteQuery(info.URL, runtime.ID)
 
 	c.JSON(http.StatusOK, info)
@@ -104,21 +105,47 @@ func DeleteMedia(c *gin.Context) {
 		ErrorInternal(c, "Failed to delete: "+err.Error())
 		return
 	}
-	syncLocalPreviewContentResource(runtime, req.RepoPath, true)
+	syncLocalPreviewContentResource(runtime, req.RepoPath, true, true)
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
-func syncLocalPreviewContentResource(runtime config.SiteRuntime, repoPath string, deleted bool) {
+func syncLocalPreviewContentResource(runtime config.SiteRuntime, repoPath string, deleted, invalidateMetadata bool) {
 	workspaceManager, err := services.DefaultLocalPreviewWorkspaceManager()
 	if err != nil {
 		slog.Warn("Local preview workspace unavailable during media sync", "site", runtime.ID, "error", err)
 		return
 	}
-	if _, err := workspaceManager.SyncContentResource(runtime, repoPath, deleted); err != nil {
+	synced, err := workspaceManager.SyncContentResource(runtime, repoPath, deleted)
+	if err != nil {
 		// The media operation already succeeded in the production workspace. Do
 		// not turn a preview-only synchronization failure into a misleading media
 		// retry; log it and let the next workspace rebuild recover the resource.
 		slog.Warn("Failed to synchronize media into Local Live Preview", "site", runtime.ID, "path", repoPath, "error", err)
+		return
+	}
+	if !invalidateMetadata {
+		return
+	}
+
+	// Content resources are part of the Eleventy input tree, while static
+	// resources are linked from the production project. Invalidate both paths
+	// after the shadow sync; the wrapper uses a directory recovery fallback for
+	// deleted resources and a full-input fallback when no relative path exists.
+	articlePath := ""
+	contentRoot := services.SafeJoin(runtime.RepoPath, "", runtime.ContentDir)
+	resourcePath := services.SafeJoin(runtime.RepoPath, "", repoPath)
+	if contentRoot != "" && resourcePath != "" {
+		if relative, relErr := filepath.Rel(contentRoot, resourcePath); relErr == nil && relative != "." && !filepath.IsAbs(relative) && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			articlePath = filepath.ToSlash(relative)
+		}
+	}
+	if !synced && articlePath != "" {
+		// There is no active shadow workspace to rebuild, but an active Eleventy
+		// process may still observe a production-linked resource.
+		articlePath = ""
+	}
+	if err := services.DefaultLocalPreviewManager().InvalidateArticleURL(runtime, articlePath); err != nil {
+		slog.Warn("Failed to invalidate Local Live Preview metadata after media sync", "site", runtime.ID, "path", repoPath, "error", err)
 	}
 }
 
