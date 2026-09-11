@@ -235,10 +235,14 @@ async function loadFile(path) {
 async function refreshFileList() {
     try {
         const files = await API.fetchArticles();
-        if (files) UI.renderFileList(files, cmsConfig);
+        if (files) {
+            UI.renderFileList(files, cmsConfig);
+            return files;
+        }
     } catch (e) {
         UI.showToast("Failed to fetch file list", "error");
     }
+    return null;
 }
 
 async function switchView(viewName) {
@@ -619,20 +623,86 @@ async function runSync() {
 
     const btn = document.querySelector('button[onclick="runSync()"]');
     const originalText = btn ? btn.textContent : "Sync";
-    if (btn) btn.textContent = "Syncing...";
+    const originalDisabled = btn ? btn.disabled : false;
+    if (btn) {
+        btn.textContent = "Syncing...";
+        btn.disabled = true;
+    }
 
+    const currentPath = Editor.getCurrentPath();
+    let previewPrepared = false;
+    let syncResponseReceived = false;
+    let syncCompleted = false;
     try {
+        // Pause and drain every editor write source while the server pulls
+        // production. This prevents a delayed AutoSave or preview update from
+        // recreating the pre-sync workspace afterwards.
+        await Editor.prepareForGitSync();
+        previewPrepared = true;
+
         const data = await API.runSync();
+        syncResponseReceived = true;
         if (data.status === 'ok') {
-            UI.showToast("Sync Complete", "success");
-            await refreshFileList();
+            syncCompleted = true;
+            resetLocalPreviewArticleURL();
+            closeEmbeddedLocalPreview();
+            if (data.local_preview_reset === false) {
+                UI.showToast("Sync Complete, but Local Live Preview reset failed", "warning");
+            } else {
+                UI.showToast("Sync Complete", "success");
+            }
+            const files = await refreshFileList();
+            if (currentPath && Array.isArray(files)) {
+                // The user may have edited the article while Sync was
+                // running. Evaluate the state after the response, not before
+                // the gate was installed.
+                const editorHasUnsavedChanges = Editor.hasUnsavedChanges();
+                const currentFileStillExists = files.some(file => file.path === currentPath);
+                if (!currentFileStillExists) {
+                    if (editorHasUnsavedChanges) {
+                        UI.showToast("Current article was removed remotely; unsaved editor content was kept", "warning");
+                    } else {
+                        Editor.clearEditor();
+                    }
+                } else if (!editorHasUnsavedChanges) {
+                    // A clean editor may still contain the pre-sync remote
+                    // payload. Reload it without starting Local Preview so the
+                    // next explicit Preview uses the current production tree.
+                    await Editor.loadFile(currentPath, { allowDuringGitSync: true });
+                }
+            }
+            await refreshLocalPreviewStatus();
         } else {
             UI.showToast("Sync Error: " + data.log, "error");
         }
     } catch (e) {
         UI.showToast("Network Error", "error");
+        if (previewPrepared && !syncResponseReceived) {
+            // The server may have completed the pull/reset even if the
+            // response was lost. Do not send the old editor payload back into
+            // a possibly-reset workspace; force the next Preview action to
+            // perform the authoritative resync instead.
+            resetLocalPreviewArticleURL();
+            closeEmbeddedLocalPreview();
+        }
     } finally {
-        if (btn) btn.textContent = originalText;
+        if (previewPrepared || Editor.isGitSyncInProgress()) {
+            Editor.finishForGitSync();
+        }
+        if (previewPrepared && syncResponseReceived && !syncCompleted) {
+            // If Git sync failed before the server reset, restore the current
+            // editor payload so an unsuccessful sync does not silently stop
+            // the existing Local Preview update path.
+            try {
+                await Editor.refreshLocalLivePreview();
+            } catch (previewError) {
+                console.error('[LocalPreview] failed to restore after Git sync', previewError);
+            }
+        }
+        if (btn) {
+            btn.textContent = originalText;
+            btn.disabled = originalDisabled;
+        }
     }
 }
 
@@ -658,7 +728,7 @@ async function runPublish(path, draftID) {
 
     try {
         await Editor.flushPendingSave();
-        const data = await API.runPublish(path, draftID);
+        const data = await Editor.runGitMutation(() => API.runPublish(path, draftID));
         if (data.status === 'ok') {
             UI.showToast("PRを作成しました", "success");
             const url = UI.safeExternalURL(data.url);
@@ -758,7 +828,7 @@ async function updateDeploymentPreview() {
         stopDeploymentPolling();
         await Editor.flushPendingSave();
         applyDeploymentState({ status: 'queued', message: 'デプロイを開始しています…' });
-        const state = await API.triggerPreviewDeployment(path, Editor.getDraftID());
+        const state = await Editor.runGitMutation(() => API.triggerPreviewDeployment(path, Editor.getDraftID()));
         if (path === Editor.getCurrentPath()) applyDeploymentState(state);
     } catch (e) {
         applyDeploymentState({ status: 'failed', message: e.message, retryable: false });
@@ -775,7 +845,7 @@ async function retryDeploymentPreview() {
     try {
         stopDeploymentPolling();
         applyDeploymentState({ ...deploymentState, status: 'queued', message: '再試行しています…' });
-        const state = await API.retryPreviewDeployment(Editor.getDraftID());
+        const state = await Editor.runGitMutation(() => API.retryPreviewDeployment(Editor.getDraftID()));
         applyDeploymentState(state);
     } catch (e) {
         applyDeploymentState({ ...deploymentState, status: 'failed', message: e.message });
@@ -792,7 +862,7 @@ async function discardDeploymentPreview() {
     deploymentOperationInProgress = true;
     try {
         stopDeploymentPolling();
-        await API.discardPreviewDeployment(Editor.getDraftID());
+        await Editor.runGitMutation(() => API.discardPreviewDeployment(Editor.getDraftID()));
         Editor.resetDraftID();
         applyDeploymentState(null);
         UI.showToast("デプロイプレビューを破棄しました", "success");

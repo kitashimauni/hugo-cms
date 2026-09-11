@@ -35,8 +35,16 @@ const {
 } = await import("./local_preview.js");
 const {
     createDraftUUID,
+    execAutoSave,
+    finishForGitSync,
     flushLocalPreviewBeforeArticleSwitch,
+    flushPendingSave,
     getOrCreateDraftID,
+    initAutoSave,
+    isGitSyncInProgress,
+    loadFile,
+    prepareForGitSync,
+    runGitMutation,
     waitForLocalPreviewUpdates,
 } = await import("./editor.js");
 const API = await import("./api.js");
@@ -363,6 +371,143 @@ describe("Local Preview destructive operations", () => {
 
 });
 
+describe("Git Sync editor gate", () => {
+    it("waits for an AutoSave already in flight before allowing Sync to continue", async () => {
+        const previousDocument = globalThis.document;
+        const previousFetch = globalThis.fetch;
+        const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+        const editor = { disabled: false, value: "", placeholder: "" };
+        const fmContainer = {
+            style: { display: "" },
+            innerHTML: "",
+            querySelectorAll() { return []; },
+        };
+        const preview = { replaceChildren() {}, querySelectorAll() { return []; } };
+        const previewStatus = {
+            textContent: "",
+            className: "",
+            removeAttribute() {},
+            setAttribute() {},
+        };
+        const elements = new Map([
+            ["editor", editor],
+            ["fm-container", fmContainer],
+            ["filename-display", { textContent: "" }],
+            ["markdown-preview", preview],
+            ["markdown-preview-status", previewStatus],
+        ]);
+        globalThis.document = {
+            getElementById(id) { return elements.get(id) || null; },
+            querySelectorAll() { return []; },
+        };
+        globalThis.requestAnimationFrame = callback => {
+            callback();
+            return 1;
+        };
+
+        let resolveSave;
+        let saveStarted;
+        const saveStartedPromise = new Promise(resolve => { saveStarted = resolve; });
+        let saveCompleted = false;
+        globalThis.fetch = async (url, options = {}) => {
+            if (url === "/admin/api/csrf-token") {
+                return { ok: true, status: 200, json: async () => ({ csrf_token: "csrf" }) };
+            }
+            if (String(url).includes("/admin/api/article?") && !options.method) {
+                return { ok: true, status: 200, json: async () => ({ path: "posts/pending.md", content: "before" }) };
+            }
+            if (String(url).includes("/admin/api/preview/markdown")) {
+                return { ok: true, status: 200, json: async () => ({ html: "<p>before</p>" }) };
+            }
+            if (String(url).endsWith("/admin/api/article") && options.method === "POST") {
+                saveStarted();
+                return new Promise(resolve => {
+                    resolveSave = () => {
+                        saveCompleted = true;
+                        resolve({ ok: true, status: 200, json: async () => ({ status: "ok" }) });
+                    };
+                });
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        };
+
+        try {
+            await loadFile("posts/pending.md");
+            editor.value = "after";
+            const saveOperation = execAutoSave();
+            await saveStartedPromise;
+
+            const syncPreparation = prepareForGitSync();
+            await Promise.resolve();
+            assert.equal(isGitSyncInProgress(), true);
+            assert.equal(saveCompleted, false);
+            await assert.rejects(flushPendingSave, /Git Sync is in progress/);
+            let mutationCalled = false;
+            await assert.rejects(
+                () => runGitMutation(() => { mutationCalled = true; }),
+                /Git Sync is in progress/,
+            );
+            assert.equal(mutationCalled, false);
+
+            resolveSave();
+            await saveOperation;
+            await syncPreparation;
+            assert.equal(saveCompleted, true);
+        } finally {
+            if (isGitSyncInProgress()) finishForGitSync();
+            globalThis.document = previousDocument;
+            globalThis.fetch = previousFetch;
+            globalThis.requestAnimationFrame = previousRequestAnimationFrame;
+        }
+    });
+
+    it("pauses editor writes and blocks edits while Sync is running", async () => {
+        const previousDocument = globalThis.document;
+        const previousMarkDeploymentPreviewStale = window.markDeploymentPreviewStale;
+        const listeners = {};
+        const editor = {
+            disabled: false,
+            value: "before sync",
+            addEventListener(type, callback) { listeners[type] = callback; },
+        };
+        const controls = [{ disabled: false }, { disabled: false }];
+        const fmContainer = {
+            querySelectorAll() { return controls; },
+            addEventListener(type, callback) { listeners[type] = callback; },
+        };
+        let staleMarkCount = 0;
+        window.markDeploymentPreviewStale = () => { staleMarkCount += 1; };
+        globalThis.document = {
+            getElementById(id) {
+                if (id === "editor") return editor;
+                if (id === "fm-container") return fmContainer;
+                return null;
+            },
+        };
+
+        try {
+            initAutoSave();
+            await prepareForGitSync();
+
+            assert.equal(isGitSyncInProgress(), true);
+            assert.equal(editor.disabled, true);
+            assert.deepEqual(controls.map(control => control.disabled), [true, true]);
+            editor.value = "changed during sync";
+            listeners.input();
+            assert.equal(staleMarkCount, 0);
+            assert.equal(await execAutoSave(), false);
+        } finally {
+            finishForGitSync();
+            globalThis.document = previousDocument;
+            window.markDeploymentPreviewStale = previousMarkDeploymentPreviewStale;
+        }
+
+        assert.equal(isGitSyncInProgress(), false);
+        assert.equal(editor.disabled, false);
+        assert.deepEqual(controls.map(control => control.disabled), [false, false]);
+    });
+});
+
 describe("preview API contracts", () => {
     it("scopes Markdown, local lifecycle, and deployment operations to the selected site", async () => {
         const calls = [];
@@ -387,21 +532,22 @@ describe("preview API contracts", () => {
         await API.discardPreviewDeployment("draft/id");
         await API.runPublish(article.path, "draft/id");
 
-        assert.equal(calls[1].url, "/admin/api/preview/markdown?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[1].options.body), article);
-        assert.equal(calls[2].url, "/admin/api/preview/local?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[2].options.body), { ...article, revision: 7 });
-        assert.equal(calls[3].url, "/admin/api/preview/local/navigate?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[3].options.body), { path: article.path });
-        assert.equal(calls[4].url, "/admin/api/preview/local/status?site=docs+site");
-        assert.equal(calls[5].url, "/admin/api/preview/local/stop?site=docs+site");
-        assert.equal(calls[6].url, "/admin/api/preview/deployments?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[6].options.body), { path: article.path, draft_id: "draft/id" });
-        assert.equal(calls[7].url, "/admin/api/preview/deployments/draft%2Fid?site=docs+site");
-        assert.equal(calls[8].url, "/admin/api/preview/deployments/draft%2Fid/retry?site=docs+site");
-        assert.equal(calls[9].url, "/admin/api/preview/deployments/draft%2Fid/discard?site=docs+site");
-        assert.deepEqual(JSON.parse(calls[10].options.body), { path: article.path, draft_id: "draft/id" });
-        calls.slice(1).forEach(call => {
+        const requestCalls = calls.filter(call => call.url !== "/admin/api/csrf-token");
+        assert.equal(requestCalls[0].url, "/admin/api/preview/markdown?site=docs+site");
+        assert.deepEqual(JSON.parse(requestCalls[0].options.body), article);
+        assert.equal(requestCalls[1].url, "/admin/api/preview/local?site=docs+site");
+        assert.deepEqual(JSON.parse(requestCalls[1].options.body), { ...article, revision: 7 });
+        assert.equal(requestCalls[2].url, "/admin/api/preview/local/navigate?site=docs+site");
+        assert.deepEqual(JSON.parse(requestCalls[2].options.body), { path: article.path });
+        assert.equal(requestCalls[3].url, "/admin/api/preview/local/status?site=docs+site");
+        assert.equal(requestCalls[4].url, "/admin/api/preview/local/stop?site=docs+site");
+        assert.equal(requestCalls[5].url, "/admin/api/preview/deployments?site=docs+site");
+        assert.deepEqual(JSON.parse(requestCalls[5].options.body), { path: article.path, draft_id: "draft/id" });
+        assert.equal(requestCalls[6].url, "/admin/api/preview/deployments/draft%2Fid?site=docs+site");
+        assert.equal(requestCalls[7].url, "/admin/api/preview/deployments/draft%2Fid/retry?site=docs+site");
+        assert.equal(requestCalls[8].url, "/admin/api/preview/deployments/draft%2Fid/discard?site=docs+site");
+        assert.deepEqual(JSON.parse(requestCalls[9].options.body), { path: article.path, draft_id: "draft/id" });
+        requestCalls.forEach(call => {
             assert.equal(call.options.headers["X-CMS-Site"], "docs site");
         });
     });

@@ -14,13 +14,53 @@ let previewController = null;
 let previewRevision = 0;
 let localPreviewTimer = null;
 let localPreviewRevision = 0;
+let gitSyncInProgress = false;
 const localPreviewInflight = new Set();
 
 const PREVIEW_DEBOUNCE_MS = 180;
 const LOCAL_PREVIEW_DEBOUNCE_MS = 250;
+const GIT_SYNC_WRITE_PAUSED_MESSAGE = "Git Sync is in progress";
+const gitMutationInflight = new Set();
 
 export function getCurrentPath() {
     return currentPath;
+}
+
+export function hasUnsavedChanges() {
+    if (!currentPath || currentPath === deletingPath) return false;
+    return JSON.stringify(getPayload()) !== lastSavedPayload;
+}
+
+function setEditorWritePaused(paused) {
+    const editor = document.getElementById('editor');
+    if (editor) editor.disabled = paused;
+
+    const fmContainer = document.getElementById('fm-container');
+    if (fmContainer && typeof fmContainer.querySelectorAll === 'function') {
+        fmContainer.querySelectorAll('input, textarea, select, button').forEach(control => {
+            control.disabled = paused;
+        });
+    }
+}
+
+function assertGitSyncWritesAllowed() {
+    if (gitSyncInProgress) {
+        throw new Error(GIT_SYNC_WRITE_PAUSED_MESSAGE);
+    }
+}
+
+export async function runGitMutation(operation) {
+    assertGitSyncWritesAllowed();
+    const mutation = Promise.resolve().then(() => {
+        assertGitSyncWritesAllowed();
+        return operation();
+    });
+    gitMutationInflight.add(mutation);
+    mutation.then(
+        () => gitMutationInflight.delete(mutation),
+        () => gitMutationInflight.delete(mutation),
+    );
+    return mutation;
 }
 
 export function getCurrentLocalPreviewFrontMatterKey() {
@@ -102,6 +142,7 @@ export function clearEditor() {
         fmContainer.innerHTML = "";
         fmContainer.style.display = 'none';
     }
+    setEditorWritePaused(gitSyncInProgress);
 
     UI.clearMarkdownPreview();
 }
@@ -118,6 +159,7 @@ export function initAutoSave() {
 }
 
 function handleEditorChange() {
+    if (gitSyncInProgress) return;
     triggerAutoSave();
     scheduleMarkdownPreview();
     scheduleLocalLivePreview();
@@ -125,7 +167,7 @@ function handleEditorChange() {
 }
 
 function triggerAutoSave() {
-    if (!currentPath) return;
+    if (gitSyncInProgress || !currentPath) return;
     if (currentPath === deletingPath) return;
     clearAutoSaveTimer();
 
@@ -172,7 +214,7 @@ function cancelMarkdownPreview() {
 }
 
 function scheduleMarkdownPreview() {
-    if (!currentPath || currentPath === deletingPath) return;
+    if (gitSyncInProgress || !currentPath || currentPath === deletingPath) return;
     if (previewTimer) clearTimeout(previewTimer);
     previewTimer = setTimeout(() => {
         previewTimer = null;
@@ -180,8 +222,8 @@ function scheduleMarkdownPreview() {
     }, PREVIEW_DEBOUNCE_MS);
 }
 
-export async function refreshMarkdownPreview() {
-    if (!currentPath || currentPath === deletingPath) {
+export async function refreshMarkdownPreview({ allowDuringGitSync = false } = {}) {
+    if ((gitSyncInProgress && !allowDuringGitSync) || !currentPath || currentPath === deletingPath) {
         UI.clearMarkdownPreview();
         return;
     }
@@ -227,7 +269,7 @@ function resetLocalPreviewClientState() {
 }
 
 function scheduleLocalLivePreview() {
-    if (!localPreviewEnabled() || !currentPath || currentPath === deletingPath) return;
+    if (gitSyncInProgress || !localPreviewEnabled() || !currentPath || currentPath === deletingPath) return;
     if (localPreviewTimer) clearTimeout(localPreviewTimer);
     localPreviewTimer = setTimeout(() => {
         localPreviewTimer = null;
@@ -236,7 +278,7 @@ function scheduleLocalLivePreview() {
 }
 
 export async function refreshLocalLivePreview() {
-    if (!localPreviewEnabled() || !currentPath || currentPath === deletingPath) return null;
+    if (gitSyncInProgress || !localPreviewEnabled() || !currentPath || currentPath === deletingPath) return null;
     cancelLocalPreviewTimer();
 
     const revision = ++localPreviewRevision;
@@ -274,6 +316,33 @@ export async function prepareLocalLivePreviewStop() {
     resetLocalPreviewClientState();
 }
 
+// Git Sync updates the production repository tree. Pause every editor write
+// source before it starts so an old autosave or preview request cannot race
+// the pull and recreate the pre-sync state afterwards.
+export async function prepareForGitSync() {
+    if (gitSyncInProgress) return;
+    gitSyncInProgress = true;
+    setEditorWritePaused(true);
+    clearAutoSaveTimer();
+    cancelMarkdownPreview();
+    cancelLocalPreviewTimer();
+    await saveQueue.catch(() => undefined);
+    await waitForLocalPreviewUpdates();
+    while (gitMutationInflight.size > 0) {
+        await Promise.allSettled(Array.from(gitMutationInflight));
+    }
+    resetLocalPreviewClientState();
+}
+
+export function finishForGitSync() {
+    gitSyncInProgress = false;
+    setEditorWritePaused(false);
+}
+
+export function isGitSyncInProgress() {
+    return gitSyncInProgress;
+}
+
 // Article switching cancels the debounce timer, so explicitly send the
 // current editor payload after the previous preview writes have settled.
 // Keeping the pending set shared lets the final wait include this flush too.
@@ -284,11 +353,13 @@ export async function flushLocalPreviewBeforeArticleSwitch(flush = refreshLocalL
 }
 
 export async function execAutoSave() {
+    if (gitSyncInProgress) return false;
     return queueCurrentSave("Auto Saving...");
 }
 
 async function queueCurrentSave(statusMessage) {
     while (currentPath && currentPath !== deletingPath) {
+        assertGitSyncWritesAllowed();
         // Another payload may become the saved value while we wait. Read the
         // editor again afterwards so preview/publish always uses what is
         // currently visible, including a revert to an older payload.
@@ -334,6 +405,7 @@ async function queueCurrentSave(statusMessage) {
 }
 
 export async function flushPendingSave() {
+    assertGitSyncWritesAllowed();
     clearAutoSaveTimer();
     if (currentPath && currentPath === deletingPath) {
         throw new Error("Article deletion is in progress");
@@ -341,7 +413,8 @@ export async function flushPendingSave() {
     await queueCurrentSave("Saving before publish...");
 }
 
-export async function loadFile(path) {
+export async function loadFile(path, { allowDuringGitSync = false } = {}) {
+    if (gitSyncInProgress && !allowDuringGitSync) return;
     clearAutoSaveTimer();
     cancelMarkdownPreview();
     cancelLocalPreviewTimer();
@@ -375,14 +448,17 @@ export async function loadFile(path) {
         const data = await API.fetchArticle(path);
         currentData = data;
         UI.updateEditorContent(data, path, cmsConfig);
+        setEditorWritePaused(gitSyncInProgress);
 
         lastSavedPayload = JSON.stringify(getPayload());
         lastQueuedPayload = "";
-        await refreshMarkdownPreview();
+        await refreshMarkdownPreview({ allowDuringGitSync });
 
     } catch (e) {
         UI.showEditorError(e);
         UI.showToast("Failed to load file: " + e.message, "error");
+    } finally {
+        setEditorWritePaused(gitSyncInProgress);
     }
 }
 
@@ -400,6 +476,9 @@ function getPayload() {
 }
 
 export async function saveFile() {
+    if (gitSyncInProgress) {
+        return UI.showToast(GIT_SYNC_WRITE_PAUSED_MESSAGE, "warning");
+    }
     if (!currentPath) return UI.showToast("No file selected", "warning");
     if (currentPath === deletingPath) {
         return UI.showToast("Article deletion is in progress", "warning");
@@ -416,6 +495,9 @@ export async function saveFile() {
 }
 
 export async function deleteFile(refreshListCb) {
+    if (gitSyncInProgress) {
+        return UI.showToast(GIT_SYNC_WRITE_PAUSED_MESSAGE, "warning");
+    }
     if (!currentPath) return UI.showToast("No file selected", "warning");
     if (currentPath === deletingPath) {
         return UI.showToast("Article deletion is already in progress", "warning");
@@ -438,7 +520,8 @@ export async function deleteFile(refreshListCb) {
         // shadow files, otherwise a late update could recreate the deleted
         // article in the resident workspace.
         await waitForLocalPreviewUpdates();
-        await API.deleteArticle(pathToDelete);
+        assertGitSyncWritesAllowed();
+        await runGitMutation(() => API.deleteArticle(pathToDelete));
         // Production deletion is committed at this point. The server removes
         // the corresponding file from the site-scoped preview workspace while
         // keeping the generator runtime alive for the next article.
@@ -476,6 +559,9 @@ export async function deleteFile(refreshListCb) {
 }
 
 export async function createNewFile(refreshListCb) {
+    if (gitSyncInProgress) {
+        return UI.showToast(GIT_SYNC_WRITE_PAUSED_MESSAGE, "warning");
+    }
     if (!cmsConfig) {
         UI.showToast("Config not loaded", "error");
         return;
@@ -483,10 +569,11 @@ export async function createNewFile(refreshListCb) {
 
     UI.showCreationModal(cmsConfig, async (colName, fields) => {
         try {
-            const res = await API.createArticle({
+            assertGitSyncWritesAllowed();
+            const res = await runGitMutation(() => API.createArticle({
                 collection: colName,
                 fields: fields
-            });
+            }));
 
             if (res.status === 'created') {
                 if (refreshListCb) await refreshListCb();
@@ -511,6 +598,7 @@ export async function resetChanges() {
 }
 
 export function insertText(text) {
+    if (gitSyncInProgress) return;
     const editor = document.getElementById('editor');
     if (!editor) return;
 

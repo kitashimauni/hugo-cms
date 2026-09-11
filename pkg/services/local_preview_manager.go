@@ -656,6 +656,63 @@ func (m *LocalPreviewManager) Stop(ctx context.Context, siteID string) error {
 	return m.lifecycle.Release(siteID)
 }
 
+// ResetRuntime stops the site-scoped generator and detaches its shadow
+// workspace under the same cleanup gate used by explicit Stop and idle
+// cleanup. The next preview request can then recreate the workspace from the
+// current production repository tree.
+func (m *LocalPreviewManager) ResetRuntime(ctx context.Context, siteID string, workspaceManager *LocalPreviewWorkspaceManager) error {
+	if m == nil {
+		return errors.New("local preview manager is nil")
+	}
+	if workspaceManager == nil {
+		return errors.New("local preview workspace manager is nil")
+	}
+	if strings.TrimSpace(siteID) == "" {
+		return errors.New("local preview site ID is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	cleanup, claimed, err := workspaceManager.BeginCleanup(siteID)
+	if err != nil {
+		return fmt.Errorf("begin local preview reset for site %q: %w", siteID, err)
+	}
+	if !claimed {
+		return fmt.Errorf("local preview reset for site %q was not claimed", siteID)
+	}
+
+	if err := m.Stop(ctx, siteID); err != nil {
+		workspaceManager.CancelCleanup(&cleanup)
+		return fmt.Errorf("stop local preview for site %q: %w", siteID, err)
+	}
+	if _, err := workspaceManager.FinishCleanup(&cleanup); err != nil {
+		workspaceManager.CancelCleanup(&cleanup)
+		return fmt.Errorf("detach local preview workspace for site %q: %w", siteID, err)
+	}
+	return nil
+}
+
+// ResetLocalPreviewForRuntime resets an enabled site's process and shadow
+// workspace. Reset errors are intentionally returned separately from Git sync
+// errors so callers can report that production synchronization succeeded while
+// the preview needs attention.
+func ResetLocalPreviewForRuntime(ctx context.Context, runtime config.SiteRuntime) error {
+	if runtime.LocalPreview.Enabled == nil || !*runtime.LocalPreview.Enabled {
+		return nil
+	}
+	workspaceManager, err := DefaultLocalPreviewWorkspaceManager()
+	if err != nil {
+		return fmt.Errorf("local preview workspace is unavailable: %w", err)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stopCtx, cancel := context.WithTimeout(ctx, DefaultLocalPreviewStopTimeout)
+	defer cancel()
+	return DefaultLocalPreviewManager().ResetRuntime(stopCtx, runtime.ID, workspaceManager)
+}
+
 func (m *LocalPreviewManager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
 	m.shuttingDown = true
