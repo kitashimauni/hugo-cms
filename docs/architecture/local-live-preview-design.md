@@ -79,6 +79,8 @@ stopped -> starting -> ready -> stopping -> stopped
 - child environmentはgenerator allowlistのみ
 - CMS shutdown開始後は新規lazy startを拒否
 - HTTP server drain後にchild processを停止
+- Unix/Linuxではgeneratorを独立process groupで起動し、wrapper配下も`SIGTERM`→grace period→`SIGKILL`の順で停止
+- process tree終了と`cmd.Wait()`を確認してからlifecycle slotをreleaseし、timeout時はPID/process groupを診断ログへ残す
 - 異常終了後は次requestで再起動可能
 
 Hugoは概ね次相当で起動する。
@@ -236,7 +238,7 @@ POST /admin/api/preview/local/navigate
 POST /admin/api/preview/local/stop
 ```
 
-Stop時はgenerator process停止後にworkspaceをdetachし、物理削除は非同期で行う。active shadow workspaceがなければ次のpreview requestは保存済みrepository contentを使う。Eleventyのtemporary outputも同時に削除する。
+Stop時はgenerator process groupの停止と`cmd.Wait()`完了後にworkspaceをdetachし、物理削除は非同期で行う。active shadow workspaceがなければ次のpreview requestは保存済みrepository contentを使う。Eleventyのtemporary outputも同時に削除する。`npm exec`や`mise`のwrapperがstdio pipeを保持しても待機が無期限にならないよう、process groupへのgraceful/forced signalと`WaitDelay`を共通の停止経路で管理する。
 
 ## Phase 4への契約
 

@@ -471,6 +471,7 @@ func (m *LocalPreviewManager) startProcess(runtime config.SiteRuntime, port int,
 	// limit or leak CMS secrets through the browser response.
 	cmd.Stdout = stderr
 	cmd.Stderr = stderr
+	configureLocalPreviewCommand(cmd)
 	if err := cmd.Start(); err != nil {
 		cancel()
 		if cleanupErr := cleanup(); cleanupErr != nil {
@@ -556,17 +557,12 @@ func localPreviewHTTPReady(address string) (bool, error) {
 
 func (m *LocalPreviewManager) cleanupFailedSlotLocked(siteID string, process *managedLocalPreviewProcess, processErr error) {
 	if process != nil {
-		process.cancel()
-		select {
-		case <-process.done:
-		case <-time.After(time.Second):
-			if process.cmd.Process != nil {
-				_ = process.cmd.Process.Kill()
-			}
-			select {
-			case <-process.done:
-			case <-time.After(time.Second):
-			}
+		stopCtx, cancel := context.WithTimeout(context.Background(), DefaultLocalPreviewStopTimeout)
+		terminationErr := terminateManagedLocalPreviewProcess(stopCtx, siteID, process)
+		cancel()
+		if terminationErr != nil {
+			slog.Error("Local preview process tree did not terminate during startup cleanup", "site", siteID, "error", terminationErr)
+			return
 		}
 		m.removeProcessIfCurrent(siteID, process)
 	}
@@ -596,17 +592,20 @@ func (m *LocalPreviewManager) handleProcessExit(siteID string, process *managedL
 	if m.process(siteID) != process {
 		return
 	}
-	m.removeProcessIfCurrent(siteID, process)
-
 	slot, ok := m.lifecycle.Get(siteID)
 	if !ok {
 		return
 	}
+	if slot.State == LocalPreviewStopping {
+		// Stop owns the process mapping and lifecycle release while a process
+		// tree termination is in flight. The parent may have exited while a
+		// wrapper child still holds the process group alive.
+		return
+	}
+	m.removeProcessIfCurrent(siteID, process)
 	switch slot.State {
 	case LocalPreviewReady:
 		_, _ = m.lifecycle.Transition(siteID, LocalPreviewFailed, process.processError())
-	case LocalPreviewStopping:
-		_, _ = m.lifecycle.Transition(siteID, LocalPreviewStopped, nil)
 	}
 }
 
@@ -633,15 +632,8 @@ func (m *LocalPreviewManager) Stop(ctx context.Context, siteID string) error {
 			return err
 		}
 	}
-	process.cancel()
-
-	select {
-	case <-process.done:
-	case <-ctx.Done():
-		if process.cmd.Process != nil {
-			_ = process.cmd.Process.Kill()
-		}
-		return fmt.Errorf("stopping local preview for site %q: %w", siteID, ctx.Err())
+	if err := terminateManagedLocalPreviewProcess(ctx, siteID, process); err != nil {
+		return err
 	}
 	m.removeProcessIfCurrent(siteID, process)
 

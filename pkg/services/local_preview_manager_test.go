@@ -323,6 +323,48 @@ func TestLocalPreviewManagerStopReleasesSlot(t *testing.T) {
 	}
 }
 
+func TestLocalPreviewManagerProcessExitDoesNotReleaseStoppingSlot(t *testing.T) {
+	lifecycle, err := NewLocalPreviewLifecycle(14100, 14100)
+	if err != nil {
+		t.Fatalf("NewLocalPreviewLifecycle() error = %v", err)
+	}
+	manager := NewLocalPreviewManager(lifecycle)
+	const siteID = "tech"
+	if _, err := lifecycle.Reserve(siteID, nil); err != nil {
+		t.Fatalf("Reserve() error = %v", err)
+	}
+	if _, err := lifecycle.Transition(siteID, LocalPreviewStarting, nil); err != nil {
+		t.Fatalf("Transition(starting) error = %v", err)
+	}
+	if _, err := lifecycle.Transition(siteID, LocalPreviewReady, nil); err != nil {
+		t.Fatalf("Transition(ready) error = %v", err)
+	}
+	if _, err := lifecycle.Transition(siteID, LocalPreviewStopping, nil); err != nil {
+		t.Fatalf("Transition(stopping) error = %v", err)
+	}
+
+	terminated := make(chan struct{})
+	close(terminated)
+	process := &managedLocalPreviewProcess{
+		cmd:  &exec.Cmd{},
+		done: terminated,
+	}
+	manager.setProcess(siteID, process)
+
+	manager.handleProcessExit(siteID, process)
+
+	slot, ok := manager.Status(siteID)
+	if !ok {
+		t.Fatal("process exit callback released a stopping lifecycle slot")
+	}
+	if slot.State != LocalPreviewStopping {
+		t.Fatalf("slot.State = %q, want stopping", slot.State)
+	}
+	if manager.process(siteID) != process {
+		t.Fatal("process exit callback removed the process mapping while stopping")
+	}
+}
+
 func TestLocalPreviewManagerResetRuntimeStopsAndDetachesWorkspace(t *testing.T) {
 	manager, site := newTestLocalPreviewManager(t)
 	defer shutdownTestLocalPreviewManager(t, manager)
