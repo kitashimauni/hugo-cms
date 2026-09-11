@@ -1,6 +1,6 @@
 # 設定ガイド
 
-Hugo CMSの詳細な設定オプションについて説明します。
+HomeCMSの詳細な設定オプションについて説明します。
 
 ## 環境変数
 
@@ -71,7 +71,7 @@ GITHUB_OAUTH_SCOPES=repo
 
 サーバーが待ち受けるポート番号。デフォルト: `8080`
 
-Docker構成ではコンテナ内の`PORT`を`8080`に固定します。ホスト側のloopback公開ポートは`HUGO_CMS_HOST_PORT`で変更してください。
+Docker構成ではコンテナ内の`PORT`を`8080`に固定します。ホスト側のloopback公開ポートは`HOMECMS_HOST_PORT`で変更してください。
 
 #### `APP_URL`
 
@@ -87,7 +87,7 @@ APP_URL=https://cms.example.com
 
 #### `REPO_PATH`
 
-Hugoサイトのリポジトリパス。相対パスまたは絶対パスで指定。
+サイトリポジトリのパス。相対パスまたは絶対パスで指定。Hugoを使う場合はHugoサイト、Eleventyを使う場合はEleventyサイトを指定します。
 
 ```env
 # 相対パス (hugo-cmsディレクトリからの相対)
@@ -131,7 +131,7 @@ mise exec -C <repo_path> -- hugo ...
 
 Docker運用では`GENERATOR_RUNTIME=mise`を推奨します。ホストではなくコンテナ内のmiseが、各サイトリポジトリの`mise.toml` / `.mise.toml` / `.tool-versions`を読みます。
 
-app起動時には`mise install`やNode.js依存のインストールを行いません。管理者が`HUGO_CMS_REPOS`へ明示したリポジトリだけを、secret-freeな`tool-bootstrap` one-shot serviceで事前準備します。詳細は[Docker + mise デプロイガイド](docker-mise-deployment.md)を参照してください。
+app起動時には`mise install`やNode.js依存のインストールを行いません。管理者が`HOMECMS_REPOS`へ明示したリポジトリだけを、secret-freeな`tool-bootstrap` one-shot serviceで事前準備します。詳細は[Docker + mise デプロイガイド](docker-mise-deployment.md)を参照してください。
 
 ### Docker Compose専用設定
 
@@ -139,12 +139,12 @@ app起動時には`mise install`やNode.js依存のインストールを行い�
 
 | 変数 | 説明 | 既定値 |
 |---|---|---|
-| `HUGO_CMS_UID` | app/tool-bootstrapの非root UID。Linuxではhost userに合わせる | `10001` |
-| `HUGO_CMS_GID` | app/tool-bootstrapの非root GID。Linuxではhost groupに合わせる | `10001` |
-| `HUGO_CMS_HOST_PORT` | hostの`127.0.0.1`へ公開するポート | `8080` |
-| `HUGO_CMS_REPOS` | bootstrapを許可するcontainer内repo絶対パス。Unixの`:`区切り | なし（要指定） |
+| `HOMECMS_UID` | app/tool-bootstrapの非root UID。Linuxではhost userに合わせる | `10001` |
+| `HOMECMS_GID` | app/tool-bootstrapの非root GID。Linuxではhost groupに合わせる | `10001` |
+| `HOMECMS_HOST_PORT` | hostの`127.0.0.1`へ公開するポート | `8080` |
+| `HOMECMS_REPOS` | bootstrapを許可するcontainer内repo絶対パス。Unixの`:`区切り | なし（要指定） |
 
-`HUGO_CMS_REPOS`はカンマや空白区切りではありません。`/data/repos`の自動探索も行わないため、Site Registryへ追加したrepoも、実行を承認したうえで別途allowlistへ列挙します。
+`HOMECMS_REPOS`はカンマや空白区切りではありません。`/data/repos`の自動探索も行わないため、Site Registryへ追加したrepoも、実行を承認したうえで別途allowlistへ列挙します。
 
 #### `CONTENT_DIR` / `STATIC_DIR` / `PUBLIC_DIR`
 
@@ -402,8 +402,8 @@ STATIC_MEDIA_DIR=
 コミット時に使用するGit identity。
 
 ```env
-GIT_USER_NAME="Hugo CMS Bot"
-GIT_USER_EMAIL="bot@hugo-cms.local"
+GIT_USER_NAME="HomeCMS Bot"
+GIT_USER_EMAIL="bot@homecms.local"
 ```
 
 #### `GIT_BRANCH`
@@ -428,7 +428,9 @@ GIT_USER_EMAIL="bot@hugo-cms.local"
 | Hugo新規コンテンツ | 60秒 | `hugo new` コマンド |
 | GitHubトークン検証 | 5分 | 定期的なトークン有効性確認 |
 
-Local Live PreviewのEleventy初回buildとwatch rebuild後のmetadata URL解決の待機上限はデフォルト2分です。重いsiteでは`HUGO_CMS_LOCAL_PREVIEW_STARTUP_TIMEOUT=5m`のようにGoのduration形式で変更できます。Eleventyの初回build失敗時は同じbuildを自動再試行しません。
+Local Live PreviewのEleventy初回buildとwatch rebuild後のmetadata URL解決の待機上限はデフォルト2分です。重いsiteでは`HOMECMS_LOCAL_PREVIEW_STARTUP_TIMEOUT=5m`のようにGoのduration形式で変更できます。Eleventyの初回build失敗時は同じbuildを自動再試行しません。
+
+`HOMECMS_*`が標準の設定名です。既存環境向けに`HUGO_CMS_*`（`UID`、`GID`、`HOST_PORT`、`REPOS`、Local Live Previewのtimeout）はフォールバックとして利用できますが、標準名が設定されている場合は標準名を優先し、旧名の利用時はdeprecated warningを記録します。
 
 ## 設定例
 
@@ -483,11 +485,11 @@ ALLOWED_GITHUB_USERS=your-username
 REPO_PATH=/data/repos/techblog
 SITE_GENERATOR=hugo
 GENERATOR_RUNTIME=mise
-HUGO_CMS_REPOS=/data/repos/techblog
+HOMECMS_REPOS=/data/repos/techblog
 
-HUGO_CMS_HOST_PORT=8080
-HUGO_CMS_UID=1000
-HUGO_CMS_GID=1000
+HOMECMS_HOST_PORT=8080
+HOMECMS_UID=1000
+HOMECMS_GID=1000
 
 MARKDOWN_PREVIEW_ENABLED=true
 ```

@@ -297,7 +297,7 @@ URL解決は同じラッパーのJSONモードでprogrammatic `toJSON()`を実�
 - <https://www.11ty.dev/docs/programmatic/>
 - <https://www.11ty.dev/docs/permalinks/>
 
-依存関係の取得はHTTPリクエスト処理中やapp起動時に行わない。Docker構成では管理者が`HUGO_CMS_REPOS`へUnixの`:`区切りで明示したrepoだけを、`docker compose --profile tools run --rm tool-bootstrap`で準備する。bootstrapはmise toolchainを導入したあと、lockfileに応じてnpm、pnpm、yarn、bunのfrozen installを実行し、成功した環境だけをプレビューへ使用する。
+依存関係の取得はHTTPリクエスト処理中やapp起動時に行わない。Docker構成では管理者が`HOMECMS_REPOS`へUnixの`:`区切りで明示したrepoだけを、`docker compose --profile tools run --rm tool-bootstrap`で準備する。bootstrapはmise toolchainを導入したあと、lockfileに応じてnpm、pnpm、yarn、bunのfrozen installを実行し、成功した環境だけをプレビューへ使用する。
 
 ## コンテンツ管理の共通化
 
@@ -376,7 +376,7 @@ Eleventyの設定はJavaScriptであり、npm依存関係のインストール�
 - プレビューを管理画面とは別オリジンで配信する。
 - mise設定のhookや任意タスクを無条件にtrustしない。
 
-Dockerのtool bootstrapは`/data/repos`を自動探索せず、`HUGO_CMS_REPOS`で列挙されたrepoだけを個別にtrustする。one-shot serviceへappのenv fileを渡さず、`GITHUB_CLIENT_SECRET`や`SESSION_SECRET`を持たない状態でmise設定とNode.js install scriptを実行する。app自身は`mise install`、依存取得、bind mountの`chown`を行わない。
+Dockerのtool bootstrapは`/data/repos`を自動探索せず、`HOMECMS_REPOS`で列挙されたrepoだけを個別にtrustする。one-shot serviceへappのenv fileを渡さず、`GITHUB_CLIENT_SECRET`や`SESSION_SECRET`を持たない状態でmise設定とNode.js install scriptを実行する。app自身は`mise install`、依存取得、bind mountの`chown`を行わない。
 
 信頼できる自社リポジトリだけを対象とする初期版でも、子プロセスへCMSの秘密情報を継承させない。プレビューの別オリジン化、サイト単位のコンテナ分離、リソース・ネットワーク制限は引き続き必要である。
 

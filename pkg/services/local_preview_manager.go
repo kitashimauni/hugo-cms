@@ -21,17 +21,22 @@ import (
 )
 
 const (
-	defaultLocalPreviewStartupTimeout  = 2 * time.Minute
-	DefaultLocalPreviewStopTimeout     = 10 * time.Second
-	defaultLocalPreviewProbeInterval   = 50 * time.Millisecond
-	defaultLocalPreviewStartAttempts   = 3
-	localPreviewStderrLimit            = 64 << 10
-	localPreviewHugoEnvironment        = "development"
-	localPreviewStartupTimeoutEnv      = "HUGO_CMS_LOCAL_PREVIEW_STARTUP_TIMEOUT"
-	localPreviewIdleTimeoutEnv         = "HUGO_CMS_LOCAL_PREVIEW_IDLE_TIMEOUT"
-	eleventyLocalPreviewReadyPath      = "/__hugo_cms_ready"
-	eleventyLocalPreviewMetadataPath   = "/__hugo_cms_metadata"
-	eleventyLocalPreviewInvalidatePath = "/__hugo_cms_invalidate"
+	defaultLocalPreviewStartupTimeout        = 2 * time.Minute
+	DefaultLocalPreviewStopTimeout           = 10 * time.Second
+	defaultLocalPreviewProbeInterval         = 50 * time.Millisecond
+	defaultLocalPreviewStartAttempts         = 3
+	localPreviewStderrLimit                  = 64 << 10
+	localPreviewHugoEnvironment              = "development"
+	localPreviewStartupTimeoutEnv            = "HOMECMS_LOCAL_PREVIEW_STARTUP_TIMEOUT"
+	localPreviewIdleTimeoutEnv               = "HOMECMS_LOCAL_PREVIEW_IDLE_TIMEOUT"
+	legacyLocalPreviewStartupTimeoutEnv      = "HUGO_CMS_LOCAL_PREVIEW_STARTUP_TIMEOUT"
+	legacyLocalPreviewIdleTimeoutEnv         = "HUGO_CMS_LOCAL_PREVIEW_IDLE_TIMEOUT"
+	eleventyLocalPreviewReadyPath            = "/__homecms_ready"
+	eleventyLocalPreviewMetadataPath         = "/__homecms_metadata"
+	eleventyLocalPreviewInvalidatePath       = "/__homecms_invalidate"
+	legacyEleventyLocalPreviewReadyPath      = "/__hugo_cms_ready"
+	legacyEleventyLocalPreviewMetadataPath   = "/__hugo_cms_metadata"
+	legacyEleventyLocalPreviewInvalidatePath = "/__hugo_cms_invalidate"
 )
 
 // IsLocalPreviewControlPath reports whether requestPath resolves to an
@@ -40,7 +45,8 @@ const (
 // public preview ingress.
 func IsLocalPreviewControlPath(requestPath string) bool {
 	switch path.Clean(requestPath) {
-	case eleventyLocalPreviewReadyPath, eleventyLocalPreviewMetadataPath, eleventyLocalPreviewInvalidatePath:
+	case eleventyLocalPreviewReadyPath, eleventyLocalPreviewMetadataPath, eleventyLocalPreviewInvalidatePath,
+		legacyEleventyLocalPreviewReadyPath, legacyEleventyLocalPreviewMetadataPath, legacyEleventyLocalPreviewInvalidatePath:
 		return true
 	default:
 		return false
@@ -200,7 +206,7 @@ func NewLocalPreviewManager(lifecycle *LocalPreviewLifecycle) *LocalPreviewManag
 }
 
 func configuredLocalPreviewStartupTimeout() time.Duration {
-	value := strings.TrimSpace(os.Getenv(localPreviewStartupTimeoutEnv))
+	value := localPreviewEnvironmentValue(localPreviewStartupTimeoutEnv, legacyLocalPreviewStartupTimeoutEnv)
 	if value == "" {
 		return defaultLocalPreviewStartupTimeout
 	}
@@ -213,7 +219,7 @@ func configuredLocalPreviewStartupTimeout() time.Duration {
 }
 
 func configuredLocalPreviewIdleTimeout() time.Duration {
-	value := strings.TrimSpace(os.Getenv(localPreviewIdleTimeoutEnv))
+	value := localPreviewEnvironmentValue(localPreviewIdleTimeoutEnv, legacyLocalPreviewIdleTimeoutEnv)
 	if value == "" {
 		return DefaultLocalPreviewIdleTimeout
 	}
@@ -223,6 +229,17 @@ func configuredLocalPreviewIdleTimeout() time.Duration {
 	}
 	slog.Warn("Invalid local preview idle timeout; using default", "value", value, "default", DefaultLocalPreviewIdleTimeout)
 	return DefaultLocalPreviewIdleTimeout
+}
+
+func localPreviewEnvironmentValue(primary, legacy string) string {
+	if value := strings.TrimSpace(os.Getenv(primary)); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(os.Getenv(legacy)); value != "" {
+		slog.Warn("Deprecated environment variable is in use", "legacy", legacy, "replacement", primary)
+		return value
+	}
+	return ""
 }
 
 var defaultLocalPreviewManager = NewLocalPreviewManager(nil)
@@ -543,16 +560,25 @@ func (m *LocalPreviewManager) waitUntilReady(process *managedLocalPreviewProcess
 
 func localPreviewHTTPReady(address string) (bool, error) {
 	client := &http.Client{Timeout: 250 * time.Millisecond}
-	request, err := http.NewRequest(http.MethodGet, "http://"+address+eleventyLocalPreviewReadyPath, nil)
-	if err != nil {
-		return false, err
+	var lastErr error
+	for _, controlPath := range []string{eleventyLocalPreviewReadyPath, legacyEleventyLocalPreviewReadyPath} {
+		request, err := http.NewRequest(http.MethodGet, "http://"+address+controlPath, nil)
+		if err != nil {
+			return false, err
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		status := response.StatusCode
+		_ = response.Body.Close()
+		if status == http.StatusNotFound {
+			continue
+		}
+		return status == http.StatusOK, nil
 	}
-	response, err := client.Do(request)
-	if err != nil {
-		return false, err
-	}
-	defer response.Body.Close()
-	return response.StatusCode == http.StatusOK, nil
+	return false, lastErr
 }
 
 func (m *LocalPreviewManager) cleanupFailedSlotLocked(siteID string, process *managedLocalPreviewProcess, processErr error) {
@@ -754,23 +780,37 @@ func (m *LocalPreviewManager) InvalidateArticleURL(runtime config.SiteRuntime, a
 			endpoint.RawQuery = query.Encode()
 		}
 	}
-	request, err := http.NewRequest(http.MethodPost, endpoint.String(), nil)
-	if err != nil {
-		return fmt.Errorf("%w: create request: %v", ErrLocalPreviewMetadataInvalidation, err)
-	}
 	client := &http.Client{Timeout: 500 * time.Millisecond}
-	response, err := client.Do(request)
-	if err != nil {
-		if process.exited() {
-			return nil
+	var lastErr error
+	for _, controlPath := range []string{eleventyLocalPreviewInvalidatePath, legacyEleventyLocalPreviewInvalidatePath} {
+		endpoint.Path = controlPath
+		request, err := http.NewRequest(http.MethodPost, endpoint.String(), nil)
+		if err != nil {
+			return fmt.Errorf("%w: create request: %v", ErrLocalPreviewMetadataInvalidation, err)
 		}
-		return fmt.Errorf("%w: %v", ErrLocalPreviewMetadataInvalidation, err)
+		response, err := client.Do(request)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		status := response.StatusCode
+		responseStatus := response.Status
+		_ = response.Body.Close()
+		if status == http.StatusNotFound {
+			continue
+		}
+		if status != http.StatusAccepted {
+			return fmt.Errorf("%w: endpoint returned %s", ErrLocalPreviewMetadataInvalidation, responseStatus)
+		}
+		return nil
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("%w: endpoint returned %s", ErrLocalPreviewMetadataInvalidation, response.Status)
+	if process.exited() {
+		return nil
 	}
-	return nil
+	if lastErr == nil {
+		lastErr = errors.New("control endpoint not found")
+	}
+	return fmt.Errorf("%w: %v", ErrLocalPreviewMetadataInvalidation, lastErr)
 }
 
 // ResolveArticleURL resolves an Eleventy article through the metadata map kept
@@ -1031,7 +1071,7 @@ func prepareEleventyLocalPreviewProject(runtime config.SiteRuntime) (string, str
 			return "", "", fmt.Errorf("resolve Eleventy local preview project root: %w", err)
 		}
 	} else {
-		baseDir := filepath.Join(os.TempDir(), "hugo-cms-local-preview")
+		baseDir := filepath.Join(os.TempDir(), "homecms-local-preview")
 		if err := os.MkdirAll(baseDir, 0700); err != nil {
 			return "", "", fmt.Errorf("create Eleventy local preview project root: %w", err)
 		}

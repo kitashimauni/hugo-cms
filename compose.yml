@@ -4,12 +4,12 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        HUGO_CMS_UID: ${HUGO_CMS_UID:-10001}
-        HUGO_CMS_GID: ${HUGO_CMS_GID:-10001}
+        HOMECMS_UID: ${HOMECMS_UID:-${HUGO_CMS_UID:-10001}}
+        HOMECMS_GID: ${HOMECMS_GID:-${HUGO_CMS_GID:-10001}}
     image: hugo-cms:local
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${HUGO_CMS_HOST_PORT:-8080}:8080"
+      - "127.0.0.1:${HOMECMS_HOST_PORT:-${HUGO_CMS_HOST_PORT:-8080}}:8080"
     env_file: .env
     environment:
       GIN_MODE: release
@@ -19,8 +19,8 @@ services:
       MISE_DATA_DIR: /data/mise
       MISE_CACHE_DIR: /data/mise/cache
       PREVIEW_STATE_DIR: /data/homecms/preview-deployments
-      HUGO_CMS_REPOS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
-      MISE_TRUSTED_CONFIG_PATHS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
+      HOMECMS_REPOS: ${HOMECMS_REPOS:-${HUGO_CMS_REPOS:?Set HOMECMS_REPOS in .env}}
+      MISE_TRUSTED_CONFIG_PATHS: ${HOMECMS_REPOS:-${HUGO_CMS_REPOS:?Set HOMECMS_REPOS in .env}}
     volumes:
       - ./repos:/data/repos
       - mise-data:/data/mise
@@ -44,8 +44,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        HUGO_CMS_UID: ${HUGO_CMS_UID:-10001}
-        HUGO_CMS_GID: ${HUGO_CMS_GID:-10001}
+        HOMECMS_UID: ${HOMECMS_UID:-${HUGO_CMS_UID:-10001}}
+        HOMECMS_GID: ${HOMECMS_GID:-${HUGO_CMS_GID:-10001}}
     image: hugo-cms:local
     restart: "no"
     command: ["/usr/local/bin/docker-tool-bootstrap"]
@@ -53,8 +53,8 @@ services:
       HOME: /home/hugo-cms
       MISE_DATA_DIR: /data/mise
       MISE_CACHE_DIR: /data/mise/cache
-      HUGO_CMS_REPOS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
-      MISE_TRUSTED_CONFIG_PATHS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
+      HOMECMS_REPOS: ${HOMECMS_REPOS:-${HUGO_CMS_REPOS:?Set HOMECMS_REPOS in .env}}
+      MISE_TRUSTED_CONFIG_PATHS: ${HOMECMS_REPOS:-${HUGO_CMS_REPOS:?Set HOMECMS_REPOS in .env}}
     volumes:
       - ./repos:/data/repos
       - mise-data:/data/mise

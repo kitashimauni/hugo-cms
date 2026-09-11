@@ -1,26 +1,26 @@
-# Hugo CMS
+# HomeCMS
 
-Hugoサイト用のセルフホスト型ヘッドレスCMSです。GitHub OAuthによる認証、安全なMarkdown本文プレビュー、デプロイプレビュー、Gitベースのコンテンツ管理を提供します。
+Hugo、Eleventyなどの静的サイトジェネレーターに対応するセルフホスト型ヘッドレスCMSです。GitHub OAuthによる認証、安全なMarkdown本文プレビュー、デプロイプレビュー、Gitベースのコンテンツ管理を提供します。
 
 ## 特徴
 
 - 🔐 **GitHub OAuth認証** - 安全なログインとユーザー制限
 - 📝 **本文プレビュー** - 編集中のMarkdownをsanitizeして即座に確認
-- 🌐 **Local Live Preview** - site別hostnameでHugo theme/layout/shortcode/CSS/JS/LiveReloadを確認
+- 🌐 **Local Live Preview** - site別hostnameで各ジェネレーターのtheme/layout/CSS/JS/LiveReloadを確認
 - 🚀 **デプロイプレビュー** - draft branchを外部providerでbuildし、公開前に特定commitを確認
 - 🖼️ **メディア管理** - ドラッグ&ドロップでの画像アップロード
 - 🔄 **Gitワークフロー** - 変更の同期・公開をワンクリックで
 - ⚡ **高速キャッシュ** - 並列処理による記事一覧の高速表示
 - 🛡️ **セキュリティ** - CSRF保護、パストラバーサル対策、入力検証
 
-> Issue #32では、Phase 1/2でsite別hostnameのHugo process/proxy/LiveReload基盤まで実装済みです。Phase 3 (#35)では未保存editor入力をephemeral shadow content workspaceへ約250msで反映し、Hugo watcherへつなぎます。content配下のmedia upload/deleteもactive workspaceへ同期します。Local Previewを開く/停止するUIや状態表示はPhase 4で追加します。旧`/admin/preview/:site/*` path-prefix proxyは復活させません。
+> Issue #32では、Phase 1/2でsite別hostnameのgenerator process/proxy/LiveReload基盤まで実装済みです。Phase 3 (#35)では未保存editor入力をephemeral shadow content workspaceへ約250msで反映し、generator watcherへつなぎます。content配下のmedia upload/deleteもactive workspaceへ同期します。旧`/admin/preview/:site/*` path-prefix proxyは復活させません。
 
 ## クイックスタート
 
 ### 前提条件
 
 - mise（Go 1.24.11のセットアップに使用）
-- Hugo (Extended版推奨)
+- 利用するサイトジェネレーター（Hugo Extended版、Eleventyなど）
 - Git
 - GitHub OAuth App
 
@@ -36,7 +36,7 @@ cd hugo-cms
 1. [GitHub Developer Settings](https://github.com/settings/developers) にアクセス
 2. "New OAuth App" をクリック
 3. 以下を設定:
-   - **Application name**: Hugo CMS (任意)
+   - **Application name**: HomeCMS (任意)
    - **Homepage URL**: `http://localhost:8080`
    - **Authorization callback URL**: `http://localhost:8080/admin/auth/callback`
 4. Client IDとClient Secretをメモ
@@ -56,9 +56,9 @@ SESSION_SECRET=32文字以上のランダムな文字列
 ALLOWED_GITHUB_USERS=your-github-username
 ```
 
-### 4. Hugoサイトの準備
+### 4. サイトの準備
 
-`repo/` ディレクトリにHugoサイトを配置するか、既存のサイトへのパスを `REPO_PATH` で指定します。
+`repo/` ディレクトリに対象サイトを配置するか、既存のサイトへのパスを `REPO_PATH` で指定します。HugoサイトではHugo、EleventyサイトではEleventyの設定と依存関係をサイト側に用意してください。
 
 CMSの設定ファイルを作成:
 
@@ -93,7 +93,7 @@ mise run dev
 
 ## Dockerでの起動
 
-Docker構成ではapp起動とサイトtoolchainの準備を分離します。`.env`へapp設定、host UID/GID、`HUGO_CMS_REPOS`の明示allowlistを設定したあと、secret-freeなone-shot serviceを実行します。
+Docker構成ではapp起動とサイトtoolchainの準備を分離します。`.env`へapp設定、host UID/GID、`HOMECMS_REPOS`の明示allowlistを設定したあと、secret-freeなone-shot serviceを実行します。
 
 ```bash
 cp deploy/.env.example .env
@@ -118,7 +118,7 @@ appは非rootで動作し、bind mountしたrepoを`chown`しません。mise to
 | `GITHUB_OAUTH_SCOPES` | OAuthスコープ | `public_repo` |
 | `PORT` | サーバーポート。Docker container内は固定 | `8080` |
 | `APP_URL` | アプリケーションURL | `http://localhost:8080` |
-| `REPO_PATH` | Hugoリポジトリのパス | `./repo` |
+| `REPO_PATH` | 対象サイトリポジトリのパス | `./repo` |
 | `SITE_GENERATOR` | サイトジェネレーター (`hugo` / `eleventy`) | `hugo` |
 | `GENERATOR_RUNTIME` | generatorコマンドの実行方式 (`direct` / `mise`) | `direct` |
 | `CONTENT_DIR` | リポジトリ内の記事ディレクトリ | `content` |
@@ -139,8 +139,8 @@ appは非rootで動作し、bind mountしたrepoを`chown`しません。mise to
 | `CLOUDFLARE_PAGES_API_TOKEN_ENV` | API tokenを保持する環境変数名 | `CLOUDFLARE_API_TOKEN` |
 | `PREVIEW_DEPLOYMENT_ACCESS_PROTECTED` | Cloudflare Access設定済みの申告 | `false` |
 | `PREVIEW_STATE_DIR` | draft/deployment state保存先 | `data/preview-deployments` |
-| `GIT_USER_NAME` | Gitコミット用ユーザー名 | `Hugo CMS Bot` |
-| `GIT_USER_EMAIL` | Gitコミット用メール | `bot@hugo-cms.local` |
+| `GIT_USER_NAME` | Gitコミット用ユーザー名 | `HomeCMS Bot` |
+| `GIT_USER_EMAIL` | Gitコミット用メール | `bot@homecms.local` |
 | `GIT_BRANCH` | Gitブランチ | `main` |
 
 詳細は [設定ガイド](docs/guides/configuration.md) を参照してください。
@@ -149,11 +149,11 @@ appは非rootで動作し、bind mountしたrepoを`chown`しません。mise to
 
 - [ドキュメント一覧](docs/README.md) - 目的別の索引
 - [設定ガイド](docs/guides/configuration.md) - 詳細な設定オプション
-- [Local Live Preview設定ガイド](docs/guides/local-live-preview.md) - wildcard subdomain、閲覧制御、Hugo runtime、shadow workspace
+- [Local Live Preview設定ガイド](docs/guides/local-live-preview.md) - wildcard subdomain、閲覧制御、generator runtime、shadow workspace
 - [Docker + mise デプロイガイド](docs/guides/docker-mise-deployment.md) - secret-free bootstrapと非root appによる推奨デプロイ
 - [CMS設定](docs/reference/cms-config.md) - コレクションとフィールドの設定
 - [現行アーキテクチャ](docs/architecture/current-architecture.md) - 現在のシステム構成
-- [マルチサイト・マルチジェネレーター設計](docs/architecture/multi-site-generator-design.md) - 複数HugoサイトとEleventy等への対応方針
+- [マルチサイト・マルチジェネレーター設計](docs/architecture/multi-site-generator-design.md) - 複数サイトとHugo/Eleventy等への対応方針
 - [本文プレビューとデプロイプレビュー](docs/architecture/preview-deployment-design.md) - 安全な本文表示、draft deployment、Local Live Previewとの役割分担
 - [Local Live Preview設計](docs/architecture/local-live-preview-design.md) - hostname、process lifecycle、shadow workspace、security boundary
 - [セキュリティ・品質監査](docs/audits/security-and-quality-audit.md) - 既知の問題と推奨対応
@@ -185,7 +185,7 @@ hugo-cms/
 │       ├── generator.go # ジェネレーター共通インターフェース
 │       ├── hugo_adapter.go # Hugoアダプター
 │       ├── local_preview_lifecycle.go # preview state/port reservation
-│       ├── local_preview_manager.go # Hugo preview process/proxy管理
+│       ├── local_preview_manager.go # generator preview process/proxy管理
 │       ├── local_preview_workspace.go # ephemeral shadow content管理
 │       └── media.go     # メディアファイル管理
 ├── docs/
@@ -201,7 +201,7 @@ hugo-cms/
 │       ├── editor.js    # Markdownエディタ/preview debounce
 │       └── ui.js        # UI操作
 ├── templates/           # HTMLテンプレート
-└── repo/                # Hugoサイト (デフォルト)
+└── repo/                # サイト (デフォルトジェネレーターはHugo)
 ```
 
 ## 開発

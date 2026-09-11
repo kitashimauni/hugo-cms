@@ -125,10 +125,10 @@ sites:
 - appと`tool-bootstrap`のUID/GIDが非rootで、app起動によってhost repoの所有者が変わらない
 - host GIDがbase image内の既存groupと重複してもimageをbuildでき、指定した数値UID/GIDで動作する
 - UID/GIDに`0`または`00`などのゼロ埋め表現を指定するとimage buildが失敗する
-- host portが`127.0.0.1:${HUGO_CMS_HOST_PORT:-8080}`だけに公開され、container内`PORT`が`8080`
+- host portが`127.0.0.1:${HOMECMS_HOST_PORT:-8080}`だけに公開され、container内`PORT`が`8080`
 - `mise-data`がnamed volumeで、app再作成後も準備済みtoolchainを利用できる
 - app起動・再起動では`mise install`やNode.js依存installが実行されない
-- `docker compose --profile tools run --rm tool-bootstrap`が`HUGO_CMS_REPOS`のUnix `:`区切りallowlistだけを処理する
+- `docker compose --profile tools run --rm tool-bootstrap`が`HOMECMS_REPOS`のUnix `:`区切りallowlistだけを処理する
 - allowlist外の`/data/repos`配下repoはbootstrapされない
 - `tool-bootstrap`に`GITHUB_CLIENT_SECRET`、`SESSION_SECRET`などのapp secretが存在しない
 - mise設定とlockfileを更新してbootstrapを再実行すると、準備済み環境が安全に更新される

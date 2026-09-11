@@ -20,7 +20,7 @@ run_clean() {
     CI=true \
     MISE_DATA_DIR="${MISE_DATA_DIR}" \
     MISE_CACHE_DIR="${MISE_CACHE_DIR}" \
-    MISE_TRUSTED_CONFIG_PATHS="${HUGO_CMS_REPOS}" \
+    MISE_TRUSTED_CONFIG_PATHS="${HOMECMS_REPOS}" \
     "$@"
 }
 
@@ -91,7 +91,7 @@ bootstrap_repo() {
   local configured_repo="$1"
   local repo
 
-  [ -n "${configured_repo}" ] || die "HUGO_CMS_REPOS contains an empty entry"
+  [ -n "${configured_repo}" ] || die "HOMECMS_REPOS contains an empty entry"
   case "${configured_repo}" in
     /*) ;;
     *) die "repository path must be absolute: ${configured_repo}" ;;
@@ -118,17 +118,23 @@ bootstrap_repo() {
 : "${HOME:=/home/hugo-cms}"
 : "${MISE_DATA_DIR:=/data/mise}"
 : "${MISE_CACHE_DIR:=${MISE_DATA_DIR}/cache}"
-: "${HUGO_CMS_REPOS:?HUGO_CMS_REPOS must list allowed repositories separated by ':'}"
+if [ -n "${HUGO_CMS_REPOS:-}" ]; then
+  if [ -z "${HOMECMS_REPOS:-}" ]; then
+    HOMECMS_REPOS="${HUGO_CMS_REPOS}"
+  fi
+  log "WARNING: HUGO_CMS_REPOS is deprecated; use HOMECMS_REPOS"
+fi
+: "${HOMECMS_REPOS:?HOMECMS_REPOS must list allowed repositories separated by ':'}"
 : "${MISE_TRUSTED_CONFIG_PATHS:?MISE_TRUSTED_CONFIG_PATHS must be set}"
 
-[ "${MISE_TRUSTED_CONFIG_PATHS}" = "${HUGO_CMS_REPOS}" ] \
-  || die "MISE_TRUSTED_CONFIG_PATHS must exactly match HUGO_CMS_REPOS"
+[ "${MISE_TRUSTED_CONFIG_PATHS}" = "${HOMECMS_REPOS}" ] \
+  || die "MISE_TRUSTED_CONFIG_PATHS must exactly match HOMECMS_REPOS"
 
-case "${HUGO_CMS_REPOS}" in
-  :*|*:|*::*) die "HUGO_CMS_REPOS contains an empty entry" ;;
+case "${HOMECMS_REPOS}" in
+  :*|*:|*::*) die "HOMECMS_REPOS contains an empty entry" ;;
 esac
 
-IFS=':' read -r -a configured_repos <<< "${HUGO_CMS_REPOS}"
+IFS=':' read -r -a configured_repos <<< "${HOMECMS_REPOS}"
 for configured_repo in "${configured_repos[@]}"; do
   bootstrap_repo "${configured_repo}"
 done

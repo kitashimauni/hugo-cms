@@ -29,11 +29,11 @@ func TestLocalPreviewManagerStopsPackageManagerWrapperProcessTree(t *testing.T) 
 			manager.commandFactory = func(ctx context.Context, runtime config.SiteRuntime, port int, _ string) (*exec.Cmd, error) {
 				cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestLocalPreviewProcessTreeHelper$")
 				cmd.Env = append(os.Environ(),
-					"HUGO_CMS_PROCESS_TREE_HELPER=wrapper",
-					"HUGO_CMS_PROCESS_TREE_MODE="+mode,
-					"HUGO_CMS_PROCESS_TREE_PORT="+strconv.Itoa(port),
-					"HUGO_CMS_PROCESS_TREE_PID_PATH="+pidPath,
-					"HUGO_CMS_PROCESS_TREE_SIGNAL_PATH="+signalPath,
+					"HOMECMS_PROCESS_TREE_HELPER=wrapper",
+					"HOMECMS_PROCESS_TREE_MODE="+mode,
+					"HOMECMS_PROCESS_TREE_PORT="+strconv.Itoa(port),
+					"HOMECMS_PROCESS_TREE_PID_PATH="+pidPath,
+					"HOMECMS_PROCESS_TREE_SIGNAL_PATH="+signalPath,
 				)
 				return cmd, nil
 			}
@@ -73,23 +73,23 @@ func TestLocalPreviewManagerStopsPackageManagerWrapperProcessTree(t *testing.T) 
 }
 
 func TestLocalPreviewProcessTreeHelper(t *testing.T) {
-	if os.Getenv("HUGO_CMS_PROCESS_TREE_HELPER") != "wrapper" {
+	if os.Getenv("HOMECMS_PROCESS_TREE_HELPER") != "wrapper" {
 		return
 	}
-	port, err := strconv.Atoi(os.Getenv("HUGO_CMS_PROCESS_TREE_PORT"))
+	port, err := strconv.Atoi(os.Getenv("HOMECMS_PROCESS_TREE_PORT"))
 	if err != nil {
 		os.Exit(2)
 	}
-	mode := os.Getenv("HUGO_CMS_PROCESS_TREE_MODE")
-	pidPath := os.Getenv("HUGO_CMS_PROCESS_TREE_PID_PATH")
-	signalPath := os.Getenv("HUGO_CMS_PROCESS_TREE_SIGNAL_PATH")
+	mode := os.Getenv("HOMECMS_PROCESS_TREE_MODE")
+	pidPath := os.Getenv("HOMECMS_PROCESS_TREE_PID_PATH")
+	signalPath := os.Getenv("HOMECMS_PROCESS_TREE_SIGNAL_PATH")
 
 	child := exec.Command(os.Args[0], "-test.run=^TestLocalPreviewProcessTreeChild$")
 	child.Env = append(os.Environ(),
-		"HUGO_CMS_PROCESS_TREE_HELPER=child",
-		"HUGO_CMS_PROCESS_TREE_MODE="+mode,
-		"HUGO_CMS_PROCESS_TREE_PORT="+strconv.Itoa(port),
-		"HUGO_CMS_PROCESS_TREE_SIGNAL_PATH="+signalPath,
+		"HOMECMS_PROCESS_TREE_HELPER=child",
+		"HOMECMS_PROCESS_TREE_MODE="+mode,
+		"HOMECMS_PROCESS_TREE_PORT="+strconv.Itoa(port),
+		"HOMECMS_PROCESS_TREE_SIGNAL_PATH="+signalPath,
 	)
 	child.Stdout = os.Stdout
 	child.Stderr = os.Stderr
@@ -104,10 +104,10 @@ func TestLocalPreviewProcessTreeHelper(t *testing.T) {
 }
 
 func TestLocalPreviewProcessTreeChild(t *testing.T) {
-	if os.Getenv("HUGO_CMS_PROCESS_TREE_HELPER") != "child" {
+	if os.Getenv("HOMECMS_PROCESS_TREE_HELPER") != "child" {
 		return
 	}
-	port, err := strconv.Atoi(os.Getenv("HUGO_CMS_PROCESS_TREE_PORT"))
+	port, err := strconv.Atoi(os.Getenv("HOMECMS_PROCESS_TREE_PORT"))
 	if err != nil {
 		os.Exit(5)
 	}
@@ -125,10 +125,10 @@ func TestLocalPreviewProcessTreeChild(t *testing.T) {
 	defer signal.Stop(signals)
 	for {
 		sig := <-signals
-		if os.Getenv("HUGO_CMS_PROCESS_TREE_MODE") == "ignore" {
+		if os.Getenv("HOMECMS_PROCESS_TREE_MODE") == "ignore" {
 			continue
 		}
-		if err := os.WriteFile(os.Getenv("HUGO_CMS_PROCESS_TREE_SIGNAL_PATH"), []byte("terminated"), 0600); err != nil {
+		if err := os.WriteFile(os.Getenv("HOMECMS_PROCESS_TREE_SIGNAL_PATH"), []byte("terminated"), 0600); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
 		_ = sig

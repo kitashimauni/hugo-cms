@@ -357,65 +357,74 @@ func resolveRunningEleventyArticleURLResolution(ctx context.Context, runtime con
 	defer ticker.Stop()
 	lastMetadataStatus := "not_observed"
 	var lastMetadata eleventyRunningMetadata
+	metadataPaths := []string{eleventyLocalPreviewMetadataPath, legacyEleventyLocalPreviewMetadataPath}
 
 	for {
-		request, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
-		if requestErr == nil {
-			response, requestErr := client.Do(request)
+	metadataRequests:
+		for pathIndex, metadataPath := range metadataPaths {
+			endpoint.Path = metadataPath
+			request, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 			if requestErr == nil {
-				lastMetadataStatus = response.Status
-				switch response.StatusCode {
-				case http.StatusOK:
-					var metadata eleventyRunningMetadata
-					decodeErr := json.NewDecoder(response.Body).Decode(&metadata)
-					_ = response.Body.Close()
-					if decodeErr != nil {
-						return PreviewArticleURLResolution{}, fmt.Errorf("decode Eleventy metadata: %w", decodeErr)
-					}
-					if strings.TrimSpace(metadata.URL) == "" {
-						return PreviewArticleURLResolution{}, fmt.Errorf("Eleventy metadata did not provide a URL for article %q", articlePath)
-					}
-					fresh := metadata.Status != "stale"
-					if metadata.Fresh != nil {
-						fresh = *metadata.Fresh
-					}
-					status := strings.TrimSpace(metadata.Status)
-					if status == "" {
-						if fresh {
-							status = "resolved"
-						} else {
-							status = "stale"
+				response, requestErr := client.Do(request)
+				if requestErr == nil {
+					lastMetadataStatus = response.Status
+					switch response.StatusCode {
+					case http.StatusOK:
+						var metadata eleventyRunningMetadata
+						decodeErr := json.NewDecoder(response.Body).Decode(&metadata)
+						_ = response.Body.Close()
+						if decodeErr != nil {
+							return PreviewArticleURLResolution{}, fmt.Errorf("decode Eleventy metadata: %w", decodeErr)
 						}
+						if strings.TrimSpace(metadata.URL) == "" {
+							return PreviewArticleURLResolution{}, fmt.Errorf("Eleventy metadata did not provide a URL for article %q", articlePath)
+						}
+						fresh := metadata.Status != "stale"
+						if metadata.Fresh != nil {
+							fresh = *metadata.Fresh
+						}
+						status := strings.TrimSpace(metadata.Status)
+						if status == "" {
+							if fresh {
+								status = "resolved"
+							} else {
+								status = "stale"
+							}
+						}
+						resolvedURL, urlErr := localPreviewArticleURL(previewURL, metadata.URL)
+						if urlErr != nil {
+							return PreviewArticleURLResolution{}, urlErr
+						}
+						return PreviewArticleURLResolution{
+							URL:                    resolvedURL,
+							Fresh:                  fresh,
+							Status:                 status,
+							InvalidationGeneration: metadata.InvalidationGeneration,
+							ActiveBuildGeneration:  metadata.ActiveBuildGeneration,
+						}, nil
+					case http.StatusNotFound:
+						decodeErr := json.NewDecoder(response.Body).Decode(&lastMetadata)
+						_ = response.Body.Close()
+						if decodeErr != nil {
+							if pathIndex == 0 {
+								continue
+							}
+							lastMetadata = eleventyRunningMetadata{}
+						}
+						slog.Warn("Eleventy metadata article not found", "site", runtime.ID, "article_path", articlePath, "metadata_status", lastMetadataStatus, "metadata_generation", lastMetadata.InvalidationGeneration, "active_build_generation", lastMetadata.ActiveBuildGeneration, "last_build_completed_at", lastMetadata.LastBuildCompletedAt)
+						return PreviewArticleURLResolution{}, fmt.Errorf("eleventy did not resolve article %q", articlePath)
+					case http.StatusServiceUnavailable:
+						decodeErr := json.NewDecoder(response.Body).Decode(&lastMetadata)
+						_ = response.Body.Close()
+						if decodeErr != nil {
+							lastMetadata = eleventyRunningMetadata{}
+						}
+						break metadataRequests
+					default:
+						status := response.Status
+						_ = response.Body.Close()
+						return PreviewArticleURLResolution{}, fmt.Errorf("Eleventy metadata endpoint returned %s", status)
 					}
-					resolvedURL, urlErr := localPreviewArticleURL(previewURL, metadata.URL)
-					if urlErr != nil {
-						return PreviewArticleURLResolution{}, urlErr
-					}
-					return PreviewArticleURLResolution{
-						URL:                    resolvedURL,
-						Fresh:                  fresh,
-						Status:                 status,
-						InvalidationGeneration: metadata.InvalidationGeneration,
-						ActiveBuildGeneration:  metadata.ActiveBuildGeneration,
-					}, nil
-				case http.StatusNotFound:
-					decodeErr := json.NewDecoder(response.Body).Decode(&lastMetadata)
-					_ = response.Body.Close()
-					if decodeErr != nil {
-						lastMetadata = eleventyRunningMetadata{}
-					}
-					slog.Warn("Eleventy metadata article not found", "site", runtime.ID, "article_path", articlePath, "metadata_status", lastMetadataStatus, "metadata_generation", lastMetadata.InvalidationGeneration, "active_build_generation", lastMetadata.ActiveBuildGeneration, "last_build_completed_at", lastMetadata.LastBuildCompletedAt)
-					return PreviewArticleURLResolution{}, fmt.Errorf("eleventy did not resolve article %q", articlePath)
-				case http.StatusServiceUnavailable:
-					decodeErr := json.NewDecoder(response.Body).Decode(&lastMetadata)
-					_ = response.Body.Close()
-					if decodeErr != nil {
-						lastMetadata = eleventyRunningMetadata{}
-					}
-				default:
-					status := response.Status
-					_ = response.Body.Close()
-					return PreviewArticleURLResolution{}, fmt.Errorf("Eleventy metadata endpoint returned %s", status)
 				}
 			}
 		}
@@ -492,7 +501,7 @@ func prepareEleventyResolverProject(runtime config.SiteRuntime) (string, string,
 		return "", "", func() {}, err
 	}
 
-	projectDir, err := os.MkdirTemp("", "hugo-cms-eleventy-resolver-*")
+	projectDir, err := os.MkdirTemp("", "homecms-eleventy-resolver-*")
 	if err != nil {
 		return "", "", func() {}, fmt.Errorf("create Eleventy resolver project: %w", err)
 	}

@@ -306,7 +306,7 @@ function collectionFolderForArticlePaths(collection, config) {
         return folder.slice(contentDir.length + 1);
     }
     // Backward compatibility for configs loaded before server-side metadata
-    // existed, and for the default Hugo content directory.
+    // existed, and for the default content directory.
     return folder.replace(/^content\//, '');
 }
 
