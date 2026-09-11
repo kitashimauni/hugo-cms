@@ -280,6 +280,74 @@ test("re-notifies a missed watcher event after invalidation", async () => {
   }
 });
 
+test("re-notifies the parent directory when an invalidated article was deleted", async () => {
+  const input = fs.mkdtempSync(path.join(os.tmpdir(), "homecms-eleventy-delete-recovery-"));
+  const article = path.join(input, "posts", "one.md");
+  const articleDirectory = path.dirname(article);
+  fs.mkdirSync(articleDirectory, { recursive: true });
+  fs.writeFileSync(article, "# one\n");
+  const state = createBuildState(input);
+  try {
+    const before = fs.statSync(articleDirectory).mtimeMs;
+    assert.equal(state.invalidate("posts/one.md"), 1);
+    fs.rmSync(article);
+    await new Promise(resolve => setTimeout(resolve, 900));
+    assert.ok(fs.statSync(articleDirectory).mtimeMs > before, "watcher recovery did not touch the parent directory");
+  } finally {
+    state.activeBuildGeneration = state.invalidationGeneration;
+    state.update([]);
+    state.stopRecovery();
+    fs.rmSync(input, { recursive: true, force: true });
+  }
+});
+
+test("re-notifies the input root when invalidation has no specific path", async () => {
+  const input = fs.mkdtempSync(path.join(os.tmpdir(), "homecms-eleventy-root-recovery-"));
+  const state = createBuildState(input);
+  try {
+    const before = fs.statSync(input).mtimeMs;
+    assert.equal(state.invalidate(), 1);
+    await new Promise(resolve => setTimeout(resolve, 900));
+    assert.ok(fs.statSync(input).mtimeMs > before, "watcher recovery did not touch the input root");
+  } finally {
+    state.activeBuildGeneration = state.invalidationGeneration;
+    state.update([]);
+    state.stopRecovery();
+    fs.rmSync(input, { recursive: true, force: true });
+  }
+});
+
+test("hides stale metadata immediately after a resource invalidation", async () => {
+  const input = fs.mkdtempSync(path.join(os.tmpdir(), "homecms-eleventy-resource-barrier-"));
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), "homecms-eleventy-resource-output-"));
+  const state = createBuildState(input);
+  state.ready = true;
+  state.building = false;
+  state.entries.set("posts/one.md", {
+    inputPath: path.join(input, "posts", "one.md"),
+    outputPath: path.join(output, "posts", "one", "index.html"),
+    url: "/posts/one/",
+  });
+  const server = createLoopbackServer(output, state);
+  try {
+    await listen(server, 0, "127.0.0.1");
+    const port = server.address().port;
+    const before = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    assert.equal(before.statusCode, 200);
+
+    const invalidated = await requestHTTP(port, "/__hugo_cms_invalidate", "POST");
+    assert.equal(invalidated.statusCode, 202);
+    const duringMutation = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    assert.equal(duringMutation.statusCode, 503);
+  } finally {
+    state.stopRecovery();
+    server.closeAll();
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(input, { recursive: true, force: true });
+    fs.rmSync(output, { recursive: true, force: true });
+  }
+});
+
 test("resolves a real Eleventy 3.x project in JSON mode", { skip: !hasRealEleventy() }, () => {
   const fixture = createEleventyFixture();
   try {
