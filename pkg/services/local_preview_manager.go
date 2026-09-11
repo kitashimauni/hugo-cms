@@ -601,9 +601,6 @@ func (m *LocalPreviewManager) handleProcessExit(siteID string, process *managedL
 	switch slot.State {
 	case LocalPreviewReady:
 		_, _ = m.lifecycle.Transition(siteID, LocalPreviewFailed, process.processError())
-	case LocalPreviewStopping:
-		_, _ = m.lifecycle.Transition(siteID, LocalPreviewStopped, nil)
-		_ = m.lifecycle.Release(siteID)
 	}
 }
 
