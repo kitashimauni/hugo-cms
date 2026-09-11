@@ -728,7 +728,7 @@ async function runPublish(path, draftID) {
 
     try {
         await Editor.flushPendingSave();
-        const data = await API.runPublish(path, draftID);
+        const data = await Editor.runGitMutation(() => API.runPublish(path, draftID));
         if (data.status === 'ok') {
             UI.showToast("PRを作成しました", "success");
             const url = UI.safeExternalURL(data.url);
@@ -828,7 +828,7 @@ async function updateDeploymentPreview() {
         stopDeploymentPolling();
         await Editor.flushPendingSave();
         applyDeploymentState({ status: 'queued', message: 'デプロイを開始しています…' });
-        const state = await API.triggerPreviewDeployment(path, Editor.getDraftID());
+        const state = await Editor.runGitMutation(() => API.triggerPreviewDeployment(path, Editor.getDraftID()));
         if (path === Editor.getCurrentPath()) applyDeploymentState(state);
     } catch (e) {
         applyDeploymentState({ status: 'failed', message: e.message, retryable: false });
@@ -845,7 +845,7 @@ async function retryDeploymentPreview() {
     try {
         stopDeploymentPolling();
         applyDeploymentState({ ...deploymentState, status: 'queued', message: '再試行しています…' });
-        const state = await API.retryPreviewDeployment(Editor.getDraftID());
+        const state = await Editor.runGitMutation(() => API.retryPreviewDeployment(Editor.getDraftID()));
         applyDeploymentState(state);
     } catch (e) {
         applyDeploymentState({ ...deploymentState, status: 'failed', message: e.message });
@@ -862,7 +862,7 @@ async function discardDeploymentPreview() {
     deploymentOperationInProgress = true;
     try {
         stopDeploymentPolling();
-        await API.discardPreviewDeployment(Editor.getDraftID());
+        await Editor.runGitMutation(() => API.discardPreviewDeployment(Editor.getDraftID()));
         Editor.resetDraftID();
         applyDeploymentState(null);
         UI.showToast("デプロイプレビューを破棄しました", "success");

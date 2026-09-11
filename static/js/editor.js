@@ -19,6 +19,8 @@ const localPreviewInflight = new Set();
 
 const PREVIEW_DEBOUNCE_MS = 180;
 const LOCAL_PREVIEW_DEBOUNCE_MS = 250;
+const GIT_SYNC_WRITE_PAUSED_MESSAGE = "Git Sync is in progress";
+const gitMutationInflight = new Set();
 
 export function getCurrentPath() {
     return currentPath;
@@ -39,6 +41,26 @@ function setEditorWritePaused(paused) {
             control.disabled = paused;
         });
     }
+}
+
+function assertGitSyncWritesAllowed() {
+    if (gitSyncInProgress) {
+        throw new Error(GIT_SYNC_WRITE_PAUSED_MESSAGE);
+    }
+}
+
+export async function runGitMutation(operation) {
+    assertGitSyncWritesAllowed();
+    const mutation = Promise.resolve().then(() => {
+        assertGitSyncWritesAllowed();
+        return operation();
+    });
+    gitMutationInflight.add(mutation);
+    mutation.then(
+        () => gitMutationInflight.delete(mutation),
+        () => gitMutationInflight.delete(mutation),
+    );
+    return mutation;
 }
 
 export function getCurrentLocalPreviewFrontMatterKey() {
@@ -306,6 +328,9 @@ export async function prepareForGitSync() {
     cancelLocalPreviewTimer();
     await saveQueue.catch(() => undefined);
     await waitForLocalPreviewUpdates();
+    while (gitMutationInflight.size > 0) {
+        await Promise.allSettled(Array.from(gitMutationInflight));
+    }
     resetLocalPreviewClientState();
 }
 
@@ -334,6 +359,7 @@ export async function execAutoSave() {
 
 async function queueCurrentSave(statusMessage) {
     while (currentPath && currentPath !== deletingPath) {
+        assertGitSyncWritesAllowed();
         // Another payload may become the saved value while we wait. Read the
         // editor again afterwards so preview/publish always uses what is
         // currently visible, including a revert to an older payload.
@@ -379,6 +405,7 @@ async function queueCurrentSave(statusMessage) {
 }
 
 export async function flushPendingSave() {
+    assertGitSyncWritesAllowed();
     clearAutoSaveTimer();
     if (currentPath && currentPath === deletingPath) {
         throw new Error("Article deletion is in progress");
@@ -449,6 +476,9 @@ function getPayload() {
 }
 
 export async function saveFile() {
+    if (gitSyncInProgress) {
+        return UI.showToast(GIT_SYNC_WRITE_PAUSED_MESSAGE, "warning");
+    }
     if (!currentPath) return UI.showToast("No file selected", "warning");
     if (currentPath === deletingPath) {
         return UI.showToast("Article deletion is in progress", "warning");
@@ -465,6 +495,9 @@ export async function saveFile() {
 }
 
 export async function deleteFile(refreshListCb) {
+    if (gitSyncInProgress) {
+        return UI.showToast(GIT_SYNC_WRITE_PAUSED_MESSAGE, "warning");
+    }
     if (!currentPath) return UI.showToast("No file selected", "warning");
     if (currentPath === deletingPath) {
         return UI.showToast("Article deletion is already in progress", "warning");
@@ -487,7 +520,8 @@ export async function deleteFile(refreshListCb) {
         // shadow files, otherwise a late update could recreate the deleted
         // article in the resident workspace.
         await waitForLocalPreviewUpdates();
-        await API.deleteArticle(pathToDelete);
+        assertGitSyncWritesAllowed();
+        await runGitMutation(() => API.deleteArticle(pathToDelete));
         // Production deletion is committed at this point. The server removes
         // the corresponding file from the site-scoped preview workspace while
         // keeping the generator runtime alive for the next article.
@@ -525,6 +559,9 @@ export async function deleteFile(refreshListCb) {
 }
 
 export async function createNewFile(refreshListCb) {
+    if (gitSyncInProgress) {
+        return UI.showToast(GIT_SYNC_WRITE_PAUSED_MESSAGE, "warning");
+    }
     if (!cmsConfig) {
         UI.showToast("Config not loaded", "error");
         return;
@@ -532,10 +569,11 @@ export async function createNewFile(refreshListCb) {
 
     UI.showCreationModal(cmsConfig, async (colName, fields) => {
         try {
-            const res = await API.createArticle({
+            assertGitSyncWritesAllowed();
+            const res = await runGitMutation(() => API.createArticle({
                 collection: colName,
                 fields: fields
-            });
+            }));
 
             if (res.status === 'created') {
                 if (refreshListCb) await refreshListCb();
@@ -560,6 +598,7 @@ export async function resetChanges() {
 }
 
 export function insertText(text) {
+    if (gitSyncInProgress) return;
     const editor = document.getElementById('editor');
     if (!editor) return;
 

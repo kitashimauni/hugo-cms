@@ -38,11 +38,13 @@ const {
     execAutoSave,
     finishForGitSync,
     flushLocalPreviewBeforeArticleSwitch,
+    flushPendingSave,
     getOrCreateDraftID,
     initAutoSave,
     isGitSyncInProgress,
     loadFile,
     prepareForGitSync,
+    runGitMutation,
     waitForLocalPreviewUpdates,
 } = await import("./editor.js");
 const API = await import("./api.js");
@@ -439,6 +441,13 @@ describe("Git Sync editor gate", () => {
             await Promise.resolve();
             assert.equal(isGitSyncInProgress(), true);
             assert.equal(saveCompleted, false);
+            await assert.rejects(flushPendingSave, /Git Sync is in progress/);
+            let mutationCalled = false;
+            await assert.rejects(
+                () => runGitMutation(() => { mutationCalled = true; }),
+                /Git Sync is in progress/,
+            );
+            assert.equal(mutationCalled, false);
 
             resolveSave();
             await saveOperation;
