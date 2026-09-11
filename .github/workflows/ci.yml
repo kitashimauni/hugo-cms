@@ -68,6 +68,9 @@ jobs:
           sed -i 's|^HOMECMS_UID=.*|HOMECMS_UID=1000|' .env
           sed -i 's|^HOMECMS_GID=.*|HOMECMS_GID=27|' .env
 
+      - name: Verify repository allowlist interpolation
+        run: bash deploy/compose-config-test.sh
+
       - name: Validate Compose configuration
         run: docker compose config --quiet
 
