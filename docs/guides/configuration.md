@@ -269,6 +269,11 @@ sites:
         enabled: true
       local_preview:
         enabled: true
+        # Optional: prewarm and supervise this site's generator.
+        always_on: true
+        refresh:
+          times: ["04:00"]
+          timezone: Asia/Tokyo
       deployment:
         provider: cloudflare_pages
         access_protected: true
@@ -281,6 +286,8 @@ sites:
 `markdown.enabled`は既定で`true`です。本文プレビューはGFMをsanitizeして表示し、Hugo shortcode、layout、サイト固有CSS/JavaScriptは再現しません。relative imageは記事bundle、root-relative imageは`static_dir`から解決し、既存の許可済みmediaだけを認証付きrouteで表示します。
 
 `local_preview.enabled`を省略した場合は`LOCAL_LIVE_PREVIEW_ENABLED`を継承します。有効なsiteには`PREVIEW_SCHEME`、site ID、`PREVIEW_DOMAIN`から`preview.local_preview.url`をderived valueとして生成します。Local Live Previewを有効にするsite IDはlowercase DNS labelである必要があり、生成後の`<site-id>.<preview-domain>`全体も253文字以内の有効なDNS名でなければなりません。
+
+`local_preview.always_on`は既定値が`false`です。`true`にするとCMS起動後に対象siteのPreview generatorを非同期でprewarmし、unexpected exitを500msから最大30秒のbounded exponential backoffで再起動します。`enabled: false`が常に優先されます。`refresh.times`は`HH:MM`形式のdaily scheduleで、重複値は拒否されます。`timezone`はIANA timezoneで、省略時はUTCです。scheduleの実効timezoneと次回時刻はLocal Preview status APIで確認できます。
 
 Local Live Previewのwildcard DNS、TLS、DNS-01、Tailscale、外部reverse proxyはpreview ingress側の責務です。**wildcard DNSやHost validationは閲覧者認可ではありません。** Local Live Preview ingressは必ず、Tailscale等のprivate network内に置くか、Internet reachableな場合はCloudflare Access等の独立viewer authenticationで保護してください。CMSのsession cookieをpreview subdomainへ共有して認証に使う設計にはしません。
 
@@ -323,6 +330,9 @@ PREVIEW_STATE_DIR=./data/preview-deployments
 | `public_dir` | いいえ | build出力先。デフォルト`public` |
 | `preview.markdown.enabled` | いいえ | 安全な本文プレビュー。デフォルト`true` |
 | `preview.local_preview.enabled` | いいえ | Local Live Preview。省略時は`LOCAL_LIVE_PREVIEW_ENABLED` |
+| `preview.local_preview.always_on` | いいえ | generatorを起動時から常駐監視。デフォルト`false`。`enabled: false`が優先 |
+| `preview.local_preview.refresh.times` | いいえ | `HH:MM`形式のdaily refresh時刻配列。重複不可 |
+| `preview.local_preview.refresh.timezone` | いいえ | IANA timezone。省略時は`UTC` |
 | `preview.deployment.provider` | いいえ | 空または`cloudflare_pages` |
 | `preview.deployment.access_protected` | いいえ | Deployment PreviewのAccess設定済み申告。デフォルト`false` |
 | `preview.deployment.cloudflare_pages.*` | provider使用時 | `account_id`、`project_name`、`token_env` |

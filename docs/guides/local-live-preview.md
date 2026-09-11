@@ -29,9 +29,16 @@ sites:
     preview:
       local_preview:
         enabled: true
+        always_on: true
+        refresh:
+          times:
+            - "04:00"
+          timezone: Asia/Tokyo
 ```
 
 `preview.local_preview.enabled`を省略すると`LOCAL_LIVE_PREVIEW_ENABLED`を継承します。有効siteの`GET /admin/api/sites`にはderived `preview.local_preview.url`が含まれます。
+
+`always_on`は既定値が`false`です。`true`のsiteはCMS起動後に非同期でprewarmされ、generatorのunexpected exitをbounded exponential backoff（500ms開始、最大30秒）で自動復旧します。`enabled: false`の場合は`always_on`より優先され、Previewを起動しません。`refresh.times`は重複不可の`HH:MM`形式daily scheduleです。`refresh.timezone`にはIANA timezoneを指定し、省略時はUTCとして扱います。
 
 有効site IDはlowercase DNS labelで、`<site-id>.<preview-domain>`全体も253文字以内の有効DNS名である必要があります。
 
@@ -70,7 +77,7 @@ HTTP設定ではport省略または`:80`だけを許可します。HostはSite R
 
 ## Generator process
 
-最初のpreview hostname requestで、siteの`generator`に対応した開発サーバーをlazy startします。現在はHugoとEleventyに対応しています。
+通常siteは最初のpreview hostname requestで、siteの`generator`に対応した開発サーバーをlazy startします。`always_on: true`のsiteはCMS起動後に同じ開発サーバーを非同期prewarmします。現在はHugoとEleventyに対応しています。
 
 ```text
 hugo server
@@ -160,7 +167,7 @@ static配下は元repositoryをHugoが直接参照するためshadow同期しま
 
 Local Previewはbrowser tabを所有者として扱いません。update、記事URL解決、preview ingress、content resource同期をsite runtimeの`lastActivity`として記録します。idle timeoutは`HUGO_CMS_LOCAL_PREVIEW_IDLE_TIMEOUT`で設定でき、初期値は30分、`0`で無効化できます。
 
-idle timeoutまたは明示Stopでは、site gateで新しいupdate/ingressを止めてからgenerator processを停止し、workspace rootを一意なcleanup領域へrenameして物理削除を非同期で行います。長寿命のHTTP/WebSocket配信前にgateを解放するため、cleanupの遅延が配信完了をブロックしません。CMS shutdownでも同じcleanup pathを利用します。
+idle timeoutまたは明示Stopでは、site gateで新しいupdate/ingressを止めてからgenerator processを停止し、workspace rootを一意なcleanup領域へrenameして物理削除を非同期で行います。`always_on: true`のsiteはidle cleanup対象から除外されます。長寿命のHTTP/WebSocket配信前にgateを解放するため、cleanupの遅延が配信完了をブロックしません。CMS shutdownでも同じcleanup pathを利用します。
 
 ## UI
 
@@ -171,6 +178,7 @@ Local Live Preview panelでは次を利用できます。
 - `簡易Markdownを表示`: generatorを使わない補助/fallback表示
 - `停止`: site runtime、generator process、shadow workspaceを停止・cleanup
 - stopped / starting / ready / failedの状態表示
+- `always_on`の常駐設定、supervisorのretry状態、次回refresh時刻、実効timezoneの表示
 
 Local Live Previewが有効なsiteではheaderのview切替を次のように扱います。
 

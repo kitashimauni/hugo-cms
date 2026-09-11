@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -109,8 +110,18 @@ type LocalPreviewConfig struct {
 	// Enabled inherits LOCAL_LIVE_PREVIEW_ENABLED when omitted from a registry
 	// entry. URL is derived from site ID, PREVIEW_SCHEME and PREVIEW_DOMAIN and
 	// is never persisted in sites.yml.
-	Enabled *bool  `yaml:"enabled" json:"enabled,omitempty"`
-	URL     string `yaml:"-" json:"url,omitempty"`
+	Enabled  *bool                     `yaml:"enabled" json:"enabled,omitempty"`
+	URL      string                    `yaml:"-" json:"url,omitempty"`
+	AlwaysOn bool                      `yaml:"always_on" json:"always_on,omitempty"`
+	Refresh  LocalPreviewRefreshConfig `yaml:"refresh" json:"refresh,omitempty"`
+}
+
+// LocalPreviewRefreshConfig describes daily generator refreshes. An omitted
+// timezone is normalized to UTC so the effective schedule is explicit in the
+// status API and does not depend on the host timezone.
+type LocalPreviewRefreshConfig struct {
+	Times    []string `yaml:"times" json:"times,omitempty"`
+	Timezone string   `yaml:"timezone" json:"timezone,omitempty"`
 }
 
 type DeploymentPreviewConfig struct {
@@ -367,6 +378,7 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 	site.Preview.Deployment.CloudflarePages.AccountID = strings.TrimSpace(site.Preview.Deployment.CloudflarePages.AccountID)
 	site.Preview.Deployment.CloudflarePages.ProjectName = strings.TrimSpace(site.Preview.Deployment.CloudflarePages.ProjectName)
 	site.Preview.Deployment.CloudflarePages.APITokenEnv = strings.TrimSpace(site.Preview.Deployment.CloudflarePages.APITokenEnv)
+	site.Preview.LocalPreview = normalizeLocalPreviewConfig(site.Preview.LocalPreview)
 
 	if site.Name == "" {
 		site.Name = site.ID
@@ -409,6 +421,9 @@ func normalizeSiteConfig(site SiteConfig) SiteConfig {
 }
 
 func validateSitePreviewConfig(site SiteConfig) error {
+	if err := validateLocalPreviewRefreshConfig(site.Preview.LocalPreview.Refresh); err != nil {
+		return err
+	}
 	if site.Preview.LocalPreview.Enabled != nil && *site.Preview.LocalPreview.Enabled {
 		if err := validateLocalPreviewSite(site); err != nil {
 			return err
@@ -433,6 +448,50 @@ func validateSitePreviewConfig(site SiteConfig) error {
 	default:
 		return fmt.Errorf("unsupported preview deployment provider %q", deployment.Provider)
 	}
+}
+
+func normalizeLocalPreviewConfig(preview LocalPreviewConfig) LocalPreviewConfig {
+	times := make([]string, 0, len(preview.Refresh.Times))
+	for _, value := range preview.Refresh.Times {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			times = append(times, value)
+		}
+	}
+	sort.Strings(times)
+	preview.Refresh.Times = times
+	preview.Refresh.Timezone = strings.TrimSpace(preview.Refresh.Timezone)
+	if len(times) > 0 && preview.Refresh.Timezone == "" {
+		preview.Refresh.Timezone = "UTC"
+	}
+	return preview
+}
+
+func cloneLocalPreviewConfig(preview LocalPreviewConfig) LocalPreviewConfig {
+	preview.Refresh.Times = append([]string(nil), preview.Refresh.Times...)
+	return preview
+}
+
+func validateLocalPreviewRefreshConfig(refresh LocalPreviewRefreshConfig) error {
+	if refresh.Timezone != "" {
+		if _, err := time.LoadLocation(refresh.Timezone); err != nil {
+			return fmt.Errorf("preview.local_preview.refresh.timezone %q is not a valid IANA timezone", refresh.Timezone)
+		}
+	}
+	seen := make(map[string]struct{}, len(refresh.Times))
+	for _, value := range refresh.Times {
+		if len(value) != len("15:04") || value[2] != ':' {
+			return fmt.Errorf("preview.local_preview.refresh.times value %q must use HH:MM format", value)
+		}
+		if _, err := time.Parse("15:04", value); err != nil {
+			return fmt.Errorf("preview.local_preview.refresh.times value %q must use HH:MM format", value)
+		}
+		if _, ok := seen[value]; ok {
+			return fmt.Errorf("preview.local_preview.refresh.times contains duplicate value %q", value)
+		}
+		seen[value] = struct{}{}
+	}
+	return nil
 }
 
 func boolPointer(value bool) *bool {

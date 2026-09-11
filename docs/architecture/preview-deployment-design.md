@@ -111,4 +111,4 @@ Local Live Previewの未保存editor stateはproduction working treeやGit workt
 
 `preview_url`、`hugo_server_bind`、`hugo_server_port`はIssue #30以前のpath-prefix型ローカルpreview用の旧設定であり、現行の本文/デプロイプpreviewおよび新Local Live Previewの公開URL/port管理には使用しない。`/admin/preview/:site/*`、`POST /admin/api/build`、`POST /admin/api/build/restart`も廃止済みであり、Issue #32でもこれらを復活させない。
 
-新Local Live Previewは`LOCAL_LIVE_PREVIEW_ENABLED`、`PREVIEW_DOMAIN`、`PREVIEW_SCHEME`とsite単位の`preview.local_preview.enabled`を使用する。`https://<site-id>.<preview-domain>/`はderived valueとして生成し、旧`preview_url`等との互換性を前提にしない。CMS起動時に全siteのLocal Live Previewを自動起動せず、最初のpreview requestでlazy startする。
+新Local Live Previewは`LOCAL_LIVE_PREVIEW_ENABLED`、`PREVIEW_DOMAIN`、`PREVIEW_SCHEME`とsite単位の`preview.local_preview.enabled`を使用する。`https://<site-id>.<preview-domain>/`はderived valueとして生成し、旧`preview_url`等との互換性を前提にしない。通常siteは最初のpreview requestでlazy startし、`preview.local_preview.always_on: true`のsiteだけはCMS起動後にbackground supervisorが非同期prewarmする。
