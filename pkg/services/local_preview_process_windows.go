@@ -21,6 +21,13 @@ func signalLocalPreviewProcess(cmd *exec.Cmd, _ bool) error {
 	return cmd.Process.Kill()
 }
 
+func localPreviewProcessTreeAlive(cmd *exec.Cmd) bool {
+	if cmd == nil || cmd.Process == nil {
+		return false
+	}
+	return cmd.ProcessState == nil || !cmd.ProcessState.Exited()
+}
+
 func localPreviewProcessDescription(cmd *exec.Cmd) string {
 	if cmd == nil || cmd.Process == nil {
 		return "pid=unknown process_group=unsupported"

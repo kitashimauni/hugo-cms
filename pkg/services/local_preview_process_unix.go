@@ -30,6 +30,14 @@ func signalLocalPreviewProcess(cmd *exec.Cmd, force bool) error {
 	return nil
 }
 
+func localPreviewProcessTreeAlive(cmd *exec.Cmd) bool {
+	if cmd == nil || cmd.Process == nil {
+		return false
+	}
+	err := syscall.Kill(-cmd.Process.Pid, 0)
+	return err == nil || err == syscall.EPERM
+}
+
 func localPreviewProcessDescription(cmd *exec.Cmd) string {
 	if cmd == nil || cmd.Process == nil {
 		return "pid=unknown process_group=unknown"

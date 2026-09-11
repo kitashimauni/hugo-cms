@@ -24,7 +24,7 @@ func terminateManagedLocalPreviewProcess(ctx context.Context, siteID string, pro
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if process.exited() {
+	if process.exited() && !localPreviewProcessTreeAlive(process.cmd) {
 		cancelProcessContext(process)
 		return nil
 	}
@@ -50,16 +50,9 @@ func terminateManagedLocalPreviewProcess(ctx context.Context, siteID string, pro
 		)
 	}
 
-	gracefulTimer := time.NewTimer(localPreviewProcessGracePeriod)
-	defer gracefulTimer.Stop()
-	select {
-	case <-process.done:
+	if waitForLocalPreviewProcessTree(ctx, process, localPreviewProcessGracePeriod) {
 		cancelProcessContext(process)
 		return nil
-	case <-ctx.Done():
-		// The caller deadline is also a reason to escalate immediately. If the
-		// process tree is killed successfully, stopping still succeeded.
-	case <-gracefulTimer.C:
 	}
 
 	forceErr := signalLocalPreviewProcess(process.cmd, true)
@@ -71,23 +64,45 @@ func terminateManagedLocalPreviewProcess(ctx context.Context, siteID string, pro
 		)
 	}
 
-	killTimer := time.NewTimer(localPreviewProcessKillWait)
-	defer killTimer.Stop()
-	select {
-	case <-process.done:
+	if waitForLocalPreviewProcessTree(context.Background(), process, localPreviewProcessKillWait) {
 		cancelProcessContext(process)
 		return nil
-	case <-killTimer.C:
-		cancelProcessContext(process)
-		description := localPreviewProcessDescription(process.cmd)
-		if forceErr != nil {
-			err := fmt.Errorf("local preview process tree did not terminate for site %q (%s): %w", siteID, description, forceErr)
-			slog.Error("Local preview process tree termination timed out", "site", siteID, "process", description, "error", err)
-			return err
-		}
-		err := fmt.Errorf("local preview process tree did not terminate for site %q (%s)", siteID, description)
+	}
+
+	cancelProcessContext(process)
+	description := localPreviewProcessDescription(process.cmd)
+	if forceErr != nil {
+		err := fmt.Errorf("local preview process tree did not terminate for site %q (%s): %w", siteID, description, forceErr)
 		slog.Error("Local preview process tree termination timed out", "site", siteID, "process", description, "error", err)
 		return err
+	}
+	err := fmt.Errorf("local preview process tree did not terminate for site %q (%s)", siteID, description)
+	slog.Error("Local preview process tree termination timed out", "site", siteID, "process", description, "error", err)
+	return err
+}
+
+func waitForLocalPreviewProcessTree(ctx context.Context, process *managedLocalPreviewProcess, timeout time.Duration) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if timeout <= 0 {
+		return process.exited() && !localPreviewProcessTreeAlive(process.cmd)
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	for {
+		if process.exited() && !localPreviewProcessTreeAlive(process.cmd) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return process.exited() && !localPreviewProcessTreeAlive(process.cmd)
+		case <-ticker.C:
+		}
 	}
 }
 
