@@ -442,8 +442,8 @@ export async function loadFile(path, { allowDuringGitSync = false } = {}) {
         try {
             await flushLocalPreviewBeforeArticleSwitch();
         } catch (e) {
-            UI.showToast("Failed to prepare article before switching: " + e.message, "error");
-            return;
+            console.warn("[LocalPreview] Failed to flush before article switch", e);
+            UI.showToast("Local Previewの同期に失敗しました。記事切替は続行します。", "warning");
         }
     }
     await saveQueue.catch(() => {
