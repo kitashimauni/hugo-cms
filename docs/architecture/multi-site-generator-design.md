@@ -225,6 +225,8 @@ preview proxyはCMSの認証済みadmin route配下に置く。直接`127.0.0.1:
 - 記事キャッシュは`repo_path + content_dir`でkey分割する。
 - preview adapter mapのlockはmapアクセス中だけ保持し、preview process操作中には保持しない。
 
+Frontendのsite selectorもsite IDを明示したconfig・記事一覧・Local Preview status・デプロイPreviewの取得を行う。site切替ごとにgenerationとAbortControllerを更新し、古いresponseのstate commit、selector表示、rollbackを許可しない。切替中はselectorをdisableし、保存失敗時だけ切替前siteへ戻す。
+
 今後の最終形は、process-wide runtime値を読むdefault site向け起動・readiness経路も必要に応じて`SiteRuntime`生成へ寄せ、テストを含めてグローバル設定への依存をさらに減らすことである。
 
 ## ジェネレーターごとの差異

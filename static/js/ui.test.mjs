@@ -878,6 +878,28 @@ describe("Git Sync editor gate", () => {
 });
 
 describe("preview API contracts", () => {
+    it("pins site-scoped read requests to their explicit site id", async () => {
+        const calls = [];
+        globalThis.fetch = async (url, options = {}) => {
+            calls.push({ url, options });
+            return { ok: true, status: 200, json: async () => ({ status: "ready" }) };
+        };
+
+        API.setCurrentSite("site-a");
+        await API.fetchConfig("site-b");
+        await API.fetchArticles("site-b");
+        await API.fetchLocalPreviewStatus(undefined, "site-b");
+        await API.fetchPreviewDeployment("draft/id", undefined, "site-b");
+
+        assert.deepEqual(calls.map(call => call.url), [
+            "/admin/api/config?site=site-b",
+            "/admin/api/articles?site=site-b",
+            "/admin/api/preview/local/status?site=site-b",
+            "/admin/api/preview/deployments/draft%2Fid?site=site-b",
+        ]);
+        calls.forEach(call => assert.equal(call.options.headers["X-CMS-Site"], "site-b"));
+    });
+
     it("scopes Markdown, local lifecycle, and deployment operations to the selected site", async () => {
         const calls = [];
         globalThis.fetch = async (url, options = {}) => {

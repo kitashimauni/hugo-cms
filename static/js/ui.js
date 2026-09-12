@@ -86,7 +86,7 @@ export function toggleSidebar() {
     }
 }
 
-export function renderSiteSelector(registry, selectedSiteID, onChange) {
+export function renderSiteSelector(registry, selectedSiteID, onChange, disabled = false) {
     const container = document.getElementById('site-selector-container');
     if (!container) return;
 
@@ -104,6 +104,7 @@ export function renderSiteSelector(registry, selectedSiteID, onChange) {
 
     const select = document.createElement('select');
     select.id = 'site-selector';
+    select.disabled = disabled;
     sites.forEach(site => {
         const option = document.createElement('option');
         option.value = site.id;

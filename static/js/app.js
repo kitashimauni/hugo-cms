@@ -32,22 +32,63 @@ let localPreviewURLResolutionGeneration = 0;
 let localPreviewFrontMatterKey = "";
 let localPreviewArticleURLKey = "";
 let localPreviewURLResolution = null;
+let siteSwitchGeneration = 0;
+let siteSwitchController = null;
 
 const LOCAL_PREVIEW_POLL_MS = 3000;
 const LOCAL_PREVIEW_FRESH_NAVIGATION_MAX_ATTEMPTS = 120;
+
+function beginSiteRequest(siteID) {
+    siteSwitchController?.abort();
+    const request = {
+        generation: ++siteSwitchGeneration,
+        siteID,
+        controller: new AbortController(),
+    };
+    siteSwitchController = request;
+    return request;
+}
+
+function isCurrentSiteRequest(request) {
+    return Boolean(
+        request &&
+        request.generation === siteSwitchGeneration &&
+        siteSwitchController === request
+    );
+}
+
+function isCurrentSiteContext(siteID, generation = siteSwitchGeneration) {
+    return API.getCurrentSite() === siteID && siteSwitchGeneration === generation;
+}
+
+function finishSiteRequest(request) {
+    if (siteSwitchController === request) siteSwitchController = null;
+}
+
+function setSiteSelectorDisabled(disabled) {
+    const selector = document.getElementById('site-selector');
+    if (selector) selector.disabled = disabled;
+}
 
 init();
 
 async function init() {
     initializeLocalPreviewFrame();
+    let initialRequest = null;
     try {
         siteRegistry = await API.fetchSites();
         API.initializeCurrentSite(siteRegistry);
-        UI.renderSiteSelector(siteRegistry, API.getCurrentSite(), switchSite);
-        await loadSiteData();
+        const initialSiteID = API.getCurrentSite();
+        initialRequest = beginSiteRequest(initialSiteID);
+        UI.renderSiteSelector(siteRegistry, initialSiteID, switchSite);
+        await loadSiteData(initialSiteID, initialRequest);
     } catch (e) {
-        console.error("Initial load failed", e);
-        UI.showToast("Failed to load site configuration", "error");
+        if (!initialRequest || isCurrentSiteRequest(initialRequest)) {
+            console.error("Initial load failed", e);
+            UI.showToast("Failed to load site configuration", "error");
+        }
+    } finally {
+        if (initialRequest) finishSiteRequest(initialRequest);
     }
 
     Editor.initAutoSave();
@@ -142,13 +183,23 @@ function resetLocalPreviewArticleURL() {
     localPreviewFrontMatterKey = "";
 }
 
-async function loadSiteData() {
+async function loadSiteData(siteID = API.getCurrentSite(), request = null) {
+    const generation = request?.generation ?? siteSwitchGeneration;
+    const isCurrent = () => (
+        (!request || isCurrentSiteRequest(request)) &&
+        isCurrentSiteContext(siteID, generation)
+    );
+    if (!isCurrent()) return false;
+
     stopLocalPreviewMonitoring();
     resetLocalPreviewArticleURL();
     localPreviewState = null;
 
-    cmsConfig = await API.fetchConfig();
-    const site = siteRegistry?.sites?.find(s => s.id === API.getCurrentSite());
+    const config = await API.fetchConfig(siteID, request?.controller.signal);
+    if (!isCurrent()) return false;
+
+    cmsConfig = config;
+    const site = siteRegistry?.sites?.find(s => s.id === siteID);
     if (!cmsConfig._cms) cmsConfig._cms = {};
     cmsConfig._cms.local_preview = site?.preview?.local_preview || { enabled: false, url: '' };
     Editor.setConfig(cmsConfig);
@@ -158,25 +209,34 @@ async function loadSiteData() {
     configureLocalPreviewPanel();
     UI.switchView('edit');
     if (localPreviewEnabled) {
-        await refreshLocalPreviewStatus();
-        scheduleLocalPreviewMonitoring();
+        await refreshLocalPreviewStatus(siteID, request, generation);
+        if (!isCurrent()) return false;
+        scheduleLocalPreviewMonitoring(siteID, generation);
     }
 
     deploymentEnabled = UI.configureDeploymentPreview(cmsConfig);
     deploymentState = null;
     UI.renderDeploymentState(null);
-    await refreshFileList();
+    await refreshFileList(siteID, request, generation);
+    return isCurrent();
 }
 
 async function switchSite(siteID) {
     const previousSiteID = API.getCurrentSite();
     if (!siteID || siteID === previousSiteID) return;
+    const request = beginSiteRequest(siteID);
+    let switchedSite = false;
+    setSiteSelectorDisabled(true);
 
     try {
         await Editor.flushPendingSave();
+        if (!isCurrentSiteRequest(request)) return;
     } catch (e) {
+        if (!isCurrentSiteRequest(request)) return;
         UI.showToast("Site switch cancelled: save failed", "error");
-        UI.renderSiteSelector(siteRegistry, previousSiteID, switchSite);
+        UI.renderSiteSelector(siteRegistry, previousSiteID, switchSite, true);
+        finishSiteRequest(request);
+        setSiteSelectorDisabled(false);
         return;
     }
 
@@ -184,31 +244,45 @@ async function switchSite(siteID) {
     stopDeploymentPolling();
     closeEmbeddedLocalPreview();
     API.setCurrentSite(siteID);
+    switchedSite = true;
     Editor.clearEditor();
     try {
-        await loadSiteData();
-        UI.renderSiteSelector(siteRegistry, siteID, switchSite);
+        const loaded = await loadSiteData(siteID, request);
+        if (!isCurrentSiteRequest(request) || !loaded) return;
+        UI.renderSiteSelector(siteRegistry, siteID, switchSite, false);
         const site = siteRegistry?.sites?.find(s => s.id === siteID);
         UI.showToast(`Switched to ${site?.name || siteID}`, "success");
     } catch (e) {
+        if (!isCurrentSiteRequest(request)) return;
+        if (!switchedSite) return;
         API.setCurrentSite(previousSiteID);
-        UI.renderSiteSelector(siteRegistry, previousSiteID, switchSite);
+        Editor.clearEditor();
         try {
-            await loadSiteData();
+            await loadSiteData(previousSiteID, request);
         } catch (reloadErr) {
             console.error("Failed to reload previous site", reloadErr);
         }
+        if (!isCurrentSiteRequest(request)) return;
+        UI.renderSiteSelector(siteRegistry, previousSiteID, switchSite, false);
         UI.showToast("Failed to switch site: " + e.message, "error");
+    } finally {
+        if (isCurrentSiteRequest(request)) {
+            finishSiteRequest(request);
+            setSiteSelectorDisabled(false);
+        }
     }
 }
 
 async function loadFile(path) {
+    const siteID = API.getCurrentSite();
+    const generation = siteSwitchGeneration;
     stopDeploymentPolling();
     deploymentState = null;
     UI.renderDeploymentState(null);
     await Editor.loadFile(path);
+    if (!isCurrentSiteContext(siteID, generation)) return;
     if (Editor.getCurrentPath() !== path) {
-        await refreshLocalPreviewStatus();
+        await refreshLocalPreviewStatus(siteID, null, generation);
         return;
     }
 
@@ -222,27 +296,32 @@ async function loadFile(path) {
         }) ? 'split' : 'edit');
         try {
             await Editor.refreshLocalLivePreview();
+            if (!isCurrentSiteContext(siteID, generation)) return;
             const articleURL = await resolveLocalPreviewArticleURL(Editor.getCurrentLocalPreviewFrontMatterKey());
+            if (!isCurrentSiteContext(siteID, generation)) return;
             if (Editor.getCurrentPath() === path && !articleURL) {
                 throw new Error('generatorから記事URLを取得できませんでした');
             }
             if (Editor.getCurrentPath() === path) showEmbeddedLocalPreview();
         } catch (error) {
+            if (!isCurrentSiteContext(siteID, generation)) return;
             showLocalPreviewResolutionError(error);
         }
-        await refreshLocalPreviewStatus();
+        await refreshLocalPreviewStatus(siteID, null, generation);
     }
-    if (deploymentEnabled) await refreshDeploymentState();
+    if (deploymentEnabled) await refreshDeploymentState(siteID, generation);
 }
 
-async function refreshFileList() {
+async function refreshFileList(siteID = API.getCurrentSite(), request = null, generation = request?.generation ?? siteSwitchGeneration) {
+    if (!isCurrentSiteContext(siteID, generation) || (request && !isCurrentSiteRequest(request))) return null;
     try {
-        const files = await API.fetchArticles();
-        if (files) {
+        const files = await API.fetchArticles(siteID, request?.controller.signal);
+        if (files && isCurrentSiteContext(siteID, generation) && (!request || isCurrentSiteRequest(request))) {
             UI.renderFileList(files, cmsConfig);
             return files;
         }
     } catch (e) {
+        if (e?.name === 'AbortError' || !isCurrentSiteContext(siteID, generation) || (request && !isCurrentSiteRequest(request))) return null;
         UI.showToast("Failed to fetch file list", "error");
     }
     return null;
@@ -598,28 +677,32 @@ function stopLocalPreviewMonitoring() {
     localPreviewController = null;
 }
 
-function scheduleLocalPreviewMonitoring() {
-    if (!localPreviewEnabled) return;
+function scheduleLocalPreviewMonitoring(siteID = API.getCurrentSite(), generation = siteSwitchGeneration) {
+    if (!localPreviewEnabled || !isCurrentSiteContext(siteID, generation)) return;
     if (!localPreviewPollTimer) {
         localPreviewPollTimer = setTimeout(async () => {
             localPreviewPollTimer = null;
-            await refreshLocalPreviewStatus();
-            scheduleLocalPreviewMonitoring();
+            if (!isCurrentSiteContext(siteID, generation)) return;
+            await refreshLocalPreviewStatus(siteID, null, generation);
+            scheduleLocalPreviewMonitoring(siteID, generation);
         }, LOCAL_PREVIEW_POLL_MS);
     }
 }
 
-async function refreshLocalPreviewStatus() {
-    if (!localPreviewEnabled) return null;
+async function refreshLocalPreviewStatus(siteID = API.getCurrentSite(), request = null, generation = request?.generation ?? siteSwitchGeneration) {
+    if (!localPreviewEnabled || !isCurrentSiteContext(siteID, generation) || (request && !isCurrentSiteRequest(request))) return null;
     if (localPreviewController) localPreviewController.abort();
     const controller = new AbortController();
     localPreviewController = controller;
     try {
-        const state = await API.fetchLocalPreviewStatus(controller.signal);
+        const state = await API.fetchLocalPreviewStatus(controller.signal, siteID);
+        if (!isCurrentSiteContext(siteID, generation) || (request && !isCurrentSiteRequest(request))) return null;
         renderLocalPreviewState(state);
         return localPreviewState;
     } catch (e) {
-        if (e?.name !== 'AbortError') console.error('[LocalPreview] status failed', e);
+        if (e?.name !== 'AbortError' && isCurrentSiteContext(siteID, generation) && (!request || isCurrentSiteRequest(request))) {
+            console.error('[LocalPreview] status failed', e);
+        }
         return null;
     } finally {
         if (localPreviewController === controller) localPreviewController = null;
@@ -840,11 +923,11 @@ function stopDeploymentPolling() {
     }
 }
 
-function applyDeploymentState(state) {
+function applyDeploymentState(state, siteID = API.getCurrentSite(), generation = siteSwitchGeneration) {
     deploymentState = UI.normalizeDeploymentState(state);
     UI.renderDeploymentState(deploymentState);
     if (deploymentState?.status === 'queued' || deploymentState?.status === 'building') {
-        deploymentPollTimer = setTimeout(() => refreshDeploymentState(), 3000);
+        deploymentPollTimer = setTimeout(() => refreshDeploymentState(siteID, generation), 3000);
     }
 }
 
@@ -859,7 +942,8 @@ function markDeploymentPreviewStale() {
     });
 }
 
-async function refreshDeploymentState() {
+async function refreshDeploymentState(siteID = API.getCurrentSite(), generation = siteSwitchGeneration) {
+    if (!isCurrentSiteContext(siteID, generation)) return;
     stopDeploymentPolling();
     if (!deploymentEnabled || !Editor.getCurrentPath()) {
         applyDeploymentState(null);
@@ -870,14 +954,18 @@ async function refreshDeploymentState() {
     const controller = new AbortController();
     deploymentController = controller;
     try {
-        const state = await API.fetchPreviewDeployment(draftID, controller.signal);
-        if (path !== Editor.getCurrentPath() || draftID !== Editor.getDraftID()) return;
-        applyDeploymentState(state);
+        const state = await API.fetchPreviewDeployment(draftID, controller.signal, siteID);
+        if (
+            !isCurrentSiteContext(siteID, generation) ||
+            path !== Editor.getCurrentPath() ||
+            draftID !== Editor.getDraftID()
+        ) return;
+        applyDeploymentState(state, siteID, generation);
     } catch (e) {
-        if (e?.name !== 'AbortError') {
+        if (e?.name !== 'AbortError' && isCurrentSiteContext(siteID, generation)) {
             UI.showToast(e.message, 'error');
             if (deploymentState?.status === 'queued' || deploymentState?.status === 'building') {
-                deploymentPollTimer = setTimeout(() => refreshDeploymentState(), 5000);
+                deploymentPollTimer = setTimeout(() => refreshDeploymentState(siteID, generation), 5000);
             }
         }
     } finally {
