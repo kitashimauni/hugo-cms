@@ -59,6 +59,7 @@ var (
 )
 
 type localPreviewCommandFactory func(context.Context, config.SiteRuntime, int, string) (*exec.Cmd, error)
+type localPreviewProcessTerminator func(context.Context, string, *managedLocalPreviewProcess) error
 
 type managedLocalPreviewProcess struct {
 	cmd         *exec.Cmd
@@ -187,11 +188,12 @@ type LocalPreviewManager struct {
 	supervisorDone   chan struct{}
 	supervisorState  map[string]LocalPreviewSupervisorStatus
 
-	commandFactory localPreviewCommandFactory
-	startupTimeout time.Duration
-	probeInterval  time.Duration
-	startAttempts  int
-	idleTimeout    time.Duration
+	commandFactory    localPreviewCommandFactory
+	processTerminator localPreviewProcessTerminator
+	startupTimeout    time.Duration
+	probeInterval     time.Duration
+	startAttempts     int
+	idleTimeout       time.Duration
 }
 
 func NewLocalPreviewManager(lifecycle *LocalPreviewLifecycle) *LocalPreviewManager {
@@ -199,16 +201,17 @@ func NewLocalPreviewManager(lifecycle *LocalPreviewLifecycle) *LocalPreviewManag
 		lifecycle = NewDefaultLocalPreviewLifecycle()
 	}
 	return &LocalPreviewManager{
-		lifecycle:       lifecycle,
-		processes:       make(map[string]*managedLocalPreviewProcess),
-		siteLocks:       make(map[string]*sync.Mutex),
-		manualStops:     make(map[string]bool),
-		supervisorState: make(map[string]LocalPreviewSupervisorStatus),
-		commandFactory:  generatorLocalPreviewCommand,
-		startupTimeout:  configuredLocalPreviewStartupTimeout(),
-		probeInterval:   defaultLocalPreviewProbeInterval,
-		startAttempts:   defaultLocalPreviewStartAttempts,
-		idleTimeout:     configuredLocalPreviewIdleTimeout(),
+		lifecycle:         lifecycle,
+		processes:         make(map[string]*managedLocalPreviewProcess),
+		siteLocks:         make(map[string]*sync.Mutex),
+		manualStops:       make(map[string]bool),
+		supervisorState:   make(map[string]LocalPreviewSupervisorStatus),
+		commandFactory:    generatorLocalPreviewCommand,
+		processTerminator: terminateManagedLocalPreviewProcess,
+		startupTimeout:    configuredLocalPreviewStartupTimeout(),
+		probeInterval:     defaultLocalPreviewProbeInterval,
+		startAttempts:     defaultLocalPreviewStartAttempts,
+		idleTimeout:       configuredLocalPreviewIdleTimeout(),
 	}
 }
 
@@ -631,7 +634,7 @@ func localPreviewHTTPReady(address string) (bool, error) {
 func (m *LocalPreviewManager) cleanupFailedSlotLocked(siteID string, process *managedLocalPreviewProcess, processErr error) {
 	if process != nil {
 		stopCtx, cancel := context.WithTimeout(context.Background(), DefaultLocalPreviewStopTimeout)
-		terminationErr := terminateManagedLocalPreviewProcess(stopCtx, siteID, process)
+		terminationErr := m.processTerminator(stopCtx, siteID, process)
 		cancel()
 		if terminationErr != nil {
 			slog.Error("Local preview process tree did not terminate during startup cleanup", "site", siteID, "error", terminationErr)
@@ -712,7 +715,7 @@ func (m *LocalPreviewManager) stop(ctx context.Context, siteID string, suppressR
 			return err
 		}
 	}
-	if err := terminateManagedLocalPreviewProcess(ctx, siteID, process); err != nil {
+	if err := m.processTerminator(ctx, siteID, process); err != nil {
 		return err
 	}
 	m.removeProcessIfCurrent(siteID, process)

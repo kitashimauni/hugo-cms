@@ -237,14 +237,23 @@ func (m *LocalPreviewManager) runPersistentPreviewSite(ctx context.Context, site
 		if !m.isManuallyStopped(site.ID) && !now.Before(nextAttempt) {
 			slot, ready := m.Status(site.ID)
 			process := m.process(site.ID)
-			needsStart := !ready || slot.State == LocalPreviewFailed || process == nil || process.exited()
+			needsStart := !ready || slot.State == LocalPreviewFailed || slot.State == LocalPreviewStopping || process == nil || process.exited()
 			if needsStart {
 				m.setSupervisorStatus(site.ID, LocalPreviewSupervisorStatus{
 					State:           LocalPreviewSupervisorStateStarting,
 					NextRefreshAt:   nextRefresh,
 					RefreshTimezone: EffectiveLocalPreviewRefreshTimezone(refresh),
 				})
-				if err := m.ensurePersistentPreview(ctx, site, workspaceManager); err != nil {
+				var err error
+				if slot.State == LocalPreviewStopping {
+					// A failed process-tree stop intentionally leaves the runtime in
+					// Stopping with its mapping intact. Retry that stop before
+					// allocating a new port or starting a replacement process.
+					err = m.restartPersistentPreview(ctx, site, workspaceManager)
+				} else {
+					err = m.ensurePersistentPreview(ctx, site, workspaceManager)
+				}
+				if err != nil {
 					if ctx.Err() != nil {
 						return
 					}

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"hugo-cms/pkg/config"
 	"os"
 	"os/exec"
@@ -97,6 +98,41 @@ func TestPersistentSupervisorPrewarmsAndRestartsUnexpectedExit(t *testing.T) {
 	})
 	if slot, ok := manager.Status(site.ID); !ok || slot.State != LocalPreviewReady {
 		t.Fatalf("supervisor status = %#v, exists=%v; want ready after restart", slot, ok)
+	}
+}
+
+func TestPersistentSupervisorRetriesStoppingRuntimeAfterFailedStop(t *testing.T) {
+	manager, site := newTestLocalPreviewManager(t)
+	defer shutdownTestLocalPreviewManager(t, manager)
+	site.Preview.LocalPreview.AlwaysOn = true
+
+	var starts atomic.Int32
+	manager.commandFactory = func(ctx context.Context, runtime config.SiteRuntime, port int, previewURL string) (*exec.Cmd, error) {
+		starts.Add(1)
+		return testLocalPreviewCommand(ctx, runtime, port, previewURL)
+	}
+	if _, err := manager.EnsureReady(site); err != nil {
+		t.Fatalf("initial EnsureReady() error = %v", err)
+	}
+	if _, err := manager.lifecycle.Transition(site.ID, LocalPreviewStopping, nil); err != nil {
+		t.Fatalf("transition to stopping: %v", err)
+	}
+
+	var stopAttempts atomic.Int32
+	manager.processTerminator = func(ctx context.Context, siteID string, process *managedLocalPreviewProcess) error {
+		if stopAttempts.Add(1) == 1 {
+			return errors.New("injected process-tree termination failure")
+		}
+		return terminateManagedLocalPreviewProcess(ctx, siteID, process)
+	}
+
+	manager.StartPersistentPreviewSupervisor([]config.SiteConfig{site}, nil)
+	waitForSupervisor(t, func() bool {
+		slot, ok := manager.Status(site.ID)
+		return starts.Load() >= 2 && stopAttempts.Load() >= 2 && ok && slot.State == LocalPreviewReady
+	})
+	if status := manager.PersistentStatus(site.ID, site.Preview.LocalPreview); status.SupervisorState != LocalPreviewSupervisorStateRunning {
+		t.Fatalf("supervisor status = %#v, want running after stop retry", status)
 	}
 }
 
