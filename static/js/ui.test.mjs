@@ -878,6 +878,56 @@ describe("Git Sync editor gate", () => {
 });
 
 describe("preview API contracts", () => {
+    it("pins site-scoped read requests to their explicit site id", async () => {
+        const calls = [];
+        globalThis.fetch = async (url, options = {}) => {
+            calls.push({ url, options });
+            return { ok: true, status: 200, json: async () => ({ status: "ready" }) };
+        };
+
+        API.setCurrentSite("site-a");
+        await API.fetchConfig("site-b");
+        await API.fetchArticles("site-b");
+        await API.fetchLocalPreviewStatus(undefined, "site-b");
+        await API.fetchPreviewDeployment("draft/id", undefined, "site-b");
+
+        assert.deepEqual(calls.map(call => call.url), [
+            "/admin/api/config?site=site-b",
+            "/admin/api/articles?site=site-b",
+            "/admin/api/preview/local/status?site=site-b",
+            "/admin/api/preview/deployments/draft%2Fid?site=site-b",
+        ]);
+        calls.forEach(call => assert.equal(call.options.headers["X-CMS-Site"], "site-b"));
+    });
+
+    it("pins site-scoped destructive preview requests to their explicit site id", async () => {
+        const calls = [];
+        globalThis.fetch = async (url, options = {}) => {
+            calls.push({ url, options });
+            if (url === "/admin/api/csrf-token") {
+                return { ok: true, status: 200, json: async () => ({ csrf_token: "csrf" }) };
+            }
+            return { ok: true, status: 200, json: async () => ({ status: "ok" }) };
+        };
+
+        API.setCurrentSite("site-a");
+        await API.stopLocalPreviewContent("site-b");
+        await API.triggerPreviewDeployment("posts/one.md", "draft/id", "site-b");
+        await API.retryPreviewDeployment("draft/id", "site-b");
+        await API.discardPreviewDeployment("draft/id", "site-b");
+        await API.runPublish("posts/one.md", "draft/id", "site-b");
+
+        const requestCalls = calls.filter(call => call.url !== "/admin/api/csrf-token");
+        assert.deepEqual(requestCalls.map(call => call.url), [
+            "/admin/api/preview/local/stop?site=site-b",
+            "/admin/api/preview/deployments?site=site-b",
+            "/admin/api/preview/deployments/draft%2Fid/retry?site=site-b",
+            "/admin/api/preview/deployments/draft%2Fid/discard?site=site-b",
+            "/admin/api/publish?site=site-b",
+        ]);
+        requestCalls.forEach(call => assert.equal(call.options.headers["X-CMS-Site"], "site-b"));
+    });
+
     it("scopes Markdown, local lifecycle, and deployment operations to the selected site", async () => {
         const calls = [];
         globalThis.fetch = async (url, options = {}) => {

@@ -29,15 +29,15 @@ export function initializeCurrentSite(registry) {
     }
 }
 
-function withSite(url) {
-    if (!currentSite) return url;
+function withSite(url, siteID = currentSite) {
+    if (!siteID) return url;
     const parsed = new URL(url, window.location.origin);
-    parsed.searchParams.set('site', currentSite);
+    parsed.searchParams.set('site', siteID);
     return parsed.pathname + parsed.search;
 }
 
-function siteHeaders() {
-    return currentSite ? { 'X-CMS-Site': currentSite } : {};
+function siteHeaders(siteID = currentSite) {
+    return siteID ? { 'X-CMS-Site': siteID } : {};
 }
 
 async function ensureCSRFToken(forceRefresh = false) {
@@ -85,8 +85,8 @@ async function responseError(res, fallback) {
     return error;
 }
 
-export async function fetchConfig() {
-    const res = await fetch(withSite('/admin/api/config'), { headers: siteHeaders() });
+export async function fetchConfig(siteID = currentSite, signal) {
+    const res = await fetch(withSite('/admin/api/config', siteID), { headers: siteHeaders(siteID), signal });
     if (!res.ok) throw new Error("Config fetch failed");
     return await res.json();
 }
@@ -97,8 +97,8 @@ export async function fetchSites() {
     return await res.json();
 }
 
-export async function fetchArticles() {
-    const res = await fetch(withSite('/admin/api/articles'), { headers: siteHeaders() });
+export async function fetchArticles(siteID = currentSite, signal) {
+    const res = await fetch(withSite('/admin/api/articles', siteID), { headers: siteHeaders(siteID), signal });
     if (res.status === 401) {
         window.location.href = "/admin/login";
         return null;
@@ -212,12 +212,12 @@ export async function runSync() {
     return await res.json();
 }
 
-export async function runPublish(path, draftID) {
-    const res = await fetchWithCSRF(withSite('/admin/api/publish'), {
+export async function runPublish(path, draftID, siteID = currentSite) {
+    const res = await fetchWithCSRF(withSite('/admin/api/publish', siteID), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            ...siteHeaders()
+            ...siteHeaders(siteID)
         },
         body: JSON.stringify({ path, draft_id: draftID })
     });
@@ -253,12 +253,12 @@ export async function updateLocalPreviewContent(payload, revision, signal) {
     return await res.json();
 }
 
-export async function resolveLocalPreviewArticleURL(path, signal) {
+export async function resolveLocalPreviewArticleURL(path, signal, siteID = currentSite) {
     const res = await fetchWithCSRF(withSite('/admin/api/preview/local/navigate'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            ...siteHeaders()
+            ...siteHeaders(siteID)
         },
         body: JSON.stringify({ path }),
         signal
@@ -271,34 +271,34 @@ export async function resolveLocalPreviewArticleURL(path, signal) {
 // helper. The endpoint now resolves and returns the article URL directly.
 export const navigateLocalPreviewContent = resolveLocalPreviewArticleURL;
 
-export async function fetchLocalPreviewStatus(signal) {
+export async function fetchLocalPreviewStatus(signal, siteID = currentSite) {
     const url = '/admin/api/preview/local/status';
-    const res = await fetch(withSite(url), {
-        headers: siteHeaders(),
+    const res = await fetch(withSite(url, siteID), {
+        headers: siteHeaders(siteID),
         signal
     });
     if (!res.ok) throw await responseError(res, "Local Live Preview status failed");
     return await res.json();
 }
 
-export async function stopLocalPreviewContent() {
-    const res = await fetchWithCSRF(withSite('/admin/api/preview/local/stop'), {
+export async function stopLocalPreviewContent(siteID = currentSite) {
+    const res = await fetchWithCSRF(withSite('/admin/api/preview/local/stop', siteID), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            ...siteHeaders()
+            ...siteHeaders(siteID)
         },
     });
     if (!res.ok) throw await responseError(res, "Local Live Preview stop failed");
     return await res.json();
 }
 
-export async function triggerPreviewDeployment(path, draftID) {
-    const res = await fetchWithCSRF(withSite('/admin/api/preview/deployments'), {
+export async function triggerPreviewDeployment(path, draftID, siteID = currentSite) {
+    const res = await fetchWithCSRF(withSite('/admin/api/preview/deployments', siteID), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            ...siteHeaders()
+            ...siteHeaders(siteID)
         },
         body: JSON.stringify({ path, draft_id: draftID })
     });
@@ -306,10 +306,10 @@ export async function triggerPreviewDeployment(path, draftID) {
     return await res.json();
 }
 
-export async function fetchPreviewDeployment(draftID, signal) {
+export async function fetchPreviewDeployment(draftID, signal, siteID = currentSite) {
     const id = encodeURIComponent(draftID);
-    const res = await fetch(withSite(`/admin/api/preview/deployments/${id}`), {
-        headers: siteHeaders(),
+    const res = await fetch(withSite(`/admin/api/preview/deployments/${id}`, siteID), {
+        headers: siteHeaders(siteID),
         signal
     });
     if (res.status === 404) return null;
@@ -317,24 +317,24 @@ export async function fetchPreviewDeployment(draftID, signal) {
     return await res.json();
 }
 
-async function postPreviewDeploymentAction(draftID, action) {
+async function postPreviewDeploymentAction(draftID, action, siteID = currentSite) {
     const id = encodeURIComponent(draftID);
-    const res = await fetchWithCSRF(withSite(`/admin/api/preview/deployments/${id}/${action}`), {
+    const res = await fetchWithCSRF(withSite(`/admin/api/preview/deployments/${id}/${action}`, siteID), {
         method: 'POST',
         headers: {
-            ...siteHeaders()
+            ...siteHeaders(siteID)
         }
     });
     if (!res.ok) throw new Error(`Failed to ${action} deployment preview`);
     return await res.json();
 }
 
-export function retryPreviewDeployment(draftID) {
-    return postPreviewDeploymentAction(draftID, 'retry');
+export function retryPreviewDeployment(draftID, siteID = currentSite) {
+    return postPreviewDeploymentAction(draftID, 'retry', siteID);
 }
 
-export function discardPreviewDeployment(draftID) {
-    return postPreviewDeploymentAction(draftID, 'discard');
+export function discardPreviewDeployment(draftID, siteID = currentSite) {
+    return postPreviewDeploymentAction(draftID, 'discard', siteID);
 }
 
 export async function fetchMedia(mode, path) {
