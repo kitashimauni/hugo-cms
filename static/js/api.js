@@ -73,16 +73,19 @@ async function fetchWithCSRF(url, options) {
 }
 
 async function responseError(res, fallback) {
-    let message = fallback;
-    try {
-        const data = await res.json();
-        message = data?.message || data?.error || fallback;
-    } catch (_) {
+	let message = fallback;
+	let data = null;
+	try {
+		data = await res.json();
+		message = data?.message || data?.error || fallback;
+	} catch (_) {
         // Keep the stable fallback when the server did not return JSON.
     }
-    const error = new Error(message);
-    error.status = res.status;
-    return error;
+	const error = new Error(message);
+	error.status = res.status;
+	error.code = data?.code || "";
+	error.currentRevision = data?.current_revision || "";
+	return error;
 }
 
 export async function fetchConfig(siteID = currentSite, signal) {
@@ -107,40 +110,31 @@ export async function fetchArticles(siteID = currentSite, signal) {
 }
 
 export async function fetchArticle(path, signal) {
-    const params = new URLSearchParams({ path });
-    const res = await fetch(withSite(`/admin/api/article?${params.toString()}`), { headers: siteHeaders(), signal });
-    if (!res.ok) throw new Error("Failed to load article");
-    return await res.json();
+	const params = new URLSearchParams({ path });
+	const res = await fetch(withSite(`/admin/api/article?${params.toString()}`), { headers: siteHeaders(), signal });
+	if (!res.ok) throw await responseError(res, "Failed to load article");
+	return await res.json();
 }
 
 export async function saveArticle(payload) {
-    await ensureCSRFToken();
-    const res = await fetch(withSite('/admin/api/article'), {
-        method: 'POST',
-        headers: {
+	const request = () => fetch(withSite('/admin/api/article'), {
+		method: 'POST',
+		headers: {
             'Content-Type': 'application/json',
             ...siteHeaders(),
             ...getCSRFHeaders()
-        },
-        body: JSON.stringify(payload)
-    });
-    if (res.status === 403) {
-        resetCSRFToken();
-        await ensureCSRFToken(true);
-        const retryRes = await fetch(withSite('/admin/api/article'), {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                ...siteHeaders(),
-                ...getCSRFHeaders()
-            },
-            body: JSON.stringify(payload)
-        });
-        if (!retryRes.ok) throw new Error("Save failed");
-        return await retryRes.json();
-    }
-    if (!res.ok) throw new Error("Save failed");
-    return await res.json();
+		},
+		body: JSON.stringify(payload)
+	});
+	await ensureCSRFToken();
+	let res = await request();
+	if (res.status === 403) {
+		resetCSRFToken();
+		await ensureCSRFToken(true);
+		res = await request();
+	}
+	if (!res.ok) throw await responseError(res, "Save failed");
+	return await res.json();
 }
 
 export async function createArticle(arg1, arg2) {
@@ -168,22 +162,19 @@ export async function createArticle(arg1, arg2) {
     return await res.json();
 }
 
-export async function deleteArticle(path) {
-    await ensureCSRFToken();
-    const res = await fetch(withSite('/admin/api/delete'), {
+export async function deleteArticle(path, baseRevision = "") {
+	await ensureCSRFToken();
+	const res = await fetch(withSite('/admin/api/delete'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             ...siteHeaders(),
             ...getCSRFHeaders()
         },
-        body: JSON.stringify({ path })
-    });
-    if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || data.error || "Delete failed");
-    }
-    return await res.json();
+		body: JSON.stringify({ path, base_revision: baseRevision })
+	});
+	if (!res.ok) throw await responseError(res, "Delete failed");
+	return await res.json();
 }
 
 export async function getDiff(payload) {

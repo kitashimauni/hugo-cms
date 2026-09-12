@@ -17,11 +17,13 @@ let localPreviewRevision = 0;
 let articleLoadGeneration = 0;
 let articleLoadController = null;
 let gitSyncInProgress = false;
+let articleRevisionConflictPath = "";
 const localPreviewInflight = new Set();
 
 const PREVIEW_DEBOUNCE_MS = 180;
 const LOCAL_PREVIEW_DEBOUNCE_MS = 250;
 const GIT_SYNC_WRITE_PAUSED_MESSAGE = "Git Sync is in progress";
+const ARTICLE_REVISION_CONFLICT_MESSAGE = "この記事は別tabまたは外部で更新されました。ResetまたはDiffで確認してください。";
 const gitMutationInflight = new Set();
 
 export function getCurrentPath() {
@@ -30,7 +32,7 @@ export function getCurrentPath() {
 
 export function hasUnsavedChanges() {
     if (!currentPath || currentPath === deletingPath) return false;
-    return JSON.stringify(getPayload()) !== lastSavedPayload;
+    return serializePayload(getPayload()) !== lastSavedPayload;
 }
 
 function setEditorWritePaused(paused) {
@@ -163,6 +165,7 @@ export function clearEditor() {
     lastSavedPayload = "";
     lastQueuedPayload = "";
     deletingPath = "";
+    articleRevisionConflictPath = "";
 
     const display = document.getElementById('filename-display');
     if (display) display.textContent = "Select a file...";
@@ -209,6 +212,7 @@ function handleEditorChange() {
 function triggerAutoSave() {
     if (gitSyncInProgress || !currentPath) return;
     if (currentPath === deletingPath) return;
+    if (articleRevisionConflictPath === currentPath) return;
     clearAutoSaveTimer();
 
     // Debounce 3 seconds
@@ -239,6 +243,24 @@ function updateSaveStatus(msg, type) {
     }
     else if (type === 'error') el.style.color = '#d67a7a';
     else el.style.color = '#888';
+}
+
+function isArticleRevisionConflict(error) {
+    return error?.status === 409;
+}
+
+function markArticleRevisionConflict() {
+    if (!currentPath) return;
+    articleRevisionConflictPath = currentPath;
+    clearAutoSaveTimer();
+    updateSaveStatus("外部更新を検出", "error");
+    UI.showToast(ARTICLE_REVISION_CONFLICT_MESSAGE, "warning");
+}
+
+function serializePayload(payload) {
+    if (!payload) return "";
+    const { base_revision: _baseRevision, ...contentPayload } = payload;
+    return JSON.stringify(contentPayload);
 }
 
 function cancelMarkdownPreview() {
@@ -401,6 +423,7 @@ export async function flushLocalPreviewBeforeArticleSwitch(flush = refreshLocalL
 
 export async function execAutoSave() {
     if (gitSyncInProgress) return false;
+    if (articleRevisionConflictPath === currentPath) return false;
     return queueCurrentSave("Auto Saving...");
 }
 
@@ -416,7 +439,7 @@ async function queueCurrentSave(statusMessage) {
         }
 
         const payloadObj = getPayload();
-        const payloadStr = JSON.stringify(payloadObj);
+        const payloadStr = serializePayload(payloadObj);
 
         if (payloadStr === lastSavedPayload) {
             return false;
@@ -426,14 +449,23 @@ async function queueCurrentSave(statusMessage) {
         const operation = saveQueue.then(async () => {
             updateSaveStatus(statusMessage, "saving");
             try {
-                await API.saveArticle(payloadObj);
-                lastSavedPayload = payloadStr;
+                const response = await API.saveArticle(payloadObj);
+                if (currentData?.path === payloadObj.path && response?.revision) {
+                    currentData.revision = response.revision;
+                }
+                if (serializePayload(getPayload()) === payloadStr) {
+                    lastSavedPayload = serializePayload(getPayload());
+                }
                 console.log("[AutoSave] Saved:", payloadObj.path);
                 updateSaveStatus("Saved", "saved");
                 return true;
             } catch (e) {
                 console.error("[AutoSave] Failed:", e);
-                updateSaveStatus("Save Failed", "error");
+                if (isArticleRevisionConflict(e)) {
+                    markArticleRevisionConflict();
+                } else {
+                    updateSaveStatus("Save Failed", "error");
+                }
                 throw e;
             } finally {
                 if (lastQueuedPayload === payloadStr) {
@@ -504,13 +536,14 @@ export async function loadFile(path, { allowDuringGitSync = false } = {}) {
 
         currentPath = path;
         currentData = data;
+        articleRevisionConflictPath = "";
         resetLocalPreviewClientState();
         const display = document.getElementById('filename-display');
         if (display) display.textContent = path;
         UI.updateEditorContent(data, path, cmsConfig);
         setEditorWritePaused(gitSyncInProgress);
 
-        lastSavedPayload = JSON.stringify(getPayload());
+        lastSavedPayload = serializePayload(getPayload());
         lastQueuedPayload = "";
         await refreshMarkdownPreview({ allowDuringGitSync });
 
@@ -530,9 +563,16 @@ export async function loadFile(path, { allowDuringGitSync = false } = {}) {
 
 function getPayload() {
     if (currentData?.path === currentPath && typeof currentData.raw_content === 'string' && currentData.raw_content !== '') {
-        return { path: currentPath, content: currentData.raw_content };
+        return {
+            path: currentPath,
+            content: currentData.raw_content,
+            base_revision: currentData.revision || "",
+        };
     }
-    const payload = { path: currentPath };
+    const payload = {
+        path: currentPath,
+        base_revision: currentData?.path === currentPath ? currentData.revision || "" : "",
+    };
     const fm = UI.collectFrontMatter();
     if (fm) {
         payload.frontmatter = fm;
@@ -552,6 +592,9 @@ export async function saveFile() {
     if (currentPath === deletingPath) {
         return UI.showToast("Article deletion is in progress", "warning");
     }
+    if (articleRevisionConflictPath === currentPath) {
+        return UI.showToast(ARTICLE_REVISION_CONFLICT_MESSAGE, "warning");
+    }
 
     clearAutoSaveTimer();
 
@@ -559,7 +602,9 @@ export async function saveFile() {
         await queueCurrentSave("Saving...");
         UI.showToast("File saved successfully", "success");
     } catch (e) {
-        UI.showToast("Error saving: " + e.message, "error");
+        if (!isArticleRevisionConflict(e)) {
+            UI.showToast("Error saving: " + e.message, "error");
+        }
     }
 }
 
@@ -590,7 +635,7 @@ export async function deleteFile(refreshListCb) {
         // article in the resident workspace.
         await waitForLocalPreviewUpdates();
         assertGitSyncWritesAllowed();
-        await runGitMutation(() => API.deleteArticle(pathToDelete));
+        await runGitMutation(() => API.deleteArticle(pathToDelete, currentData?.revision || ""));
         // Production deletion is committed at this point. The server removes
         // the corresponding file from the site-scoped preview workspace while
         // keeping the generator runtime alive for the next article.
@@ -614,6 +659,8 @@ export async function deleteFile(refreshListCb) {
     } catch (e) {
         if (deleted) {
             UI.showToast("Article deleted, but refreshing the editor failed: " + e.message, "warning");
+        } else if (isArticleRevisionConflict(e)) {
+            markArticleRevisionConflict();
         } else {
             UI.showToast("Delete failed: " + e.message, "error");
         }

@@ -249,14 +249,16 @@ type Collection struct {
 ### 記事の保存
 
 ```
-1. クライアント: PUT /admin/api/article
+1. クライアント: POST /admin/api/article
 2. CSRFトークン検証
 3. SaveArticle() →
    a. パス検証 (SafeJoin)
    b. Front Matter正規化
-   c. ファイル書き込み
-   d. キャッシュ更新
-4. 成功応答
+   c. repository lock内で現在のcontent revisionを検証
+   d. revisionが一致しなければ409 Conflict
+   e. ファイル書き込み
+   f. 新revisionを返してキャッシュ更新
+4. 成功応答（新revision）
 ```
 
 ### 記事の公開
