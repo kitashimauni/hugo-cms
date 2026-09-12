@@ -510,12 +510,13 @@ func (m *LocalPreviewManager) ensureReadyRuntimeContext(ctx context.Context, run
 	return LocalPreviewProcessSlot{}, fmt.Errorf("failed to start local preview for site %q after %d attempts: %w", runtime.ID, startAttempts, lastErr)
 }
 
-func (m *LocalPreviewManager) startProcess(parent context.Context, runtime config.SiteRuntime, port int, previewURL string) (*managedLocalPreviewProcess, error) {
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithCancel(parent)
-	cmd, err := m.commandFactory(ctx, runtime, port, previewURL)
+func (m *LocalPreviewManager) startProcess(_ context.Context, runtime config.SiteRuntime, port int, previewURL string) (*managedLocalPreviewProcess, error) {
+	// Keep the long-lived generator process independent of the startup or
+	// supervisor context. Cancelling a CommandContext only kills the wrapper
+	// process; process-tree-safe termination is performed by Stop/Shutdown.
+	// The caller context is still used by waitUntilReady and startup cleanup.
+	processContext, cancel := context.WithCancel(context.Background())
+	cmd, err := m.commandFactory(processContext, runtime, port, previewURL)
 	if err != nil {
 		cancel()
 		return nil, err
