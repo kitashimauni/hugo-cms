@@ -4,7 +4,7 @@
 
 ## 概要
 
-Hugo CMSの認証、記事編集、メディア管理、Git連携、Hugoプレビュー、および開発・デプロイ手順を確認した結果をまとめる。
+HomeCMSの認証、記事編集、メディア管理、Git連携、Hugoプレビュー、および開発・デプロイ手順を確認した結果をまとめる。
 
 初回監査では、特に認可、SSHリモート利用時のGit認証、メディアパス検証を本番運用前の必須対応として確認した。各項目の現在の対応状態は以下に記録する。
 
@@ -254,7 +254,7 @@ CMS rootの`mise.toml`はCMSの開発・テスト用Go/Node.jsを固定する。
 - `.env`は引き続きGit管理外とし、本番ではサービス管理基盤のSecret機能を使用する。
 - HugoはExtended版が必要かをサイト側で確認し、通常版と混在させない。
 - race detectorはmiseだけでは解決しないため、Linux CIで実行するのが扱いやすい。
-- Dockerではapp起動時にrepo設定を自動trustしない。`HUGO_CMS_REPOS`の明示allowlistとsecret-freeな`tool-bootstrap` one-shotを使用する。
+- Dockerではapp起動時にrepo設定を自動trustしない。`HOMECMS_REPOS`の明示allowlistとsecret-freeな`tool-bootstrap` one-shotを使用する。
 - Node.js依存はレビュー済みlockfileからfrozen installし、HTTP request処理中やapp起動時には取得しない。
 
 ### 推奨する導入順序

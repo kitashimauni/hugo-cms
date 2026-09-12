@@ -256,7 +256,7 @@ func CreateArticle(c *gin.Context) {
 		if os.IsExist(err) {
 			ErrorConflict(c, log)
 		} else {
-			ErrorInternal(c, "Hugo new failed: "+log)
+			ErrorInternal(c, "Content creation failed: "+log)
 		}
 		return
 	}

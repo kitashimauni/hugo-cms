@@ -1,6 +1,6 @@
 # API リファレンス
 
-Hugo CMSのREST API仕様です。
+HomeCMSのREST API仕様です。
 
 ## 認証
 

@@ -6,7 +6,7 @@
 
 - `hugo-cms` は非rootでCMSだけを起動し、`mise install`や所有者変更を行わない
 - `tool-bootstrap` は`tools` profileのone-shot serviceとして、管理者が明示したときだけ実行する
-- `HUGO_CMS_REPOS`にUnixの`:`区切りで列挙したリポジトリだけを準備する
+- `HOMECMS_REPOS`にUnixの`:`区切りで列挙したリポジトリだけを準備する
 - tool bootstrapにはGitHub OAuthやセッションの秘密情報を渡さない
 - miseのtools/cacheは`mise-data` named volumeへ保存する
 - CMSはホストのloopbackだけに公開し、外部公開はリバースプロキシ経由にする
@@ -17,7 +17,7 @@
 
 Composeのruntimeと`tool-bootstrap`は次の境界を守ります。
 
-- `/data/repos`を一括探索せず、`HUGO_CMS_REPOS`の明示allowlistだけを処理する
+- `/data/repos`を一括探索せず、`HOMECMS_REPOS`の明示allowlistだけを処理する
 - appのgenerator runtimeとbootstrapがtrustできるpathを同じallowlistへ制限する
 - `.env`を補間に利用しても、`tool-bootstrap`コンテナには`GITHUB_CLIENT_SECRET`、`SESSION_SECRET`などのapp環境変数を渡さない
 - appコンテナは依存準備を行わず、準備失敗によってCMS自体を再起動ループにしない
@@ -85,13 +85,13 @@ Docker groupを利用する場合、そのメンバーは実質的にroot相当�
 appはbuild時に指定したUID/GIDの非rootユーザーで動作し、bind mountしたリポジトリを`chown`しません。Linuxではホスト上の所有者に合わせます。
 
 ```bash
-sed -i "s/^HUGO_CMS_UID=.*/HUGO_CMS_UID=$(id -u)/" .env
-sed -i "s/^HUGO_CMS_GID=.*/HUGO_CMS_GID=$(id -g)/" .env
+sed -i "s/^HOMECMS_UID=.*/HOMECMS_UID=$(id -u)/" .env
+sed -i "s/^HOMECMS_GID=.*/HOMECMS_GID=$(id -g)/" .env
 ```
 
 UID/GIDを変更した場合はimageを再buildしてください。`root`相当の`0`は、`00`などのゼロ埋め表現を含めて指定できません。Docker Desktopでは通常、配布時の既定値を利用できます。
 
-指定したUID/GIDがbase image内ですでに使われている場合、imageはその数値IDを再利用します。container内のuser/group名ではなく、`HUGO_CMS_UID`と`HUGO_CMS_GID`の数値が実行権限の基準です。
+指定したUID/GIDがbase image内ですでに使われている場合、imageはその数値IDを再利用します。container内のuser/group名ではなく、`HOMECMS_UID`と`HOMECMS_GID`の数値が実行権限の基準です。
 
 すでに`mise-data` volumeを作成したあとでUID/GIDを変更すると、volume内に以前の所有権が残ることがあります。toolchainを再取得できる環境では、意図した初期化として`docker compose down --volumes`を実行してからimageを再buildし、bootstrapをやり直してください。既存volumeを保持する必要がある場合は、削除せず管理者がvolume内の所有権を新しいUID/GIDへ移行してください。
 
@@ -144,12 +144,12 @@ STATIC_DIR=static
 PUBLIC_DIR=public
 
 # tool-bootstrapが処理してよいリポジトリ。Unixの":"区切り。
-HUGO_CMS_REPOS=/data/repos/techblog
+HOMECMS_REPOS=/data/repos/techblog
 
 # ホスト側のloopback公開ポート。コンテナ内PORTは常に8080。
-HUGO_CMS_HOST_PORT=8080
-HUGO_CMS_UID=1000
-HUGO_CMS_GID=1000
+HOMECMS_HOST_PORT=8080
+HOMECMS_UID=1000
+HOMECMS_GID=1000
 
 MARKDOWN_PREVIEW_ENABLED=true
 
@@ -159,7 +159,7 @@ GIT_BRANCH=main
 
 private repositoryには`GITHUB_OAUTH_SCOPES=repo`を使用します。スコープを変更した利用者は再ログインが必要です。
 
-`PORT`はComposeがappコンテナ内で`8080`に固定します。ホスト側のポートだけを`HUGO_CMS_HOST_PORT`で変更します。たとえば`HUGO_CMS_HOST_PORT=18080`なら、`127.0.0.1:18080`からコンテナの8080へ接続します。
+`PORT`はComposeがappコンテナ内で`8080`に固定します。ホスト側のポートだけを`HOMECMS_HOST_PORT`で変更します。たとえば`HOMECMS_HOST_PORT=18080`なら、`127.0.0.1:18080`からコンテナの8080へ接続します。
 
 ## ツールとNode.js依存関係の準備
 
@@ -170,7 +170,7 @@ docker compose build
 docker compose --profile tools run --rm tool-bootstrap
 ```
 
-`tool-bootstrap`は`HUGO_CMS_REPOS`をUnixの`:`で分割し、空要素、相対パス、`/data/repos`外のパス、存在しないディレクトリを拒否します。カンマや空白区切り、自動globは使用できません。
+`tool-bootstrap`は`HOMECMS_REPOS`をUnixの`:`で分割し、空要素、相対パス、`/data/repos`外のパス、存在しないディレクトリを拒否します。カンマや空白区切り、自動globは使用できません。
 
 各allowlist対象では、mise設定を明示的にtrustして`mise install`を実行します。Node.jsプロジェクトではlockfileに応じて再現可能な依存インストールも実行します。
 
@@ -201,7 +201,7 @@ docker compose exec hugo-cms mise exec -C /data/repos/techblog -- hugo version
 ```
 
 ホストの公開先は`127.0.0.1`固定です。外部からはNginxやCaddyでHTTPS終端し、loopbackへproxyしてください。
-`HUGO_CMS_HOST_PORT`を既定値から変更した場合は、上の確認URLも同じポートへ置き換えてください。
+`HOMECMS_HOST_PORT`を既定値から変更した場合は、上の確認URLも同じポートへ置き換えてください。
 
 ## 複数サイト
 
@@ -219,7 +219,7 @@ volumes:
 ```env
 SITES_CONFIG_PATH=/app/sites.yml
 GENERATOR_RUNTIME=mise
-HUGO_CMS_REPOS=/data/repos/techblog:/data/repos/docs
+HOMECMS_REPOS=/data/repos/techblog:/data/repos/docs
 ```
 
 `sites.yml`例:
@@ -249,7 +249,7 @@ sites:
     public_dir: _site
 ```
 
-本文previewはCMS内でrenderされるためpreview portは不要です。Site Registryへ登録しただけではgenerator bootstrap対象になりません。明示build/content作成で実行を承認したrepoだけを`HUGO_CMS_REPOS`にも追加します。
+本文previewはCMS内でrenderされるためpreview portは不要です。Site Registryへ登録しただけではgenerator bootstrap対象になりません。明示build/content作成で実行を承認したrepoだけを`HOMECMS_REPOS`にも追加します。
 
 ## 更新
 
@@ -274,7 +274,7 @@ one-shotの出力を確認します。
 docker compose --profile tools run --rm tool-bootstrap
 ```
 
-- `HUGO_CMS_REPOS`がUnixの`:`区切りか
+- `HOMECMS_REPOS`がUnixの`:`区切りか
 - 各値が`/data/repos/<name>`の絶対パスか
 - repoのmise設定とlockfileをレビュー済みか
 - host側repoとnamed volumeへ指定UID/GIDで書き込めるか
@@ -296,4 +296,4 @@ UID/GIDを変更済みで`mise-data`に以前の所有権が残っている場�
 
 ### `hugo`またはpackage managerが見つからない
 
-対象repoが`HUGO_CMS_REPOS`に含まれ、そのrepoの`mise.toml`に必要なtoolが固定されていることを確認し、bootstrapを再実行します。app再起動だけではtoolchainは更新されません。
+対象repoが`HOMECMS_REPOS`に含まれ、そのrepoの`mise.toml`に必要なtoolが固定されていることを確認し、bootstrapを再実行します。app再起動だけではtoolchainは更新されません。

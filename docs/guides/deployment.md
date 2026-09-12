@@ -1,6 +1,6 @@
 # デプロイガイド
 
-Hugo CMSを本番環境にデプロイする方法について説明します。
+HomeCMSを本番環境にデプロイする方法について説明します。
 
 ## 前提条件
 
@@ -50,7 +50,7 @@ git clone https://github.com/username/hugo-site.git /opt/hugo-cms/repo
 ```ini
 # /etc/systemd/system/hugo-cms.service
 [Unit]
-Description=Hugo CMS
+Description=HomeCMS
 After=network.target
 
 [Service]
@@ -91,11 +91,11 @@ services:
     build:
       context: .
       args:
-        HUGO_CMS_UID: ${HUGO_CMS_UID:-10001}
-        HUGO_CMS_GID: ${HUGO_CMS_GID:-10001}
+        HOMECMS_UID: ${HOMECMS_UID:-10001}
+        HOMECMS_GID: ${HOMECMS_GID:-10001}
     image: hugo-cms:local
     ports:
-      - "127.0.0.1:${HUGO_CMS_HOST_PORT:-8080}:8080"
+      - "127.0.0.1:${HOMECMS_HOST_PORT:-8080}:8080"
     env_file:
       - path: .env
         required: true
@@ -105,15 +105,15 @@ services:
     environment:
       GENERATOR_RUNTIME: mise
       PORT: "8080"
-      HUGO_CMS_REPOS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
-      MISE_TRUSTED_CONFIG_PATHS: ${HUGO_CMS_REPOS:?Set HUGO_CMS_REPOS in .env}
+      HOMECMS_REPOS: ${HOMECMS_REPOS:?Set HOMECMS_REPOS in .env}
+      MISE_TRUSTED_CONFIG_PATHS: ${HOMECMS_REPOS:?Set HOMECMS_REPOS in .env}
     restart: unless-stopped
 
 volumes:
   mise-data:
 ```
 
-appはbuild ARGで指定した数値の非root UID/GIDで動作し、base imageに同じIDが存在する場合は再利用します。bind mountは`chown`しません。ホスト公開はloopbackだけです。`PORT`はコンテナ内で`8080`に固定し、ホスト側は`HUGO_CMS_HOST_PORT`で変更します。rootの`compose.yml`には、同じimageとvolumeを使いappの`env_file`を持たない`tool-bootstrap` serviceも定義されています。
+appはbuild ARGで指定した数値の非root UID/GIDで動作し、base imageに同じIDが存在する場合は再利用します。bind mountは`chown`しません。ホスト公開はloopbackだけです。`PORT`はコンテナ内で`8080`に固定し、ホスト側は`HOMECMS_HOST_PORT`で変更します。rootの`compose.yml`には、同じimageとvolumeを使いappの`env_file`を持たない`tool-bootstrap` serviceも定義されています。
 
 #### ツール準備と起動
 
@@ -123,7 +123,7 @@ docker compose --profile tools run --rm tool-bootstrap
 docker compose up -d hugo-cms
 ```
 
-`HUGO_CMS_REPOS`はUnixの`:`区切りの明示allowlistです。bootstrapは列挙されたrepoだけをtrustして`mise install`を行い、Node.jsサイトではlockfileに応じたfrozen installも実行します。appのGitHub OAuthやセッション秘密情報はbootstrapへ渡しません。
+`HOMECMS_REPOS`はUnixの`:`区切りの明示allowlistです。bootstrapは列挙されたrepoだけをtrustして`mise install`を行い、Node.jsサイトではlockfileに応じたfrozen installも実行します。appのGitHub OAuthやセッション秘密情報はbootstrapへ渡しません。
 
 ### 3. リバースプロキシ設定
 

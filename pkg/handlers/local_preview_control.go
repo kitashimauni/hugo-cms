@@ -19,8 +19,9 @@ func GetLocalPreviewStatus(c *gin.Context) {
 	enabled := runtime.LocalPreview.Enabled != nil && *runtime.LocalPreview.Enabled
 	if !enabled {
 		c.JSON(http.StatusOK, gin.H{
-			"enabled": false,
-			"status":  "disabled",
+			"enabled":   false,
+			"status":    "disabled",
+			"generator": runtime.Generator,
 		})
 		return
 	}
@@ -41,6 +42,7 @@ func GetLocalPreviewStatus(c *gin.Context) {
 
 	response := gin.H{
 		"enabled":          true,
+		"generator":        runtime.Generator,
 		"status":           string(processState),
 		"process_state":    processState,
 		"process_error":    processError,

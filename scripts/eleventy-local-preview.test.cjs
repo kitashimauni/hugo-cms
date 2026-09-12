@@ -138,7 +138,7 @@ function connectReloadSocket(port) {
     };
     socket.on("connect", () => {
       socket.write([
-        "GET /__hugo_cms_live_reload HTTP/1.1",
+        "GET /__homecms_live_reload HTTP/1.1",
         "Host: 127.0.0.1",
         "Upgrade: websocket",
         "Connection: Upgrade",
@@ -332,12 +332,12 @@ test("serves stale metadata immediately after a resource invalidation", async ()
   try {
     await listen(server, 0, "127.0.0.1");
     const port = server.address().port;
-    const before = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    const before = await requestHTTP(port, "/__homecms_metadata?path=posts%2Fone.md");
     assert.equal(before.statusCode, 200);
 
-    const invalidated = await requestHTTP(port, "/__hugo_cms_invalidate", "POST");
+    const invalidated = await requestHTTP(port, "/__homecms_invalidate", "POST");
     assert.equal(invalidated.statusCode, 202);
-    const duringMutation = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    const duringMutation = await requestHTTP(port, "/__homecms_metadata?path=posts%2Fone.md");
     assert.equal(duringMutation.statusCode, 200);
     const stale = JSON.parse(duringMutation.body);
     assert.equal(stale.status, "stale");
@@ -386,7 +386,7 @@ test("does not mark an older build fresh after a second invalidation", async () 
     assert.equal(state.ready, false);
     assert.equal(state.diagnostics().active_build_generation, 11);
     assert.equal(state.diagnostics().invalidation_generation, 12);
-    const stale = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    const stale = await requestHTTP(port, "/__homecms_metadata?path=posts%2Fone.md");
     assert.equal(stale.statusCode, 200);
     assert.equal(JSON.parse(stale.body).status, "stale");
     assert.equal(JSON.parse(stale.body).fresh, false);
@@ -395,7 +395,7 @@ test("does not mark an older build fresh after a second invalidation", async () 
     state.update([result]);
     assert.equal(state.ready, true);
     assert.equal(state.diagnostics().active_build_generation, 12);
-    const fresh = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    const fresh = await requestHTTP(port, "/__homecms_metadata?path=posts%2Fone.md");
     assert.equal(fresh.statusCode, 200);
     assert.equal(JSON.parse(fresh.body).status, "resolved");
     assert.equal(JSON.parse(fresh.body).fresh, true);
@@ -496,11 +496,11 @@ test("starts real Eleventy serve and broadcasts LiveReload", { skip: !hasRealEle
       env: { ...process.env, ELEVENTY_FIXTURE_SLOW_BUILD: "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const building = await waitForHTTPStatus(port, "/__hugo_cms_ready", 503);
+    const building = await waitForHTTPStatus(port, "/__homecms_ready", 503);
     assert.equal(JSON.parse(building.body).status, "building");
     const page = await waitForHTTP(port, "/custom/one/");
-    assert.match(page.body, /__hugo_cms_reload\.js/);
-    const metadata = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    assert.match(page.body, /__homecms_reload\.js/);
+    const metadata = await requestHTTP(port, "/__homecms_metadata?path=posts%2Fone.md");
     assert.equal(metadata.statusCode, 200);
     assert.equal(JSON.parse(metadata.body).url, "/custom/one/");
     reloadSocket = await connectReloadSocket(port);
@@ -516,16 +516,16 @@ test("starts real Eleventy serve and broadcasts LiveReload", { skip: !hasRealEle
       });
       reloadSocket.once("error", reject);
     });
-    const invalidated = await requestHTTP(port, "/__hugo_cms_invalidate?path=posts%2Fone.md", "POST");
+    const invalidated = await requestHTTP(port, "/__homecms_invalidate?path=posts%2Fone.md", "POST");
     assert.equal(invalidated.statusCode, 202);
-    const invalidatedMetadata = await requestHTTP(port, "/__hugo_cms_metadata?path=posts%2Fone.md");
+    const invalidatedMetadata = await requestHTTP(port, "/__homecms_metadata?path=posts%2Fone.md");
     assert.equal(invalidatedMetadata.statusCode, 200);
     assert.equal(JSON.parse(invalidatedMetadata.body).status, "stale");
     assert.equal(JSON.parse(invalidatedMetadata.body).fresh, false);
     const updatedArticle = ["---", "title: Changed", "permalink: /custom/changed/", "---", "", "# {{ title }}", ""].join("\n");
     fs.writeFileSync(fixture.article, updatedArticle);
     await reload;
-    const updatedMetadata = await waitForHTTPStatus(port, "/__hugo_cms_metadata?path=posts%2Fone.md", 200);
+    const updatedMetadata = await waitForHTTPStatus(port, "/__homecms_metadata?path=posts%2Fone.md", 200);
     assert.equal(updatedMetadata.statusCode, 200);
     assert.equal(JSON.parse(updatedMetadata.body).url, "/custom/changed/");
   } finally {

@@ -88,12 +88,15 @@ func TestLocalPreviewIngressHidesControlEndpoints(t *testing.T) {
 		method string
 		path   string
 	}{
-		{name: "ready", method: http.MethodGet, path: "/__hugo_cms_ready"},
-		{name: "metadata", method: http.MethodGet, path: "/__hugo_cms_metadata?path=content/posts/one.md"},
-		{name: "invalidate", method: http.MethodPost, path: "/__hugo_cms_invalidate"},
-		{name: "ready dot segment", method: http.MethodGet, path: "/foo/../__hugo_cms_ready"},
-		{name: "metadata encoded dot segment", method: http.MethodGet, path: "/foo/%2e%2e/__hugo_cms_metadata"},
-		{name: "invalidate dot segment", method: http.MethodPost, path: "/foo/../__hugo_cms_invalidate"},
+		{name: "ready", method: http.MethodGet, path: "/__homecms_ready"},
+		{name: "metadata", method: http.MethodGet, path: "/__homecms_metadata?path=content/posts/one.md"},
+		{name: "invalidate", method: http.MethodPost, path: "/__homecms_invalidate"},
+		{name: "ready dot segment", method: http.MethodGet, path: "/foo/../__homecms_ready"},
+		{name: "metadata encoded dot segment", method: http.MethodGet, path: "/foo/%2e%2e/__homecms_metadata"},
+		{name: "invalidate dot segment", method: http.MethodPost, path: "/foo/../__homecms_invalidate"},
+		{name: "legacy ready", method: http.MethodGet, path: "/__hugo_cms_ready"},
+		{name: "legacy metadata", method: http.MethodGet, path: "/__hugo_cms_metadata?path=content/posts/one.md"},
+		{name: "legacy invalidate", method: http.MethodPost, path: "/__hugo_cms_invalidate"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			request := httptest.NewRequest(testCase.method, "https://tech.preview.example.com"+testCase.path, nil)
@@ -109,7 +112,7 @@ func TestLocalPreviewIngressHidesControlEndpoints(t *testing.T) {
 		t.Fatalf("control endpoint proxy calls = %d, want 0", proxy.calls)
 	}
 
-	for _, path := range []string{"/__hugo_cms_reload.js", "/__hugo_cms_live_reload"} {
+	for _, path := range []string{"/__homecms_reload.js", "/__homecms_live_reload", "/__hugo_cms_reload.js", "/__hugo_cms_live_reload"} {
 		request := httptest.NewRequest(http.MethodGet, "https://tech.preview.example.com"+path, nil)
 		request.Host = "tech.preview.example.com"
 		response := httptest.NewRecorder()
@@ -118,8 +121,8 @@ func TestLocalPreviewIngressHidesControlEndpoints(t *testing.T) {
 			t.Fatalf("LiveReload path %q status = %d, want 204", path, response.Code)
 		}
 	}
-	if proxy.calls != 2 {
-		t.Fatalf("LiveReload proxy calls = %d, want 2", proxy.calls)
+	if proxy.calls != 4 {
+		t.Fatalf("LiveReload proxy calls = %d, want 4", proxy.calls)
 	}
 }
 

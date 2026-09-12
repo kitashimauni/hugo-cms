@@ -1,6 +1,10 @@
 // CSRF Token Management
 let csrfToken = null;
-let currentSite = window.localStorage.getItem('hugo-cms:site') || "";
+const CURRENT_SITE_STORAGE_KEY = 'homecms:site';
+const LEGACY_CURRENT_SITE_STORAGE_KEY = 'hugo-cms:site';
+let currentSite = window.localStorage.getItem(CURRENT_SITE_STORAGE_KEY)
+    || window.localStorage.getItem(LEGACY_CURRENT_SITE_STORAGE_KEY)
+    || "";
 
 export function getCurrentSite() {
     return currentSite;
@@ -9,9 +13,11 @@ export function getCurrentSite() {
 export function setCurrentSite(siteID) {
     currentSite = siteID || "";
     if (currentSite) {
-        window.localStorage.setItem('hugo-cms:site', currentSite);
+        window.localStorage.setItem(CURRENT_SITE_STORAGE_KEY, currentSite);
+        window.localStorage.removeItem(LEGACY_CURRENT_SITE_STORAGE_KEY);
     } else {
-        window.localStorage.removeItem('hugo-cms:site');
+        window.localStorage.removeItem(CURRENT_SITE_STORAGE_KEY);
+        window.localStorage.removeItem(LEGACY_CURRENT_SITE_STORAGE_KEY);
     }
 }
 
