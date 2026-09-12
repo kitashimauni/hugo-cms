@@ -153,6 +153,8 @@ generatorの作業ディレクトリは、Hugoでは元repository、Eleventyで�
 
 既存の3秒autosaveは保存機能として残りますが、Local Previewの250ms update経路はproduction working tree/Git index/refへ書き込みません。
 
+production記事のautosaveは記事内容のSHA-256 revisionを使った楽観的排他で保護します。記事GET時のrevisionを`base_revision`として保存へ送信し、Git Sync、別tab、別browser/deviceなどでproduction内容が変わっていればserverはHTTP 409を返して上書きを拒否します。frontendは409後にAutoSaveを停止し、記事の再読み込みまたはDiffで確認するよう通知します。Local Preview shadowの更新はこのproduction競合判定とは独立して動作します。
+
 ### revision / 複数tab
 
 各updateにはbrowser documentごとの`revision`を付けます。serverはこの値をtab間のordering判定には使わず、受信したrequestをsite workspaceへ適用してserver側のrevisionを採番します。同じsiteを複数tabから編集しても`409`にはならず、preview shadowはlast-write-winsです。production contentとGitの整合性は通常のsave側で管理します。

@@ -42,6 +42,7 @@ const {
     flushPendingSave,
     getOrCreateDraftID,
     getCurrentPath,
+    hasUnsavedChanges,
     initAutoSave,
     isGitSyncInProgress,
     loadFile,
@@ -683,6 +684,34 @@ describe("Local Preview destructive operations", () => {
         }
     });
 
+    it("stops autosave after a production revision conflict without retrying", async () => {
+        const harness = createArticleSwitchHarness({
+            saveResponse: () => ({
+                ok: false,
+                status: 409,
+                json: async () => ({
+                    code: "CONFLICT",
+                    message: "Article was changed externally; reload before saving",
+                    current_revision: "sha256:remote",
+                }),
+            }),
+        });
+        try {
+            await loadFile("posts/a.md");
+            harness.calls.length = 0;
+            harness.editor.value = "stale editor content";
+
+            await assert.rejects(execAutoSave(), error => error.status === 409);
+            assert.equal(hasUnsavedChanges(), true);
+            assert.equal(harness.calls.filter(call => call.url.endsWith("/admin/api/article") && call.options.method === "POST").length, 1);
+
+            assert.equal(await execAutoSave(), false);
+            assert.equal(harness.calls.filter(call => call.url.endsWith("/admin/api/article") && call.options.method === "POST").length, 1);
+        } finally {
+            harness.restore();
+        }
+    });
+
     for (const staleResult of ["success", "failure"]) {
         it(`keeps the newest article when an older load finishes ${staleResult} later`, async () => {
             const bFetchStarted = deferred();
@@ -878,6 +907,29 @@ describe("Git Sync editor gate", () => {
 });
 
 describe("preview API contracts", () => {
+    it("sends the production base revision and preserves conflict details", async () => {
+        const calls = [];
+        globalThis.fetch = async (url, options = {}) => {
+            calls.push({ url, options });
+            return {
+                ok: false,
+                status: 409,
+                json: async () => ({
+                    code: "CONFLICT",
+                    message: "Article was changed externally; reload before saving",
+                    current_revision: "sha256:remote",
+                }),
+            };
+        };
+
+        API.setCurrentSite("site-a");
+        await assert.rejects(
+            API.saveArticle({ path: "posts/one.md", content: "stale", base_revision: "sha256:old" }),
+            error => error.status === 409 && error.code === "CONFLICT" && error.currentRevision === "sha256:remote",
+        );
+        assert.equal(JSON.parse(calls[0].options.body).base_revision, "sha256:old");
+    });
+
     it("pins site-scoped read requests to their explicit site id", async () => {
         const calls = [];
         globalThis.fetch = async (url, options = {}) => {

@@ -142,7 +142,8 @@ CSRFトークンを取得します。
         "tags": ["blog", "hello"]
     },
     "body": "# Hello\n\nThis is my first post.",
-    "format": "yaml"
+    "format": "yaml",
+    "revision": "sha256:..."
 }
 ```
 
@@ -168,15 +169,28 @@ CSRFトークンを取得します。
         "date": "2026-01-10T12:00:00Z",
         "draft": false
     },
-    "body": "# Updated Content\n\nNew content here."
+    "body": "# Updated Content\n\nNew content here.",
+    "base_revision": "sha256:..."
 }
 ```
 
 **レスポンス**:
 ```json
 {
-    "status": "ok",
-    "log": "Saved"
+    "status": "saved",
+    "revision": "sha256:..."
+}
+```
+
+`base_revision`はGETで取得した記事のrevisionです。サーバー上の内容が変更されている場合は、記事を上書きせずHTTP 409を返します。
+
+```json
+{
+    "status": "error",
+    "code": "CONFLICT",
+    "message": "Article was changed externally; reload before saving",
+    "path": "posts/2026-01-10-hello/index.md",
+    "current_revision": "sha256:..."
 }
 ```
 
@@ -198,10 +212,9 @@ CSRFトークンを取得します。
 **レスポンス**:
 ```json
 {
-    "status": "ok",
-    "data": {
-        "path": "posts/20260110-new-article/index.md"
-    }
+    "status": "created",
+    "path": "posts/20260110-new-article/index.md",
+    "revision": "sha256:..."
 }
 ```
 
@@ -218,8 +231,15 @@ CSRFトークンを取得します。
 
 記事を削除します。
 
-**クエリパラメータ**:
-- `path` (必須): 記事のパス
+**リクエストボディ**:
+```json
+{
+    "path": "posts/2026-01-10-hello/index.md",
+    "base_revision": "sha256:..."
+}
+```
+
+`base_revision`が現在のrevisionと一致しない場合、記事は削除せずHTTP 409を返します。
 
 **レスポンス**:
 ```json

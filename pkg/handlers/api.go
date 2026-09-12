@@ -91,10 +91,16 @@ func GetArticle(c *gin.Context) {
 		ErrorNotFound(c, "File not found")
 		return
 	}
+	revision := services.ArticleRevision(content)
 
 	fm, body, format, err := services.ParseFrontMatter(content)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"content": string(content)})
+		c.JSON(http.StatusOK, models.Article{
+			Path:       targetPath,
+			Content:    string(content),
+			RawContent: string(content),
+			Revision:   revision,
+		})
 		return
 	}
 
@@ -104,6 +110,7 @@ func GetArticle(c *gin.Context) {
 		FrontMatter: fm,
 		Body:        body,
 		Format:      format,
+		Revision:    revision,
 	})
 }
 
@@ -145,13 +152,26 @@ func SaveArticle(c *gin.Context) {
 		finalContent = []byte(art.Content)
 	}
 
+	currentRevision, err := services.ArticleRevisionForPath(fullPath)
+	if err != nil {
+		ErrorInternal(c, "Failed to check article revision")
+		return
+	}
+	if currentRevision != art.BaseRevision {
+		respondArticleRevisionConflict(c, art.Path, currentRevision)
+		return
+	}
+
 	if err := os.WriteFile(fullPath, finalContent, 0644); err != nil {
 		ErrorInternal(c, "Save failed")
 		return
 	}
 
 	services.UpdateCacheForRuntime(runtime, art.Path)
-	c.JSON(http.StatusOK, gin.H{"status": "saved"})
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "saved",
+		"revision": services.ArticleRevision(finalContent),
+	})
 }
 
 func CreateArticle(c *gin.Context) {
@@ -241,12 +261,21 @@ func CreateArticle(c *gin.Context) {
 		contentRelPath = filepath.ToSlash(contentRelPath)
 
 		services.UpdateCacheForRuntime(runtime, contentRelPath)
-		c.JSON(http.StatusOK, gin.H{"status": "created", "path": contentRelPath})
+		c.JSON(http.StatusOK, gin.H{
+			"status":   "created",
+			"path":     contentRelPath,
+			"revision": services.ArticleRevision(content),
+		})
 		return
 	}
 
 	// Legacy/Direct path logic
 	if req.Path == "" || strings.Contains(req.Path, "..") {
+		ErrorBadRequest(c, "Invalid path")
+		return
+	}
+	fullPath := services.SafeJoin(runtime.RepoPath, runtime.ContentDir, req.Path)
+	if fullPath == "" {
 		ErrorBadRequest(c, "Invalid path")
 		return
 	}
@@ -262,7 +291,16 @@ func CreateArticle(c *gin.Context) {
 	}
 
 	services.UpdateCacheForRuntime(runtime, req.Path)
-	c.JSON(http.StatusOK, gin.H{"status": "created", "log": log})
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		ErrorInternal(c, "Content creation succeeded but revision could not be read")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"status":   "created",
+		"log":      log,
+		"revision": services.ArticleRevision(content),
+	})
 }
 
 func GetDiff(c *gin.Context) {
@@ -350,7 +388,8 @@ func DeleteArticle(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Path string `json:"path"`
+		Path         string `json:"path"`
+		BaseRevision string `json:"base_revision"`
 	}
 	if err := c.BindJSON(&req); err != nil {
 		ErrorBadRequest(c, "Invalid JSON")
@@ -361,9 +400,28 @@ func DeleteArticle(c *gin.Context) {
 		ErrorBadRequest(c, "Invalid path")
 		return
 	}
+	fullPath := services.SafeJoin(runtime.RepoPath, runtime.ContentDir, req.Path)
+	if fullPath == "" {
+		ErrorBadRequest(c, "Invalid path")
+		return
+	}
 
 	unlock := services.LockRepositoryOperation()
 	defer unlock()
+
+	currentRevision, err := services.ArticleRevisionForPath(fullPath)
+	if err != nil {
+		ErrorInternal(c, "Failed to check article revision")
+		return
+	}
+	if currentRevision == "" {
+		ErrorNotFound(c, "File not found")
+		return
+	}
+	if currentRevision != req.BaseRevision {
+		respondArticleRevisionConflict(c, req.Path, currentRevision)
+		return
+	}
 
 	// Invalidate Eleventy metadata before deleting the shadow article. This
 	// makes URL resolution return a rebuilding state while the old file is
@@ -385,6 +443,16 @@ func DeleteArticle(c *gin.Context) {
 	// releasing the generator runtime for the next article.
 	syncLocalPreviewContentResource(runtime, filepath.ToSlash(filepath.Join(runtime.ContentDir, req.Path)), true, false)
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+func respondArticleRevisionConflict(c *gin.Context, path, currentRevision string) {
+	c.JSON(http.StatusConflict, gin.H{
+		"status":           "error",
+		"code":             ErrCodeConflict,
+		"message":          "Article was changed externally; reload before saving",
+		"path":             path,
+		"current_revision": currentRevision,
+	})
 }
 
 func GetConfig(c *gin.Context) {
