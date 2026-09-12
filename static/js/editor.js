@@ -14,6 +14,8 @@ let previewController = null;
 let previewRevision = 0;
 let localPreviewTimer = null;
 let localPreviewRevision = 0;
+let articleLoadGeneration = 0;
+let articleLoadController = null;
 let gitSyncInProgress = false;
 const localPreviewInflight = new Set();
 
@@ -126,7 +128,32 @@ function localPreviewEnabled() {
     return cmsConfig?._cms?.local_preview?.enabled === true;
 }
 
+function beginArticleLoad() {
+    if (articleLoadController) articleLoadController.abort();
+    const request = {
+        generation: ++articleLoadGeneration,
+        controller: new AbortController(),
+    };
+    articleLoadController = request.controller;
+    return request;
+}
+
+function isCurrentArticleLoad(request) {
+    return request.generation === articleLoadGeneration && articleLoadController === request.controller;
+}
+
+function cancelArticleLoad() {
+    articleLoadGeneration += 1;
+    if (articleLoadController) articleLoadController.abort();
+    articleLoadController = null;
+}
+
+function finishArticleLoad(request) {
+    if (articleLoadController === request.controller) articleLoadController = null;
+}
+
 export function clearEditor() {
+    cancelArticleLoad();
     clearAutoSaveTimer();
     cancelMarkdownPreview();
     cancelLocalPreviewTimer();
@@ -294,6 +321,8 @@ export async function refreshLocalLivePreview() {
     if (gitSyncInProgress || !localPreviewEnabled() || !currentPath || currentPath === deletingPath) return null;
     cancelLocalPreviewTimer();
 
+    const requestPath = currentPath;
+    const articleGeneration = articleLoadGeneration;
     const revision = ++localPreviewRevision;
     const payload = getPayload();
     const frontMatterKey = JSON.stringify(payload.frontmatter ?? null);
@@ -302,6 +331,11 @@ export async function refreshLocalLivePreview() {
     localPreviewInflight.add(request);
     try {
         const result = await request;
+        if (
+            requestPath !== currentPath ||
+            articleGeneration !== articleLoadGeneration ||
+            revision !== localPreviewRevision
+        ) return null;
         if (typeof window.refreshLocalPreviewArticleURL === 'function') {
             window.refreshLocalPreviewArticleURL(result, frontMatterKey).catch(() => undefined);
         }
@@ -428,38 +462,51 @@ export async function flushPendingSave() {
 
 export async function loadFile(path, { allowDuringGitSync = false } = {}) {
     if (gitSyncInProgress && !allowDuringGitSync) return;
-    clearAutoSaveTimer();
-    cancelMarkdownPreview();
-    cancelLocalPreviewTimer();
-    const switchingArticle = Boolean(currentPath && currentPath !== path);
-    if (switchingArticle) {
-        try {
-            await queueCurrentSave("Saving before article switch...");
-        } catch (e) {
-            UI.showToast("Failed to prepare article before switching: " + e.message, "error");
-            return;
-        }
-        try {
-            await flushLocalPreviewBeforeArticleSwitch();
-        } catch (e) {
-            console.warn("[LocalPreview] Failed to flush before article switch", e);
-            UI.showToast("Local Previewの同期に失敗しました。記事切替は続行します。", "warning");
-        }
-    }
-    await saveQueue.catch(() => {
-        // Loading another file remains possible after a failed save.
-    });
-
-    currentPath = path;
-    resetLocalPreviewClientState();
-    const display = document.getElementById('filename-display');
-    if (display) display.textContent = path;
-
-    await UI.showLoadingEditor();
-
+    const request = beginArticleLoad();
+    setEditorWritePaused(true);
+    const activePathAtStart = currentPath;
     try {
-        const data = await API.fetchArticle(path);
+        clearAutoSaveTimer();
+        cancelMarkdownPreview();
+        cancelLocalPreviewTimer();
+        const switchingArticle = Boolean(currentPath && currentPath !== path);
+        if (switchingArticle) {
+            try {
+                await queueCurrentSave("Saving before article switch...");
+            } catch (e) {
+                if (isCurrentArticleLoad(request)) {
+                    UI.showToast("Failed to prepare article before switching: " + e.message, "error");
+                }
+                return;
+            }
+            if (!isCurrentArticleLoad(request)) return;
+            try {
+                await flushLocalPreviewBeforeArticleSwitch(() => {
+                    if (!isCurrentArticleLoad(request)) return null;
+                    return refreshLocalLivePreview();
+                });
+            } catch (e) {
+                if (!isCurrentArticleLoad(request)) return;
+                console.warn("[LocalPreview] Failed to flush before article switch", e);
+                UI.showToast("Local Previewの同期に失敗しました。記事切替は続行します。", "warning");
+            }
+        }
+        await saveQueue.catch(() => {
+            // Loading another file remains possible after a failed save.
+        });
+        if (!isCurrentArticleLoad(request)) return;
+
+        // Keep the active path/editor payload unchanged until the new article
+        // has been fetched. This keeps a second click from saving Loading... or
+        // the previous article's editor state under the requested path.
+        const data = await API.fetchArticle(path, request.controller.signal);
+        if (!isCurrentArticleLoad(request)) return;
+
+        currentPath = path;
         currentData = data;
+        resetLocalPreviewClientState();
+        const display = document.getElementById('filename-display');
+        if (display) display.textContent = path;
         UI.updateEditorContent(data, path, cmsConfig);
         setEditorWritePaused(gitSyncInProgress);
 
@@ -468,10 +515,16 @@ export async function loadFile(path, { allowDuringGitSync = false } = {}) {
         await refreshMarkdownPreview({ allowDuringGitSync });
 
     } catch (e) {
-        UI.showEditorError(e);
-        UI.showToast("Failed to load file: " + e.message, "error");
+        if (!isCurrentArticleLoad(request) || e?.name === 'AbortError') return;
+        if (activePathAtStart) {
+            UI.showToast("Failed to load file: " + e.message, "error");
+        } else {
+            UI.showEditorError(e);
+            UI.showToast("Failed to load file: " + e.message, "error");
+        }
     } finally {
-        setEditorWritePaused(gitSyncInProgress);
+        if (isCurrentArticleLoad(request)) setEditorWritePaused(gitSyncInProgress);
+        finishArticleLoad(request);
     }
 }
 

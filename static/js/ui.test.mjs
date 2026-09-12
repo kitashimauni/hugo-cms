@@ -46,6 +46,7 @@ const {
     isGitSyncInProgress,
     loadFile,
     prepareForGitSync,
+    refreshLocalLivePreview,
     runGitMutation,
     setConfig,
     waitForLocalPreviewUpdates,
@@ -382,15 +383,16 @@ describe("Local Preview destructive operations", () => {
         assert.equal(getCurrentPath(), "");
     });
 
-    function createArticleSwitchHarness({ generator = "hugo", previewFailure = null, saveFailure = false } = {}) {
+    function createArticleSwitchHarness({ generator = "hugo", previewFailure = null, saveFailure = false, saveResponse = null, articleResponses = new Map(), markdownResponses = new Map(), localPreviewResponses = new Map() } = {}) {
         const previousDocument = globalThis.document;
         const previousFetch = globalThis.fetch;
         const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
         const editor = { disabled: false, value: "", placeholder: "" };
+        const frontMatterControl = { disabled: false };
         const fmContainer = {
             style: { display: "" },
             innerHTML: "",
-            querySelectorAll() { return []; },
+            querySelectorAll() { return [frontMatterControl]; },
         };
         const markdownPreview = { replaceChildren() {}, innerHTML: "" };
         const markdownStatus = {
@@ -442,6 +444,8 @@ describe("Local Preview destructive operations", () => {
             }
             if (requestURL.includes("/admin/api/article?") && !options.method) {
                 const path = new URL(requestURL, "http://localhost").searchParams.get("path");
+                const responseOverride = articleResponses.get(path);
+                if (responseOverride) return responseOverride();
                 return {
                     ok: true,
                     status: 200,
@@ -449,9 +453,15 @@ describe("Local Preview destructive operations", () => {
                 };
             }
             if (requestURL.includes("/admin/api/preview/markdown")) {
-                return { ok: true, status: 200, json: async () => ({ html: "<p>preview</p>" }) };
+                const markdownPath = JSON.parse(options.body || "{}").path;
+                const responseOverride = markdownResponses.get(markdownPath);
+                if (responseOverride) return responseOverride();
+                return { ok: true, status: 200, json: async () => ({ html: `<p>${markdownPath}</p>` }) };
             }
             if (requestURL.includes("/admin/api/preview/local") && options.method === "POST") {
+                const localPreviewPath = JSON.parse(options.body || "{}").path;
+                const responseOverride = localPreviewResponses.get(localPreviewPath);
+                if (responseOverride) return responseOverride();
                 if (previewFailure === "network") {
                     throw new Error("preview network failed");
                 }
@@ -465,6 +475,7 @@ describe("Local Preview destructive operations", () => {
                 return { ok: true, status: 200, json: async () => ({ status: "ok" }) };
             }
             if (requestURL.endsWith("/admin/api/article") && options.method === "POST") {
+                if (saveResponse) return saveResponse();
                 if (saveFailure) {
                     return { ok: false, status: 500, json: async () => ({}) };
                 }
@@ -477,6 +488,8 @@ describe("Local Preview destructive operations", () => {
         setConfig({ _cms: { local_preview: { enabled: true, generator } } });
         return {
             editor,
+            frontMatterControl,
+            markdownPreview,
             calls,
             restore() {
                 clearEditor();
@@ -486,6 +499,16 @@ describe("Local Preview destructive operations", () => {
                 globalThis.requestAnimationFrame = previousRequestAnimationFrame;
             },
         };
+    }
+
+    function deferred() {
+        let resolve;
+        let reject;
+        const promise = new Promise((promiseResolve, promiseReject) => {
+            resolve = promiseResolve;
+            reject = promiseReject;
+        });
+        return { promise, resolve, reject };
     }
 
     for (const generator of ["hugo", "eleventy"]) {
@@ -513,6 +536,136 @@ describe("Local Preview destructive operations", () => {
         }
     }
 
+    it("does not let an older Markdown Preview response overwrite the newest article", async () => {
+        const markdownStarted = deferred();
+        const markdownResult = deferred();
+        const markdownResponses = new Map([
+            ["posts/b.md", async () => {
+                markdownStarted.resolve();
+                return markdownResult.promise;
+            }],
+        ]);
+        const harness = createArticleSwitchHarness({ markdownResponses });
+        try {
+            await loadFile("posts/a.md");
+            const loadingB = loadFile("posts/b.md");
+            await markdownStarted.promise;
+
+            const loadingC = loadFile("posts/c.md");
+            await loadingC;
+            assert.equal(getCurrentPath(), "posts/c.md");
+            assert.equal(harness.editor.value, "after");
+            assert.equal(harness.markdownPreview.innerHTML, "<p>posts/c.md</p>");
+
+            markdownResult.resolve({
+                ok: true,
+                status: 200,
+                json: async () => ({ html: "<p>stale B preview</p>" }),
+            });
+            await loadingB;
+            assert.equal(getCurrentPath(), "posts/c.md");
+            assert.equal(harness.markdownPreview.innerHTML, "<p>posts/c.md</p>");
+        } finally {
+            harness.restore();
+        }
+    });
+
+    it("does not apply an older Local Preview response after switching articles", async () => {
+        const localPreviewStarted = deferred();
+        const localPreviewResult = deferred();
+        let localPreviewCalls = 0;
+        const localPreviewResponses = new Map([
+            ["posts/a.md", async () => {
+                localPreviewCalls += 1;
+                if (localPreviewCalls === 1) {
+                    localPreviewStarted.resolve();
+                    return localPreviewResult.promise;
+                }
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ article_url: "valid A preview" }),
+                };
+            }],
+        ]);
+        const harness = createArticleSwitchHarness({ localPreviewResponses });
+        const previousRefresh = window.refreshLocalPreviewArticleURL;
+        const refreshedURLs = [];
+        window.refreshLocalPreviewArticleURL = async result => {
+            refreshedURLs.push(result.article_url);
+        };
+        try {
+            await loadFile("posts/a.md");
+            const refreshingA = refreshLocalLivePreview();
+            await localPreviewStarted.promise;
+
+            const loadingB = loadFile("posts/b.md");
+            localPreviewResult.resolve({
+                ok: true,
+                status: 200,
+                json: async () => ({ article_url: "stale A preview" }),
+            });
+            await loadingB;
+            await refreshingA;
+
+            assert.equal(getCurrentPath(), "posts/b.md");
+            assert.deepEqual(refreshedURLs, ["valid A preview"]);
+        } finally {
+            window.refreshLocalPreviewArticleURL = previousRefresh;
+            harness.restore();
+        }
+    });
+
+    it("pauses editor and front matter writes during the entire article switch", async () => {
+        const saveStarted = deferred();
+        const saveResult = deferred();
+        const localPreviewStarted = deferred();
+        const localPreviewResult = deferred();
+        const localPreviewResponses = new Map([
+            ["posts/a.md", async () => {
+                localPreviewStarted.resolve();
+                return localPreviewResult.promise;
+            }],
+        ]);
+        const harness = createArticleSwitchHarness({
+            saveResponse: () => {
+                saveStarted.resolve();
+                return saveResult.promise;
+            },
+            localPreviewResponses,
+        });
+        try {
+            await loadFile("posts/a.md");
+            harness.editor.value = "draft A";
+
+            const loadingB = loadFile("posts/b.md");
+            await saveStarted.promise;
+            assert.equal(harness.editor.disabled, true);
+            assert.equal(harness.frontMatterControl.disabled, true);
+
+            saveResult.resolve({
+                ok: true,
+                status: 200,
+                json: async () => ({ status: "ok" }),
+            });
+            await localPreviewStarted.promise;
+            assert.equal(harness.editor.disabled, true);
+            assert.equal(harness.frontMatterControl.disabled, true);
+
+            localPreviewResult.resolve({
+                ok: true,
+                status: 200,
+                json: async () => ({ status: "ok" }),
+            });
+            await loadingB;
+            assert.equal(getCurrentPath(), "posts/b.md");
+            assert.equal(harness.editor.disabled, false);
+            assert.equal(harness.frontMatterControl.disabled, false);
+        } finally {
+            harness.restore();
+        }
+    });
+
     it("keeps the article unchanged when production save fails", async () => {
         const harness = createArticleSwitchHarness({ saveFailure: true });
         try {
@@ -529,6 +682,61 @@ describe("Local Preview destructive operations", () => {
             harness.restore();
         }
     });
+
+    for (const staleResult of ["success", "failure"]) {
+        it(`keeps the newest article when an older load finishes ${staleResult} later`, async () => {
+            const bFetchStarted = deferred();
+            const bFetchResult = deferred();
+            const articleResponses = new Map([
+                ["posts/b.md", async () => {
+                    bFetchStarted.resolve();
+                    return bFetchResult.promise;
+                }],
+            ]);
+            const harness = createArticleSwitchHarness({ articleResponses });
+            try {
+                await loadFile("posts/a.md");
+                harness.calls.length = 0;
+                harness.editor.value = "draft A";
+
+                const loadingB = loadFile("posts/b.md");
+                await bFetchStarted.promise;
+                assert.equal(getCurrentPath(), "posts/a.md");
+
+                const bRequest = harness.calls.find(call => call.url.includes("posts%2Fb.md"));
+                assert.ok(bRequest?.options.signal, "article fetch should receive an AbortSignal");
+
+                const loadingC = loadFile("posts/c.md");
+                await loadingC;
+                assert.equal(getCurrentPath(), "posts/c.md");
+                assert.equal(harness.editor.value, "after");
+                assert.equal(bRequest.options.signal.aborted, true);
+
+                const saves = harness.calls
+                    .filter(call => call.url.endsWith("/admin/api/article") && call.options.method === "POST")
+                    .map(call => JSON.parse(call.options.body));
+                assert.ok(saves.length >= 1, "the active article should be saved before navigation");
+                assert.ok(saves.every(payload => payload.path === "posts/a.md"), "navigation must not save under the pending B path");
+                assert.ok(saves.some(payload => payload.path === "posts/a.md" && payload.body === "draft A"), JSON.stringify(saves));
+
+                if (staleResult === "success") {
+                    bFetchResult.resolve({
+                        ok: true,
+                        status: 200,
+                        json: async () => ({ path: "posts/b.md", content: "stale B" }),
+                    });
+                } else {
+                    bFetchResult.reject(new Error("stale B fetch failed"));
+                }
+                await loadingB;
+
+                assert.equal(getCurrentPath(), "posts/c.md");
+                assert.equal(harness.editor.value, "after");
+            } finally {
+                harness.restore();
+            }
+        });
+    }
 
 });
 
