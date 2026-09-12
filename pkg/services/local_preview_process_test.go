@@ -72,6 +72,57 @@ func TestLocalPreviewManagerStopsPackageManagerWrapperProcessTree(t *testing.T) 
 	}
 }
 
+func TestLocalPreviewManagerShutdownAfterSupervisorCancellationStopsProcessTree(t *testing.T) {
+	manager, site := newTestLocalPreviewManager(t)
+	site.Preview.LocalPreview.AlwaysOn = true
+	helpers := t.TempDir()
+	pidPath := filepath.Join(helpers, "child.pid")
+	signalPath := filepath.Join(helpers, "signal")
+	manager.commandFactory = func(ctx context.Context, runtime config.SiteRuntime, port int, _ string) (*exec.Cmd, error) {
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestLocalPreviewProcessTreeHelper$")
+		cmd.Env = append(os.Environ(),
+			"HOMECMS_PROCESS_TREE_HELPER=wrapper",
+			"HOMECMS_PROCESS_TREE_MODE=graceful",
+			"HOMECMS_PROCESS_TREE_PORT="+strconv.Itoa(port),
+			"HOMECMS_PROCESS_TREE_PID_PATH="+pidPath,
+			"HOMECMS_PROCESS_TREE_SIGNAL_PATH="+signalPath,
+		)
+		return cmd, nil
+	}
+
+	manager.StartPersistentPreviewSupervisor([]config.SiteConfig{site}, nil)
+	waitForFile(t, pidPath)
+	waitForSupervisor(t, func() bool {
+		slot, ok := manager.Status(site.ID)
+		return ok && slot.State == LocalPreviewReady && manager.process(site.ID) != nil
+	})
+
+	// Cancelling the supervisor must not cancel the CommandContext of the
+	// wrapper. The process mapping must remain available for Shutdown's common
+	// process-group termination path.
+	manager.BeginShutdown()
+	waitForSupervisor(t, func() bool {
+		status := manager.PersistentStatus(site.ID, site.Preview.LocalPreview)
+		return status.SupervisorState == LocalPreviewSupervisorStateStopped
+	})
+	if manager.process(site.ID) == nil {
+		t.Fatal("supervisor cancellation removed the process before Shutdown")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	if err := manager.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	if manager.process(site.ID) != nil {
+		t.Fatal("Shutdown() left the process mapping behind")
+	}
+	waitForProcessExit(t, pidPath)
+	if signal := strings.TrimSpace(readFile(t, signalPath)); signal != "terminated" {
+		t.Fatalf("child signal marker = %q, want terminated", signal)
+	}
+}
+
 func TestLocalPreviewProcessTreeHelper(t *testing.T) {
 	if os.Getenv("HOMECMS_PROCESS_TREE_HELPER") != "wrapper" {
 		return
@@ -161,6 +212,22 @@ func waitForFile(t *testing.T, filename string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", filename)
+}
+
+func waitForProcessExit(t *testing.T, filename string) {
+	t.Helper()
+	pid, err := strconv.Atoi(strings.TrimSpace(readFile(t, filename)))
+	if err != nil {
+		t.Fatalf("parse child pid: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); err == syscall.ESRCH {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for process %d to exit", pid)
 }
 
 func readFile(t *testing.T, filename string) string {

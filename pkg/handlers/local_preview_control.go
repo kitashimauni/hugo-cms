@@ -49,6 +49,15 @@ func GetLocalPreviewStatus(c *gin.Context) {
 		"preview_url":      runtime.LocalPreview.URL,
 		"workspace_active": active,
 	}
+	persistent := services.DefaultLocalPreviewManager().PersistentStatus(runtime.ID, runtime.LocalPreview)
+	response["always_on"] = persistent.AlwaysOn
+	response["supervisor_state"] = persistent.SupervisorState
+	if persistent.RefreshTimezone != "" {
+		response["refresh_timezone"] = persistent.RefreshTimezone
+	}
+	if !persistent.NextRefreshAt.IsZero() {
+		response["next_refresh_at"] = persistent.NextRefreshAt.Format(time.RFC3339)
+	}
 	if active && !workspace.LastActivityAt.IsZero() {
 		age := time.Since(workspace.LastActivityAt)
 		if age < 0 {

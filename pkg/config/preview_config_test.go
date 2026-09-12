@@ -95,3 +95,52 @@ func TestCloudflareTokenEnvironmentNameIsNotExposedAsJSON(t *testing.T) {
 		t.Fatalf("site config JSON exposed token environment name: %s", content)
 	}
 }
+
+func TestLocalPreviewRefreshNormalizesTimezoneAndTimes(t *testing.T) {
+	site := normalizeSiteConfig(SiteConfig{
+		ID: "docs",
+		Preview: SitePreviewConfig{LocalPreview: LocalPreviewConfig{
+			AlwaysOn: true,
+			Refresh: LocalPreviewRefreshConfig{
+				Times:    []string{" 18:30 ", "04:00"},
+				Timezone: " Asia/Tokyo ",
+			},
+		}},
+	})
+	if err := validateSitePreviewConfig(site); err != nil {
+		t.Fatalf("validateSitePreviewConfig() error = %v", err)
+	}
+	refresh := site.Preview.LocalPreview.Refresh
+	if !site.Preview.LocalPreview.AlwaysOn || refresh.Timezone != "Asia/Tokyo" {
+		t.Fatalf("local preview policy = %#v", site.Preview.LocalPreview)
+	}
+	if got, want := strings.Join(refresh.Times, ","), "04:00,18:30"; got != want {
+		t.Fatalf("refresh times = %q, want %q", got, want)
+	}
+}
+
+func TestLocalPreviewRefreshDefaultsTimezoneToUTC(t *testing.T) {
+	site := normalizeSiteConfig(SiteConfig{
+		ID: "docs",
+		Preview: SitePreviewConfig{LocalPreview: LocalPreviewConfig{
+			Refresh: LocalPreviewRefreshConfig{Times: []string{"04:00"}},
+		}},
+	})
+	if site.Preview.LocalPreview.Refresh.Timezone != "UTC" {
+		t.Fatalf("refresh timezone = %q, want UTC", site.Preview.LocalPreview.Refresh.Timezone)
+	}
+}
+
+func TestLocalPreviewRefreshRejectsInvalidAndDuplicateTimes(t *testing.T) {
+	for _, testCase := range []LocalPreviewRefreshConfig{
+		{Times: []string{"4:00"}},
+		{Times: []string{"24:00"}},
+		{Times: []string{"04:00", "04:00"}},
+		{Times: []string{"04:00"}, Timezone: "Mars/Olympus"},
+	} {
+		site := normalizeSiteConfig(SiteConfig{ID: "docs", Preview: SitePreviewConfig{LocalPreview: LocalPreviewConfig{Refresh: testCase}}})
+		if err := validateSitePreviewConfig(site); err == nil {
+			t.Fatalf("validateSitePreviewConfig(%#v) should fail", testCase)
+		}
+	}
+}

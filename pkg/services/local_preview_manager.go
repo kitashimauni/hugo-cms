@@ -59,6 +59,7 @@ var (
 )
 
 type localPreviewCommandFactory func(context.Context, config.SiteRuntime, int, string) (*exec.Cmd, error)
+type localPreviewProcessTerminator func(context.Context, string, *managedLocalPreviewProcess) error
 
 type managedLocalPreviewProcess struct {
 	cmd         *exec.Cmd
@@ -171,22 +172,28 @@ func (b *cappedBuffer) String() string {
 }
 
 // LocalPreviewManager owns generator preview child processes and connects the
-// Phase 1 lifecycle contract to lazy startup, readiness probing and proxying.
-// It intentionally does not own TLS or viewer authentication; those remain
-// preview-ingress responsibilities.
+// lifecycle contract to lazy startup, persistent supervision, readiness
+// probing and proxying. It intentionally does not own TLS or viewer
+// authentication; those remain preview-ingress responsibilities.
 type LocalPreviewManager struct {
 	lifecycle *LocalPreviewLifecycle
 
 	mu           sync.Mutex
 	processes    map[string]*managedLocalPreviewProcess
 	siteLocks    map[string]*sync.Mutex
+	manualStops  map[string]bool
 	shuttingDown bool
 
-	commandFactory localPreviewCommandFactory
-	startupTimeout time.Duration
-	probeInterval  time.Duration
-	startAttempts  int
-	idleTimeout    time.Duration
+	supervisorCancel context.CancelFunc
+	supervisorDone   chan struct{}
+	supervisorState  map[string]LocalPreviewSupervisorStatus
+
+	commandFactory    localPreviewCommandFactory
+	processTerminator localPreviewProcessTerminator
+	startupTimeout    time.Duration
+	probeInterval     time.Duration
+	startAttempts     int
+	idleTimeout       time.Duration
 }
 
 func NewLocalPreviewManager(lifecycle *LocalPreviewLifecycle) *LocalPreviewManager {
@@ -194,14 +201,17 @@ func NewLocalPreviewManager(lifecycle *LocalPreviewLifecycle) *LocalPreviewManag
 		lifecycle = NewDefaultLocalPreviewLifecycle()
 	}
 	return &LocalPreviewManager{
-		lifecycle:      lifecycle,
-		processes:      make(map[string]*managedLocalPreviewProcess),
-		siteLocks:      make(map[string]*sync.Mutex),
-		commandFactory: generatorLocalPreviewCommand,
-		startupTimeout: configuredLocalPreviewStartupTimeout(),
-		probeInterval:  defaultLocalPreviewProbeInterval,
-		startAttempts:  defaultLocalPreviewStartAttempts,
-		idleTimeout:    configuredLocalPreviewIdleTimeout(),
+		lifecycle:         lifecycle,
+		processes:         make(map[string]*managedLocalPreviewProcess),
+		siteLocks:         make(map[string]*sync.Mutex),
+		manualStops:       make(map[string]bool),
+		supervisorState:   make(map[string]LocalPreviewSupervisorStatus),
+		commandFactory:    generatorLocalPreviewCommand,
+		processTerminator: terminateManagedLocalPreviewProcess,
+		startupTimeout:    configuredLocalPreviewStartupTimeout(),
+		probeInterval:     defaultLocalPreviewProbeInterval,
+		startAttempts:     defaultLocalPreviewStartAttempts,
+		idleTimeout:       configuredLocalPreviewIdleTimeout(),
 	}
 }
 
@@ -263,6 +273,9 @@ func (m *LocalPreviewManager) StopIdle(ctx context.Context, workspaceManager *Lo
 	}
 	var errs []error
 	for _, siteID := range workspaceManager.IdleSites(m.idleTimeout) {
+		if site, ok := config.GetSite(siteID); ok && site.Preview.LocalPreview.AlwaysOn {
+			continue
+		}
 		cleanup, claimed, err := workspaceManager.BeginIdleCleanup(siteID, m.idleTimeout)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("begin idle local preview cleanup for site %q: %w", siteID, err))
@@ -314,7 +327,11 @@ func RunLocalPreviewIdleReaper(ctx context.Context, manager *LocalPreviewManager
 func (m *LocalPreviewManager) BeginShutdown() {
 	m.mu.Lock()
 	m.shuttingDown = true
+	cancel := m.supervisorCancel
 	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (m *LocalPreviewManager) isShuttingDown() bool {
@@ -350,6 +367,22 @@ func (m *LocalPreviewManager) setProcess(siteID string, process *managedLocalPre
 	m.processes[siteID] = process
 }
 
+func (m *LocalPreviewManager) setManualStop(siteID string, stopped bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if stopped {
+		m.manualStops[siteID] = true
+	} else {
+		delete(m.manualStops, siteID)
+	}
+}
+
+func (m *LocalPreviewManager) isManuallyStopped(siteID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.manualStops[siteID]
+}
+
 func (m *LocalPreviewManager) removeProcessIfCurrent(siteID string, process *managedLocalPreviewProcess) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -367,6 +400,13 @@ func (m *LocalPreviewManager) EnsureReady(site config.SiteConfig) (LocalPreviewP
 }
 
 func (m *LocalPreviewManager) ensureReadyRuntime(runtime config.SiteRuntime) (LocalPreviewProcessSlot, error) {
+	return m.ensureReadyRuntimeContext(context.Background(), runtime)
+}
+
+func (m *LocalPreviewManager) ensureReadyRuntimeContext(ctx context.Context, runtime config.SiteRuntime) (LocalPreviewProcessSlot, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if m.isShuttingDown() {
 		return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
 	}
@@ -376,6 +416,7 @@ func (m *LocalPreviewManager) ensureReadyRuntime(runtime config.SiteRuntime) (Lo
 	if !localPreviewGeneratorSupported(runtime.Generator) {
 		return LocalPreviewProcessSlot{}, fmt.Errorf("local live preview is not supported for generator %q", runtime.Generator)
 	}
+	m.setManualStop(runtime.ID, false)
 
 	previewURL := strings.TrimSpace(runtime.LocalPreview.URL)
 	if previewURL == "" {
@@ -432,7 +473,7 @@ func (m *LocalPreviewManager) ensureReadyRuntime(runtime config.SiteRuntime) (Lo
 			return LocalPreviewProcessSlot{}, err
 		}
 
-		process, err := m.startProcess(runtime, slot.Port, previewURL)
+		process, err := m.startProcess(ctx, runtime, slot.Port, previewURL)
 		if err != nil {
 			lastErr = err
 			m.cleanupFailedSlotLocked(runtime.ID, process, err)
@@ -443,7 +484,7 @@ func (m *LocalPreviewManager) ensureReadyRuntime(runtime config.SiteRuntime) (Lo
 			return LocalPreviewProcessSlot{}, errLocalPreviewShuttingDown
 		}
 
-		if err := m.waitUntilReady(process, runtime, slot.Port); err != nil {
+		if err := m.waitUntilReady(ctx, process, runtime, slot.Port); err != nil {
 			lastErr = err
 			m.cleanupFailedSlotLocked(runtime.ID, process, err)
 			continue
@@ -472,9 +513,13 @@ func (m *LocalPreviewManager) ensureReadyRuntime(runtime config.SiteRuntime) (Lo
 	return LocalPreviewProcessSlot{}, fmt.Errorf("failed to start local preview for site %q after %d attempts: %w", runtime.ID, startAttempts, lastErr)
 }
 
-func (m *LocalPreviewManager) startProcess(runtime config.SiteRuntime, port int, previewURL string) (*managedLocalPreviewProcess, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd, err := m.commandFactory(ctx, runtime, port, previewURL)
+func (m *LocalPreviewManager) startProcess(_ context.Context, runtime config.SiteRuntime, port int, previewURL string) (*managedLocalPreviewProcess, error) {
+	// Keep the long-lived generator process independent of the startup or
+	// supervisor context. Cancelling a CommandContext only kills the wrapper
+	// process; process-tree-safe termination is performed by Stop/Shutdown.
+	// The caller context is still used by waitUntilReady and startup cleanup.
+	processContext, cancel := context.WithCancel(context.Background())
+	cmd, err := m.commandFactory(processContext, runtime, port, previewURL)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -517,7 +562,10 @@ func (m *LocalPreviewManager) startProcess(runtime config.SiteRuntime, port int,
 	return process, nil
 }
 
-func (m *LocalPreviewManager) waitUntilReady(process *managedLocalPreviewProcess, runtime config.SiteRuntime, port int) error {
+func (m *LocalPreviewManager) waitUntilReady(ctx context.Context, process *managedLocalPreviewProcess, runtime config.SiteRuntime, port int) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	deadline := time.NewTimer(m.startupTimeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(m.probeInterval)
@@ -526,6 +574,8 @@ func (m *LocalPreviewManager) waitUntilReady(process *managedLocalPreviewProcess
 	address := net.JoinHostPort(LocalPreviewBindAddress, strconv.Itoa(port))
 	for {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-process.done:
 			return process.processError()
 		case <-deadline.C:
@@ -584,7 +634,7 @@ func localPreviewHTTPReady(address string) (bool, error) {
 func (m *LocalPreviewManager) cleanupFailedSlotLocked(siteID string, process *managedLocalPreviewProcess, processErr error) {
 	if process != nil {
 		stopCtx, cancel := context.WithTimeout(context.Background(), DefaultLocalPreviewStopTimeout)
-		terminationErr := terminateManagedLocalPreviewProcess(stopCtx, siteID, process)
+		terminationErr := m.processTerminator(stopCtx, siteID, process)
 		cancel()
 		if terminationErr != nil {
 			slog.Error("Local preview process tree did not terminate during startup cleanup", "site", siteID, "error", terminationErr)
@@ -636,6 +686,13 @@ func (m *LocalPreviewManager) handleProcessExit(siteID string, process *managedL
 }
 
 func (m *LocalPreviewManager) Stop(ctx context.Context, siteID string) error {
+	return m.stop(ctx, siteID, true)
+}
+
+func (m *LocalPreviewManager) stop(ctx context.Context, siteID string, suppressRestart bool) error {
+	if suppressRestart {
+		m.setManualStop(siteID, true)
+	}
 	lock := m.siteLock(siteID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -658,7 +715,7 @@ func (m *LocalPreviewManager) Stop(ctx context.Context, siteID string) error {
 			return err
 		}
 	}
-	if err := terminateManagedLocalPreviewProcess(ctx, siteID, process); err != nil {
+	if err := m.processTerminator(ctx, siteID, process); err != nil {
 		return err
 	}
 	m.removeProcessIfCurrent(siteID, process)
@@ -672,6 +729,29 @@ func (m *LocalPreviewManager) Stop(ctx context.Context, siteID string) error {
 		}
 	}
 	return m.lifecycle.Release(siteID)
+}
+
+// RestartRuntime restarts only the generator process and keeps the active
+// shadow workspace attached. It is used by scheduled refresh and supervisor
+// recovery; explicit Stop/Reset continue to use the full cleanup path.
+func (m *LocalPreviewManager) RestartRuntime(ctx context.Context, runtime config.SiteRuntime) error {
+	if m == nil {
+		return errors.New("local preview manager is nil")
+	}
+	if strings.TrimSpace(runtime.ID) == "" {
+		return errors.New("local preview site ID is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.setManualStop(runtime.ID, false)
+	if err := m.stop(ctx, runtime.ID, false); err != nil {
+		return fmt.Errorf("stop local preview process for refresh for site %q: %w", runtime.ID, err)
+	}
+	if _, err := m.ensureReadyRuntimeContext(ctx, runtime); err != nil {
+		return fmt.Errorf("restart local preview process for site %q: %w", runtime.ID, err)
+	}
+	return nil
 }
 
 // ResetRuntime stops the site-scoped generator and detaches its shadow
@@ -728,10 +808,38 @@ func ResetLocalPreviewForRuntime(ctx context.Context, runtime config.SiteRuntime
 	}
 	stopCtx, cancel := context.WithTimeout(ctx, DefaultLocalPreviewStopTimeout)
 	defer cancel()
-	return DefaultLocalPreviewManager().ResetRuntime(stopCtx, runtime.ID, workspaceManager)
+	manager := DefaultLocalPreviewManager()
+	if err := manager.ResetRuntime(stopCtx, runtime.ID, workspaceManager); err != nil {
+		return err
+	}
+	// Git Sync owns this reset path. An always-on site should prewarm again
+	// from the newly synchronized production tree, while an explicit Stop keeps
+	// its manual suppression until the next preview request.
+	if runtime.LocalPreview.AlwaysOn {
+		manager.setManualStop(runtime.ID, false)
+	}
+	return nil
 }
 
 func (m *LocalPreviewManager) Shutdown(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.mu.Lock()
+	cancelSupervisor := m.supervisorCancel
+	supervisorDone := m.supervisorDone
+	m.supervisorCancel = nil
+	m.mu.Unlock()
+	if cancelSupervisor != nil {
+		cancelSupervisor()
+	}
+	if supervisorDone != nil {
+		select {
+		case <-supervisorDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	m.mu.Lock()
 	m.shuttingDown = true
 	siteIDs := make([]string, 0, len(m.processes))

@@ -292,6 +292,25 @@ CSRFトークンを取得します。
 
 ## Preview
 
+### GET /admin/api/preview/local/status
+
+対象siteのLocal Live Preview process、shadow workspace、常駐supervisorを返します。`always_on`が有効なsiteでは`next_refresh_at`と`refresh_timezone`がdaily refreshの実効値として含まれます。
+
+```json
+{
+  "enabled": true,
+  "status": "ready",
+  "process_state": "ready",
+  "workspace_active": false,
+  "always_on": true,
+  "supervisor_state": "running",
+  "next_refresh_at": "2026-09-13T04:00:00+09:00",
+  "refresh_timezone": "Asia/Tokyo"
+}
+```
+
+`supervisor_state`は`starting`、`running`、`retrying`、`stopped`、`disabled`のいずれかです。scheduled refreshはworkspaceをdetach/deleteせず、generator processだけをgraceful restartします。
+
 ### POST /admin/api/preview/markdown
 
 編集中のMarkdownを安全なHTMLへ変換します。保存やremote buildは行いません。raw HTMLは無効化され、sanitize後のfragmentだけを返します。最大本文サイズは1 MiBです。
@@ -369,7 +388,7 @@ provider deploymentとremote draft branchをcleanupします。失敗時は再�
 }
 ```
 
-Git Sync成功後は、対象siteのLocal Live Preview processとshadow workspaceを既存のcleanup gateで停止・detachします。次回Preview利用時に、更新後のproduction repository treeからlazy startします。`local_preview_reset`が`false`の場合もGit Sync自体は成功しており、`local_preview_reset_error`とserver logでPreview側の失敗を確認できます。
+Git Sync成功後は、対象siteのLocal Live Preview processとshadow workspaceを既存のcleanup gateで停止・detachします。通常siteは次回Preview利用時に、更新後のproduction repository treeからlazy startします。`always_on: true`のsiteは手動停止を解除し、更新後のproduction repository treeからbackground supervisorが再度prewarmします。`local_preview_reset`が`false`の場合もGit Sync自体は成功しており、`local_preview_reset_error`とserver logでPreview側の失敗を確認できます。
 
 ### POST /admin/api/publish
 

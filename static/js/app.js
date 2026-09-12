@@ -536,6 +536,7 @@ function renderLocalPreviewState(state) {
     state = localPreviewState;
     const statusEl = document.getElementById('local-preview-status');
     const messageEl = document.getElementById('local-preview-message');
+    const policyEl = document.getElementById('local-preview-policy');
     const loadingEl = document.getElementById('local-preview-loading');
     const stopBtn = document.getElementById('local-preview-stop-btn');
     if (!statusEl || !messageEl) return;
@@ -551,6 +552,23 @@ function renderLocalPreviewState(state) {
     else if (status === 'failed') message = state?.process_error || `Local Live Preview${generatorLabel}の起動に失敗しました。`;
     else if (state?.workspace_active) message = '未保存内容は同期済みです。Previewを開くとgeneratorを起動します。';
     messageEl.textContent = message;
+
+    if (policyEl) {
+        if (state?.always_on === true) {
+            let policy = '常駐設定中';
+            if (state.supervisor_state === 'retrying') policy += '（自動復旧を待機中）';
+            if (state.next_refresh_at) {
+                const nextRefresh = new Date(state.next_refresh_at);
+                const formatted = Number.isNaN(nextRefresh.getTime())
+                    ? state.next_refresh_at
+                    : nextRefresh.toLocaleString('ja-JP', { timeZone: state.refresh_timezone || 'UTC' });
+                policy += ` · 次回refresh: ${formatted}`;
+            }
+            policyEl.textContent = policy;
+        } else {
+            policyEl.textContent = '';
+        }
+    }
 
     if (loadingEl) loadingEl.classList.toggle('hidden', status !== 'starting');
 

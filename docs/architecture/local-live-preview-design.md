@@ -57,6 +57,10 @@ sites:
     preview:
       local_preview:
         enabled: true
+        always_on: true
+        refresh:
+          times: ["04:00"]
+          timezone: Asia/Tokyo
 ```
 
 有効site IDはlowercase DNS labelで、`<site-id>.<preview-domain>`全体も253文字以内の有効DNS名でなければならない。
@@ -81,7 +85,9 @@ stopped -> starting -> ready -> stopping -> stopped
 - HTTP server drain後にchild processを停止
 - Unix/Linuxではgeneratorを独立process groupで起動し、wrapper配下も`SIGTERM`→grace period→`SIGKILL`の順で停止
 - process tree終了と`cmd.Wait()`を確認してからlifecycle slotをreleaseし、timeout時はPID/process groupを診断ログへ残す
-- 異常終了後は次requestで再起動可能
+- 通常siteは異常終了後に次requestで再起動可能
+- `always_on: true`のsiteはCMS起動後にbackground supervisorがprewarmし、異常終了をbounded exponential backoffで再起動
+- daily refreshは`HH:MM`配列とIANA timezoneで表し、workspaceを保持したままgeneratorだけを再起動
 
 Hugoは概ね次相当で起動する。
 
@@ -117,6 +123,32 @@ Eleventyは対象siteのpackage managerを再利用し、production repository�
 CMSのNodeラッパーはEleventyのprogrammatic `watch`で再ビルドし、Eleventyの初回build前にCMS側のHTTP/LiveReload WebSocket serverを`127.0.0.1`へbindする。`/__homecms_ready`は初回build中に503、build完了後に200を返す。Eleventy標準Dev Serverのhost省略時のbind挙動や`HOST`環境変数には依存しない。出力ディレクトリはproductionの`public`/`_site`を上書きせず、停止時にtemporary outputを削除する。
 
 記事選択時の初回起動では、shadow workspaceを含むtemporary project-root overlayをgeneratorの入力として使う。CMSはgeneratorに依存しないURL解決契約を介して解決する。Hugo実装はserverと同じ`--environment development`を指定し、`HUGO_CONTENTDIR`と`HUGO_BASEURL`のenvironment variableでshadow contentとLocal Preview URLをoverrideし、`--noBuildLock`を渡す。Eleventy実装は稼働中wrapperが`eleventy.after`の結果から作る`inputPath -> url` mapを`/__homecms_metadata`で公開し、CMSは同じprocessへ問い合わせる。workspace updateはshadow fileの書き換え直前にmetadataをinvalidateする。既知の記事はwatch build generation中もlast-known mapを`stale`として返し、未知の記事や初回build前の記事だけはfresh mapまで待つ。記事切替はcached URLを先に表示し、build後にfresh URLが変わった場合だけ再遷移する。watch rebuild完了ごとにmapを置き換えるため、通常経路でresolver専用のJSON full buildやpreview outputの共有・resetは行わない。取得したURLはpath、query、fragmentを保持してLocal Preview originへ変換し、CMSはpermalink、slug、Data Cascade、paginationを再実装しない。以降の同一記事の編集はgeneratorのwatch/live reloadを利用する。
+
+## Persistent preview supervisor
+
+site registryの`preview.local_preview.always_on`が`true`で、かつ`enabled`も有効なsiteだけを対象にする。CMSのHTTP server startupはprewarm完了を待たず、supervisorはbackgroundで次を担当する。
+
+- startup prewarm
+- process exitの検知と500ms開始・最大30秒のbounded exponential backoff restart
+- `refresh.times`のdaily generator restart
+- CMS shutdown contextによるsupervisorとprocessの停止
+
+`enabled: false`は`always_on`より優先される。`refresh.timezone`はIANA timezoneで、省略時はUTCとする。次回refresh時刻と実効timezoneは`GET /admin/api/preview/local/status`へ返す。
+
+scheduled refreshは`ResetRuntime`を使わない。site gateを保持して現在のruntimeを取得し、次の順でprocessだけを再起動する。
+
+```text
+current runtime
+  ├─ active shadow workspaceあり -> shadow workspaceを維持
+  └─ shadow workspaceなし       -> production contentを使用
+scheduled refresh
+  -> generator processをgraceful stop
+  -> workspaceはdetach/deleteしない
+  -> 同じcontent sourceでgeneratorを起動
+  -> ready確認
+```
+
+always-on siteはidle reaperの対象外とする。明示Stopとeditor update時のproduction-to-shadow切替は手動停止として扱い、次のpreview requestまでsupervisorが復活させない。Git Sync reset成功後は手動停止を解除し、同期後のproduction contentを使って再度prewarmする。shutdown contextのキャンセルは新しいrestartを中止し、generator process treeとsupervisor goroutineを残さない。
 
 ## Reverse proxy / LiveReload
 
@@ -189,7 +221,7 @@ article切替ではbrowserがproduction saveとin-flight update完了を待ち�
 
 Eleventyでは同一contentのupdateをno-opにしてwatch rebuildを発生させない。content変更時のmetadata invalidationには対象pathを渡し、wrapperは一定時間build開始を観測できなければ対象fileのmtimeを再通知する。metadata endpointはinvalidation/build generationと最終build完了時刻を返し、URL解決timeoutやarticle not foundのserver logでbuild停滞とpath不一致を切り分けられる。
 
-Git Sync成功後はsite runtimeを既存のcleanup gateでresetする。generator processとshadow workspaceを停止・detachし、次回Preview requestで最新production treeからlazy startするため、content以外のconfig、layout、asset、dependency変更も古いprocessやEleventy overlayへ引き継がない。frontendはSync開始前にAutoSaveとPreviewの待機・送信中処理をdrainし、Sync中のeditor書き込みを停止する。完了後は同期中に変化した未保存状態を再評価してから、必要な記事だけをproduction treeから再ロードする。
+Git Sync成功後はsite runtimeを既存のcleanup gateでresetする。generator processとshadow workspaceを停止・detachし、content以外のconfig、layout、asset、dependency変更も古いprocessやEleventy overlayへ引き継がない。通常siteは次回Preview requestで最新production treeからlazy startし、`always_on: true`のsiteはbackground supervisorが最新production treeから再度prewarmする。frontendはSync開始前にAutoSaveとPreviewの待機・送信中処理をdrainし、Sync中のeditor書き込みを停止する。完了後は同期中に変化した未保存状態を再評価してから、必要な記事だけをproduction treeから再ロードする。
 
 ### filesystem境界
 

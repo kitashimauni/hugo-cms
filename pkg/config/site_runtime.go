@@ -66,7 +66,7 @@ func NewSiteRuntime(site SiteConfig) SiteRuntime {
 		GitBranch:              GitBranch,
 		GitRemote:              GitRemote,
 		MarkdownPreviewEnabled: site.Preview.Markdown.Enabled == nil || *site.Preview.Markdown.Enabled,
-		LocalPreview:           site.Preview.LocalPreview,
+		LocalPreview:           cloneLocalPreviewConfig(site.Preview.LocalPreview),
 		PreviewDeployment:      site.Preview.Deployment,
 	}
 }
@@ -133,7 +133,7 @@ func (runtime SiteRuntime) SiteConfig() SiteConfig {
 		SnippetPaths:    append([]string(nil), runtime.SnippetPaths...),
 		Preview: SitePreviewConfig{
 			Markdown:     MarkdownPreviewConfig{Enabled: boolPointer(runtime.MarkdownPreviewEnabled)},
-			LocalPreview: runtime.LocalPreview,
+			LocalPreview: cloneLocalPreviewConfig(runtime.LocalPreview),
 			Deployment:   runtime.PreviewDeployment,
 		},
 	}

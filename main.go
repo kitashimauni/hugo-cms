@@ -185,6 +185,7 @@ func main() {
 
 	srv := newHTTPServer(r)
 	previewManager := services.DefaultLocalPreviewManager()
+	previewManager.StartPersistentPreviewSupervisor(config.Sites, workspaceManager)
 	idleReaperCtx, cancelIdleReaper := context.WithCancel(context.Background())
 	idleReaperDone := make(chan struct{})
 	go func() {

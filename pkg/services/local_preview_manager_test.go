@@ -715,6 +715,11 @@ func TestLocalPreviewHelperProcess(t *testing.T) {
 	})
 
 	server := &http.Server{Handler: handler}
+	if value := os.Getenv("HUGO_CMS_LOCAL_PREVIEW_EXIT_AFTER"); value != "" {
+		if delay, err := time.ParseDuration(value); err == nil && delay > 0 {
+			time.AfterFunc(delay, func() { os.Exit(7) })
+		}
+	}
 	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		os.Exit(6)
 	}
