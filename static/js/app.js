@@ -1,6 +1,7 @@
 import * as API from './api.js';
 import * as UI from './ui.js';
 import * as Editor from './editor.js';
+import { createSiteRequestTracker } from './site_request.js';
 import {
     createLocalPreviewFrameController,
     LOCAL_PREVIEW_INITIAL_NAVIGATION_MAX_ATTEMPTS,
@@ -33,37 +34,25 @@ let localPreviewURLResolutionGeneration = 0;
 let localPreviewFrontMatterKey = "";
 let localPreviewArticleURLKey = "";
 let localPreviewURLResolution = null;
-let siteSwitchGeneration = 0;
-let siteSwitchController = null;
+const siteRequestTracker = createSiteRequestTracker();
 
 const LOCAL_PREVIEW_POLL_MS = 3000;
 const LOCAL_PREVIEW_FRESH_NAVIGATION_MAX_ATTEMPTS = 120;
 
 function beginSiteRequest(siteID) {
-    siteSwitchController?.abort();
-    const request = {
-        generation: ++siteSwitchGeneration,
-        siteID,
-        controller: new AbortController(),
-    };
-    siteSwitchController = request;
-    return request;
+    return siteRequestTracker.begin(siteID);
 }
 
 function isCurrentSiteRequest(request) {
-    return Boolean(
-        request &&
-        request.generation === siteSwitchGeneration &&
-        siteSwitchController === request
-    );
+    return siteRequestTracker.isCurrent(request);
 }
 
-function isCurrentSiteContext(siteID, generation = siteSwitchGeneration) {
-    return API.getCurrentSite() === siteID && siteSwitchGeneration === generation;
+function isCurrentSiteContext(siteID, generation = siteRequestTracker.generation) {
+    return API.getCurrentSite() === siteID && siteRequestTracker.generation === generation;
 }
 
 function finishSiteRequest(request) {
-    if (siteSwitchController === request) siteSwitchController = null;
+    siteRequestTracker.finish(request);
 }
 
 function setSiteSelectorDisabled(disabled) {
@@ -185,7 +174,7 @@ function resetLocalPreviewArticleURL() {
 }
 
 async function loadSiteData(siteID = API.getCurrentSite(), request = null) {
-    const generation = request?.generation ?? siteSwitchGeneration;
+    const generation = request?.generation ?? siteRequestTracker.generation;
     const isCurrent = () => (
         (!request || isCurrentSiteRequest(request)) &&
         isCurrentSiteContext(siteID, generation)
@@ -276,7 +265,7 @@ async function switchSite(siteID) {
 
 async function loadFile(path) {
     const siteID = API.getCurrentSite();
-    const generation = siteSwitchGeneration;
+    const generation = siteRequestTracker.generation;
     stopDeploymentPolling();
     deploymentState = null;
     UI.renderDeploymentState(null);
@@ -313,7 +302,7 @@ async function loadFile(path) {
     if (deploymentEnabled) await refreshDeploymentState(siteID, generation);
 }
 
-async function refreshFileList(siteID = API.getCurrentSite(), request = null, generation = request?.generation ?? siteSwitchGeneration) {
+async function refreshFileList(siteID = API.getCurrentSite(), request = null, generation = request?.generation ?? siteRequestTracker.generation) {
     if (!isCurrentSiteContext(siteID, generation) || (request && !isCurrentSiteRequest(request))) return null;
     try {
         const files = await API.fetchArticles(siteID, request?.controller.signal);
@@ -474,7 +463,7 @@ function waitForLocalPreviewRetry(delay, signal) {
 
 function resolveLocalPreviewArticleURLState(
     frontMatterKey = localPreviewFrontMatterKey,
-    { requireFresh = false, siteID = API.getCurrentSite(), siteGeneration = siteSwitchGeneration } = {},
+    { requireFresh = false, siteID = API.getCurrentSite(), siteGeneration = siteRequestTracker.generation } = {},
 ) {
     if (!localPreviewEnabled || !Editor.getCurrentPath() || !isCurrentSiteContext(siteID, siteGeneration)) return Promise.resolve(null);
     const requestPath = Editor.getCurrentPath();
@@ -547,7 +536,7 @@ function resolveLocalPreviewArticleURLState(
     return resolution.promise;
 }
 
-function reconcileFreshLocalPreviewArticleURL(frontMatterKey, cachedURL, { siteID = API.getCurrentSite(), siteGeneration = siteSwitchGeneration } = {}) {
+function reconcileFreshLocalPreviewArticleURL(frontMatterKey, cachedURL, { siteID = API.getCurrentSite(), siteGeneration = siteRequestTracker.generation } = {}) {
     const requestPath = Editor.getCurrentPath();
     if (!requestPath || !cachedURL || !isCurrentSiteContext(siteID, siteGeneration)) return;
     void resolveLocalPreviewArticleURLState(frontMatterKey, { requireFresh: true, siteID, siteGeneration }).then((resolution) => {
@@ -576,7 +565,7 @@ async function resolveLocalPreviewArticleURL(frontMatterKey = localPreviewFrontM
 
 async function refreshLocalPreviewArticleURL(updateResult, frontMatterKey = "") {
     const siteID = API.getCurrentSite();
-    const siteGeneration = siteSwitchGeneration;
+    const siteGeneration = siteRequestTracker.generation;
     const requestPath = Editor.getCurrentPath();
     const context = { siteID, siteGeneration };
     const requestKey = localPreviewURLResolutionKey(frontMatterKey, siteID, requestPath);
@@ -697,7 +686,7 @@ function stopLocalPreviewMonitoring() {
     localPreviewController = null;
 }
 
-function scheduleLocalPreviewMonitoring(siteID = API.getCurrentSite(), generation = siteSwitchGeneration) {
+function scheduleLocalPreviewMonitoring(siteID = API.getCurrentSite(), generation = siteRequestTracker.generation) {
     if (!localPreviewEnabled || !isCurrentSiteContext(siteID, generation)) return;
     if (!localPreviewPollTimer) {
         localPreviewPollTimer = setTimeout(async () => {
@@ -709,7 +698,7 @@ function scheduleLocalPreviewMonitoring(siteID = API.getCurrentSite(), generatio
     }
 }
 
-async function refreshLocalPreviewStatus(siteID = API.getCurrentSite(), request = null, generation = request?.generation ?? siteSwitchGeneration) {
+async function refreshLocalPreviewStatus(siteID = API.getCurrentSite(), request = null, generation = request?.generation ?? siteRequestTracker.generation) {
     if (!localPreviewEnabled || !isCurrentSiteContext(siteID, generation) || (request && !isCurrentSiteRequest(request))) return null;
     if (localPreviewController) localPreviewController.abort();
     const controller = new AbortController();
@@ -731,7 +720,7 @@ async function refreshLocalPreviewStatus(siteID = API.getCurrentSite(), request 
 
 async function openLocalLivePreview() {
     const siteID = API.getCurrentSite();
-    const siteGeneration = siteSwitchGeneration;
+    const siteGeneration = siteRequestTracker.generation;
     const isCurrent = () => isCurrentSiteContext(siteID, siteGeneration);
     if (!isCurrent()) return;
     if (!localPreviewEnabled || !localPreviewURL()) {
@@ -762,7 +751,7 @@ async function openLocalLivePreview() {
 
 async function toggleEmbeddedLocalPreview() {
     const siteID = API.getCurrentSite();
-    const siteGeneration = siteSwitchGeneration;
+    const siteGeneration = siteRequestTracker.generation;
     const isCurrent = () => isCurrentSiteContext(siteID, siteGeneration);
     if (!isCurrent()) return;
     const wrapper = document.getElementById('local-preview-embed');
@@ -801,7 +790,7 @@ let localPreviewOperation = null;
 async function stopLocalLivePreview() {
     if (!localPreviewEnabled || localPreviewOperationInProgress) return;
     const siteID = API.getCurrentSite();
-    const siteGeneration = siteSwitchGeneration;
+    const siteGeneration = siteRequestTracker.generation;
     const operation = { siteID, siteGeneration };
     localPreviewOperation = operation;
     localPreviewOperationInProgress = true;
@@ -917,7 +906,7 @@ async function runSync() {
 
 async function runPublish(path, draftID) {
     const siteID = API.getCurrentSite();
-    const siteGeneration = siteSwitchGeneration;
+    const siteGeneration = siteRequestTracker.generation;
     const isCurrent = () => (
         isCurrentSiteContext(siteID, siteGeneration) &&
         path === Editor.getCurrentPath() &&
@@ -987,7 +976,7 @@ function stopDeploymentPolling() {
     }
 }
 
-function applyDeploymentState(state, siteID = API.getCurrentSite(), generation = siteSwitchGeneration) {
+function applyDeploymentState(state, siteID = API.getCurrentSite(), generation = siteRequestTracker.generation) {
     deploymentState = UI.normalizeDeploymentState(state);
     UI.renderDeploymentState(deploymentState);
     if (deploymentState?.status === 'queued' || deploymentState?.status === 'building') {
@@ -1006,7 +995,7 @@ function markDeploymentPreviewStale() {
     });
 }
 
-async function refreshDeploymentState(siteID = API.getCurrentSite(), generation = siteSwitchGeneration) {
+async function refreshDeploymentState(siteID = API.getCurrentSite(), generation = siteRequestTracker.generation) {
     if (!isCurrentSiteContext(siteID, generation)) return;
     stopDeploymentPolling();
     if (!deploymentEnabled || !Editor.getCurrentPath()) {
@@ -1039,7 +1028,7 @@ async function refreshDeploymentState(siteID = API.getCurrentSite(), generation 
 
 async function updateDeploymentPreview() {
     const siteID = API.getCurrentSite();
-    const siteGeneration = siteSwitchGeneration;
+    const siteGeneration = siteRequestTracker.generation;
     const path = Editor.getCurrentPath();
     const draftID = path ? Editor.getDraftID() : "";
     const isCurrent = () => (
@@ -1079,7 +1068,7 @@ async function updateDeploymentPreview() {
 
 async function retryDeploymentPreview() {
     const siteID = API.getCurrentSite();
-    const siteGeneration = siteSwitchGeneration;
+    const siteGeneration = siteRequestTracker.generation;
     const path = Editor.getCurrentPath();
     const draftID = path ? Editor.getDraftID() : "";
     const isCurrent = () => (
@@ -1112,7 +1101,7 @@ async function retryDeploymentPreview() {
 
 async function discardDeploymentPreview() {
     const siteID = API.getCurrentSite();
-    const siteGeneration = siteSwitchGeneration;
+    const siteGeneration = siteRequestTracker.generation;
     const path = Editor.getCurrentPath();
     const draftID = path ? Editor.getDraftID() : "";
     const isCurrent = () => (
