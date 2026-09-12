@@ -463,6 +463,7 @@ export async function flushPendingSave() {
 export async function loadFile(path, { allowDuringGitSync = false } = {}) {
     if (gitSyncInProgress && !allowDuringGitSync) return;
     const request = beginArticleLoad();
+    setEditorWritePaused(true);
     const activePathAtStart = currentPath;
     try {
         clearAutoSaveTimer();
@@ -498,7 +499,6 @@ export async function loadFile(path, { allowDuringGitSync = false } = {}) {
         // Keep the active path/editor payload unchanged until the new article
         // has been fetched. This keeps a second click from saving Loading... or
         // the previous article's editor state under the requested path.
-        setEditorWritePaused(true);
         const data = await API.fetchArticle(path, request.controller.signal);
         if (!isCurrentArticleLoad(request)) return;
 

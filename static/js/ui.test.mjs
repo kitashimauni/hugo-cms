@@ -383,15 +383,16 @@ describe("Local Preview destructive operations", () => {
         assert.equal(getCurrentPath(), "");
     });
 
-    function createArticleSwitchHarness({ generator = "hugo", previewFailure = null, saveFailure = false, articleResponses = new Map(), markdownResponses = new Map(), localPreviewResponses = new Map() } = {}) {
+    function createArticleSwitchHarness({ generator = "hugo", previewFailure = null, saveFailure = false, saveResponse = null, articleResponses = new Map(), markdownResponses = new Map(), localPreviewResponses = new Map() } = {}) {
         const previousDocument = globalThis.document;
         const previousFetch = globalThis.fetch;
         const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
         const editor = { disabled: false, value: "", placeholder: "" };
+        const frontMatterControl = { disabled: false };
         const fmContainer = {
             style: { display: "" },
             innerHTML: "",
-            querySelectorAll() { return []; },
+            querySelectorAll() { return [frontMatterControl]; },
         };
         const markdownPreview = { replaceChildren() {}, innerHTML: "" };
         const markdownStatus = {
@@ -474,6 +475,7 @@ describe("Local Preview destructive operations", () => {
                 return { ok: true, status: 200, json: async () => ({ status: "ok" }) };
             }
             if (requestURL.endsWith("/admin/api/article") && options.method === "POST") {
+                if (saveResponse) return saveResponse();
                 if (saveFailure) {
                     return { ok: false, status: 500, json: async () => ({}) };
                 }
@@ -486,6 +488,7 @@ describe("Local Preview destructive operations", () => {
         setConfig({ _cms: { local_preview: { enabled: true, generator } } });
         return {
             editor,
+            frontMatterControl,
             markdownPreview,
             calls,
             restore() {
@@ -609,6 +612,56 @@ describe("Local Preview destructive operations", () => {
             assert.deepEqual(refreshedURLs, ["valid A preview"]);
         } finally {
             window.refreshLocalPreviewArticleURL = previousRefresh;
+            harness.restore();
+        }
+    });
+
+    it("pauses editor and front matter writes during the entire article switch", async () => {
+        const saveStarted = deferred();
+        const saveResult = deferred();
+        const localPreviewStarted = deferred();
+        const localPreviewResult = deferred();
+        const localPreviewResponses = new Map([
+            ["posts/a.md", async () => {
+                localPreviewStarted.resolve();
+                return localPreviewResult.promise;
+            }],
+        ]);
+        const harness = createArticleSwitchHarness({
+            saveResponse: () => {
+                saveStarted.resolve();
+                return saveResult.promise;
+            },
+            localPreviewResponses,
+        });
+        try {
+            await loadFile("posts/a.md");
+            harness.editor.value = "draft A";
+
+            const loadingB = loadFile("posts/b.md");
+            await saveStarted.promise;
+            assert.equal(harness.editor.disabled, true);
+            assert.equal(harness.frontMatterControl.disabled, true);
+
+            saveResult.resolve({
+                ok: true,
+                status: 200,
+                json: async () => ({ status: "ok" }),
+            });
+            await localPreviewStarted.promise;
+            assert.equal(harness.editor.disabled, true);
+            assert.equal(harness.frontMatterControl.disabled, true);
+
+            localPreviewResult.resolve({
+                ok: true,
+                status: 200,
+                json: async () => ({ status: "ok" }),
+            });
+            await loadingB;
+            assert.equal(getCurrentPath(), "posts/b.md");
+            assert.equal(harness.editor.disabled, false);
+            assert.equal(harness.frontMatterControl.disabled, false);
+        } finally {
             harness.restore();
         }
     });
