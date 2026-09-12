@@ -2,7 +2,7 @@
 
 > PreviewについてはIssue #30でローカルgenerator process/proxyを廃止したため、[本文プレビューとデプロイプレビュー](preview-deployment-design.md)を正とします。本書に残るHugo preview serverの記述は旧構成です。
 
-Hugo CMSのシステム構成と実装詳細について説明します。
+HomeCMSのシステム構成と実装詳細について説明します。
 
 ## システム概要
 
@@ -150,10 +150,10 @@ Docker構成はappの可用性とサイト実行コードの準備を分離す�
 
 - `hugo-cms` serviceはbuild ARGで作成した非root UID/GIDでCMSを実行する
 - app起動時に`mise install`、Node.js依存取得、bind mountの`chown`は行わない
-- host portは`127.0.0.1:${HUGO_CMS_HOST_PORT:-8080}`へだけ公開し、container内`PORT`は`8080`に固定する
+- host portは`127.0.0.1:${HOMECMS_HOST_PORT:-8080}`へだけ公開し、container内`PORT`は`8080`に固定する
 - repoはhostから`/data/repos`へbind mountし、mise tools/cacheは`mise-data` named volumeに保持する
 - `tool-bootstrap`は`tools` profileのone-shot serviceで、appのsecret環境変数を受け取らない
-- bootstrap対象は`HUGO_CMS_REPOS`へUnixの`:`区切りで明示したrepoだけであり、`/data/repos/*`は自動実行しない
+- bootstrap対象は`HOMECMS_REPOS`へUnixの`:`区切りで明示したrepoだけであり、`/data/repos/*`は自動実行しない
 
 operatorはサイトのmise設定、package metadata、lockfile、install scriptをレビューしてからbootstrapを実行する。toolchainや依存を更新した場合はone-shotを再実行するが、通常のapp再起動は準備済み環境を変更しない。
 

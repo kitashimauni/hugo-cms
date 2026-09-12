@@ -56,7 +56,7 @@ HomeCMSは設定を読み込むときに、編集・作成・previewで事故に
 ## 基本構造
 
 ```yaml
-# (オプション) バックエンド設定 - 互換性のため残していますが、Hugo CMSでは無視されます
+# (オプション) バックエンド設定 - 互換性のため残していますが、HomeCMSでは無視されます
 backend:
   name: github
   repo: username/repo
@@ -352,7 +352,7 @@ view_filters:
 
 ## Netlify CMS / Decap CMSとの互換性
 
-Hugo CMSの設定形式はNetlify CMS (現Decap CMS) と互換性があります。
+HomeCMSの設定形式はNetlify CMS (現Decap CMS) と互換性があります。
 既存の `config.yml` をそのまま使用できる場合が多いですが、以下の点に注意してください:
 
 ### サポートされている機能

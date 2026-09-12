@@ -2,7 +2,7 @@
 
 ## ステータス
 
-現在のHugo CMSは、CMS内の安全な「本文プレビュー」、site別hostnameでHugoを動かす「Local Live Preview」、外部providerが生成する「デプロイプレビュー」の3段階を持つ。
+現在のHomeCMSは、CMS内の安全な「本文プレビュー」、site別hostnameで設定済みgenerator（Hugo/Eleventyなど）を動かす「Local Live Preview」、外部providerが生成する「デプロイプレビュー」の3段階を持つ。
 
 Issue #30で旧`/admin/preview/:site/*` path-prefix proxyとローカルgenerator preview processを廃止したが、Issue #32ではpath prefixを復活させず、`https://<site-id>.<preview-domain>/`をorigin rootとする方式でLocal Live Previewを再導入する。
 

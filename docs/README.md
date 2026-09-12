@@ -1,6 +1,6 @@
 # ドキュメント
 
-Hugo CMSの利用方法、仕様、設計、および監査結果を目的別に整理している。
+HomeCMSの利用方法、仕様、設計、および監査結果を目的別に整理している。HugoやEleventyなどの静的サイトジェネレーター固有の説明は各ガイドに明記する。
 
 ## ガイド
 
@@ -20,8 +20,8 @@ Hugo CMSの利用方法、仕様、設計、および監査結果を目的別に
 
 ## アーキテクチャ
 
-- [現行アーキテクチャ](architecture/current-architecture.md) - 現在のHugo向け実装
-- [マルチサイト・マルチジェネレーター設計](architecture/multi-site-generator-design.md) - 複数HugoサイトとEleventy等へ対応するための提案
+- [現行アーキテクチャ](architecture/current-architecture.md) - 現在のgenerator共通実装とHugo/Eleventy adapter
+- [マルチサイト・マルチジェネレーター設計](architecture/multi-site-generator-design.md) - 複数サイトとHugo/Eleventy等へ対応するための提案
 - [本文プレビューとデプロイプレビュー](architecture/preview-deployment-design.md) - preview責務、draft branch、provider、security、cleanup
 - [Local Live Preview設計](architecture/local-live-preview-design.md) - wildcard hostname、process lifecycle、port reservation、shadow workspace
 - [ADR-0001: Cloudflare Pages preview](architecture/adr-0001-cloudflare-pages-preview.md) - 初期providerの選定理由

@@ -83,7 +83,7 @@ Eleventyサイトでは次を確認します。
 - 推奨配置が`$HOME/hugo-cms`で、`/opt`や`/srv`の親directory全体を`chown`する手順がない
 - `mise-data`がnamed volumeとして永続化する
 - `tool-bootstrap`が`tools` profileのone-shotで、app secretを受け取らない
-- `HUGO_CMS_REPOS`へUnixの`:`区切りで列挙したrepoだけをtrust・準備する
+- `HOMECMS_REPOS`へUnixの`:`区切りで列挙したrepoだけをtrust・準備する
 - Hugoの`mise install`と、Eleventyのlockfile別frozen installを確認する
 - app再起動ではbootstrapが暗黙実行されない
 - `/health`のcontainer smoke testが成功する

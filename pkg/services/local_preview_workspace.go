@@ -128,7 +128,7 @@ var (
 
 func DefaultLocalPreviewWorkspaceManager() (*LocalPreviewWorkspaceManager, error) {
 	defaultLocalPreviewWorkspaceOnce.Do(func() {
-		root, err := os.MkdirTemp("", "hugo-cms-local-preview-*")
+		root, err := os.MkdirTemp("", "homecms-local-preview-*")
 		if err != nil {
 			defaultLocalPreviewWorkspaceErr = fmt.Errorf("create local preview temporary root: %w", err)
 			return

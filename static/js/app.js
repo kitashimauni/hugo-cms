@@ -124,7 +124,7 @@ async function init() {
     window.stopLocalLivePreview = stopLocalLivePreview;
     window.refreshLocalPreviewArticleURL = refreshLocalPreviewArticleURL;
 
-    console.log("Hugo CMS Initialized");
+    console.log("HomeCMS Initialized");
 }
 
 function cancelLocalPreviewURLResolution() {
@@ -526,6 +526,11 @@ function localPreviewStatusLabel(status) {
     })[status] || status || '停止';
 }
 
+function localPreviewGeneratorLabel(state) {
+    const generator = typeof state?.generator === 'string' ? state.generator.trim() : '';
+    return generator ? ` (${generator})` : '';
+}
+
 function renderLocalPreviewState(state) {
     localPreviewState = UI.normalizeLocalPreviewState(state);
     state = localPreviewState;
@@ -541,9 +546,10 @@ function renderLocalPreviewState(state) {
     statusEl.className = `deployment-status ${localPreviewStatusClass(status)}`;
 
     let message = '記事を選択すると未保存内容をshadow workspaceへ同期します。';
-    if (status === 'ready') message = 'Live Preview is ready. 編集内容はLiveReloadで反映されます。';
-    else if (status === 'starting') message = 'Live Preview generatorを起動しています…';
-    else if (status === 'failed') message = state?.process_error || 'Live Preview generatorの起動に失敗しました。';
+    const generatorLabel = localPreviewGeneratorLabel(state);
+    if (status === 'ready') message = `Local Live Preview${generatorLabel} is ready. 編集内容はLiveReloadで反映されます。`;
+    else if (status === 'starting') message = `Preview server${generatorLabel}を起動しています…`;
+    else if (status === 'failed') message = state?.process_error || `Local Live Preview${generatorLabel}の起動に失敗しました。`;
     else if (state?.workspace_active) message = '未保存内容は同期済みです。Previewを開くとgeneratorを起動します。';
     messageEl.textContent = message;
 

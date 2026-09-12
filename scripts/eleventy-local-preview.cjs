@@ -8,11 +8,16 @@ const http = require("node:http");
 const path = require("node:path");
 const { createRequire } = require("node:module");
 
-const RELOAD_SCRIPT_PATH = "/__hugo_cms_reload.js";
-const RELOAD_SOCKET_PATH = "/__hugo_cms_live_reload";
-const READY_PATH = "/__hugo_cms_ready";
-const METADATA_PATH = "/__hugo_cms_metadata";
-const INVALIDATE_PATH = "/__hugo_cms_invalidate";
+const RELOAD_SCRIPT_PATH = "/__homecms_reload.js";
+const RELOAD_SOCKET_PATH = "/__homecms_live_reload";
+const READY_PATH = "/__homecms_ready";
+const METADATA_PATH = "/__homecms_metadata";
+const INVALIDATE_PATH = "/__homecms_invalidate";
+const LEGACY_RELOAD_SCRIPT_PATH = "/__hugo_cms_reload.js";
+const LEGACY_RELOAD_SOCKET_PATH = "/__hugo_cms_live_reload";
+const LEGACY_READY_PATH = "/__hugo_cms_ready";
+const LEGACY_METADATA_PATH = "/__hugo_cms_metadata";
+const LEGACY_INVALIDATE_PATH = "/__hugo_cms_invalidate";
 const WATCH_RECOVERY_DELAY_MS = 750;
 const WATCH_RECOVERY_INTERVAL_MS = 1000;
 const RELOAD_SCRIPT = `(() => {
@@ -282,14 +287,14 @@ function createLoopbackServer(outputRoot, buildState = { ready: true, building: 
   const clients = new Set();
   const server = http.createServer((request, response) => {
     const requestURL = new URL(request.url || "/", "http://127.0.0.1/");
-    if (requestURL.pathname === READY_PATH) {
+    if (requestURL.pathname === READY_PATH || requestURL.pathname === LEGACY_READY_PATH) {
       sendJSON(response, buildState.ready ? 200 : 503, {
         status: buildState.ready ? "ready" : "building",
         building: buildState.building,
       });
       return;
     }
-    if (requestURL.pathname === INVALIDATE_PATH) {
+    if (requestURL.pathname === INVALIDATE_PATH || requestURL.pathname === LEGACY_INVALIDATE_PATH) {
       if (request.method !== "POST") {
         sendJSON(response, 405, { status: "method_not_allowed" });
         return;
@@ -298,7 +303,7 @@ function createLoopbackServer(outputRoot, buildState = { ready: true, building: 
       sendJSON(response, 202, { status: "invalidated", generation, ...buildState.diagnostics?.() });
       return;
     }
-    if (requestURL.pathname === METADATA_PATH) {
+    if (requestURL.pathname === METADATA_PATH || requestURL.pathname === LEGACY_METADATA_PATH) {
       const articlePath = requestURL.searchParams.get("path");
       const metadata = articlePath ? buildState.get(articlePath) : null;
       if (!buildState.ready) {
@@ -321,7 +326,7 @@ function createLoopbackServer(outputRoot, buildState = { ready: true, building: 
       sendJSON(response, 200, { status: "resolved", fresh: true, ...buildState.diagnostics?.(), ...metadata });
       return;
     }
-    if (requestURL.pathname === RELOAD_SCRIPT_PATH) {
+    if (requestURL.pathname === RELOAD_SCRIPT_PATH || requestURL.pathname === LEGACY_RELOAD_SCRIPT_PATH) {
       const body = Buffer.from(RELOAD_SCRIPT);
       response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Content-Length": body.length });
       if (request.method !== "HEAD") response.end(body);
@@ -358,7 +363,7 @@ function createLoopbackServer(outputRoot, buildState = { ready: true, building: 
   server.on("upgrade", (request, socket) => {
     const requestURL = new URL(request.url || "/", "http://127.0.0.1/");
     const key = request.headers["sec-websocket-key"];
-    if (requestURL.pathname !== RELOAD_SOCKET_PATH || typeof key !== "string") {
+    if (![RELOAD_SOCKET_PATH, LEGACY_RELOAD_SOCKET_PATH].includes(requestURL.pathname) || typeof key !== "string") {
       socket.destroy();
       return;
     }

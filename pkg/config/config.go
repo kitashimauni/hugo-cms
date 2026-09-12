@@ -45,8 +45,8 @@ var (
 	MaxUploadSize   = int64(10 * 1024 * 1024) // 10MB default
 
 	// Git settings
-	GitUserEmail = "bot@hugo-cms.local"
-	GitUserName  = "Hugo CMS Bot"
+	GitUserEmail = "bot@homecms.local"
+	GitUserName  = "HomeCMS Bot"
 	GitBranch    = "main"
 	GitRemote    = "origin"
 
@@ -147,6 +147,16 @@ func Init() error {
 	if err := godotenv.Load(); err != nil {
 		slog.Info("No .env file found or error loading", "error", err)
 	}
+	for _, names := range [][2]string{
+		{"HOMECMS_UID", "HUGO_CMS_UID"},
+		{"HOMECMS_GID", "HUGO_CMS_GID"},
+		{"HOMECMS_HOST_PORT", "HUGO_CMS_HOST_PORT"},
+		{"HOMECMS_REPOS", "HUGO_CMS_REPOS"},
+	} {
+		if os.Getenv(names[0]) == "" && os.Getenv(names[1]) != "" {
+			slog.Warn("Deprecated environment variable is in use", "legacy", names[1], "replacement", names[0])
+		}
+	}
 
 	// Helper to get env with default
 	getEnv := func(key, fallback string) string {
@@ -155,7 +165,6 @@ func Init() error {
 		}
 		return fallback
 	}
-
 	appURL := getEnv("APP_URL", "http://localhost:8080")
 	redirectURL := getEnv("GITHUB_REDIRECT_URL", appURL+"/admin/auth/callback")
 
@@ -188,8 +197,8 @@ func Init() error {
 		}
 	}
 
-	GitUserEmail = getEnv("GIT_USER_EMAIL", "bot@hugo-cms.local")
-	GitUserName = getEnv("GIT_USER_NAME", "Hugo CMS Bot")
+	GitUserEmail = getEnv("GIT_USER_EMAIL", "bot@homecms.local")
+	GitUserName = getEnv("GIT_USER_NAME", "HomeCMS Bot")
 	GitBranch = getEnv("GIT_BRANCH", "main")
 	GitRemote = getEnv("GIT_REMOTE", "origin")
 

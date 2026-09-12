@@ -111,14 +111,14 @@ Eleventy siteでは、対象siteのlock fileから検出したpackage manager経
   --host 127.0.0.1
 ```
 
-CMSのNodeラッパーはtemporary project-root overlayをcwdにしてEleventyのprogrammatic `watch`を実行します。overlayでは`content_dir`をshadow workspaceへ、`public_dir`をtemporary outputへ置き換え、package.json、node_modules、config、includes/layouts/data、その他のproject-root相対パスはproduction repositoryを参照します。HTTP配信とLiveReload WebSocketはCMS側のloopback serverが担当し、Eleventyの初回build前にlistenerを`127.0.0.1`へbindします。`/__hugo_cms_ready`はbuild中に503、初回build完了後に200を返すため、重いsiteでも起動処理が固定秒数で同じbuildを繰り返しません。Eleventy標準Dev Serverの未指定hostや`HOST`環境変数には依存しません。
+CMSのNodeラッパーはtemporary project-root overlayをcwdにしてEleventyのprogrammatic `watch`を実行します。overlayでは`content_dir`をshadow workspaceへ、`public_dir`をtemporary outputへ置き換え、package.json、node_modules、config、includes/layouts/data、その他のproject-root相対パスはproduction repositoryを参照します。HTTP配信とLiveReload WebSocketはCMS側のloopback serverが担当し、Eleventyの初回build前にlistenerを`127.0.0.1`へbindします。`/__homecms_ready`はbuild中に503、初回build完了後に200を返すため、重いsiteでも起動処理が固定秒数で同じbuildを繰り返しません。Eleventy標準Dev Serverの未指定hostや`HOST`環境変数には依存しません。
 
 process停止はgeneratorの`cmd.Wait()`完了を成功条件とし、temporary outputのfilesystem cleanup完了を待ちません。Unix/Linuxではgenerator commandを独立したprocess groupで起動し、Stop・idle cleanup・Git Sync reset・CMS shutdownの共通経路からgroup全体へ`SIGTERM`を送り、grace period後も残る場合は`SIGKILL`へ移行します。package managerや`mise`のwrapper配下にあるNode/Eleventyも同じgroupで終了させ、stdio pipeを保持した孤児化で`Wait()`が無期限に待たないよう待機上限も設定します。停止時のtimeoutには親PIDとprocess groupをserver logへ記録します。workspaceが所有するEleventyのproject/outputはsite runtimeのStopまたはidle cleanupで削除し、process cleanupとの二重削除や次世代workspaceとの競合を避けます。workspace外のEleventy previewは起動ごとに一意なtemporary project rootを割り当て、停止後に所有projectだけを非同期cleanupします。cleanupの遅延・失敗はserver logへ記録しますが、generator processの停止失敗とは区別します。
 
-Eleventy設定はoverlayのproject rootで通常どおり解決します。そのため`getFilteredByGlob("src/posts/**")`、`addPassthroughCopy("src/images")`、pluginの`outputDir: "./public/img/"`のようなproject-root相対指定も、CMS側で解析・推定せずpreview側のcontent/publicを参照します。通常の記事URL解決では、稼働中wrapperが`eleventy.after`の`inputPath`/`url`を保持する`/__hugo_cms_metadata?path=...`を利用します。workspace updateはshadow fileを書き換える直前にmetadataをinvalidateします。既知の記事はwatch build中も旧mapを`status: stale`、`fresh: false`として返し、未知の記事だけはbuild完了まで503で待機します。watch rebuildごとにmapを更新するため、resolver専用の追加full buildを発生させません。既存の直接resolver呼び出しにはJSONモードのfallbackを残します。
+Eleventy設定はoverlayのproject rootで通常どおり解決します。そのため`getFilteredByGlob("src/posts/**")`、`addPassthroughCopy("src/images")`、pluginの`outputDir: "./public/img/"`のようなproject-root相対指定も、CMS側で解析・推定せずpreview側のcontent/publicを参照します。通常の記事URL解決では、稼働中wrapperが`eleventy.after`の`inputPath`/`url`を保持する`/__homecms_metadata?path=...`を利用します。workspace updateはshadow fileを書き換える直前にmetadataをinvalidateします。既知の記事はwatch build中も旧mapを`status: stale`、`fresh: false`として返し、未知の記事だけはbuild完了まで503で待機します。watch rebuildごとにmapを更新するため、resolver専用の追加full buildを発生させません。既存の直接resolver呼び出しにはJSONモードのfallbackを残します。
 repo外のabsolute pathや環境変数で指定された外部pathはこのfilesystem overlayの保証対象外です。
 
-初回buildとwatch rebuild後のmetadata URL解決の待機上限はデフォルト2分です。必要に応じて`HUGO_CMS_LOCAL_PREVIEW_STARTUP_TIMEOUT`へGoのduration（例: `5m`）を設定できます。Eleventyの初回build失敗時は同じ重いbuildを自動で繰り返さず、stderrの末尾を含む診断を返します。
+初回buildとwatch rebuild後のmetadata URL解決の待機上限はデフォルト2分です。必要に応じて`HOMECMS_LOCAL_PREVIEW_STARTUP_TIMEOUT`へGoのduration（例: `5m`）を設定できます。Eleventyの初回build失敗時は同じ重いbuildを自動で繰り返さず、stderrの末尾を含む診断を返します。
 
 ## Reverse proxy / LiveReload
 
@@ -129,7 +129,7 @@ https://tech.preview.example.com/css/main.css
   -> http://127.0.0.1:<internal-port>/css/main.css
 ```
 
-内部upstreamを指すabsolute `Location`だけを外部preview originへ補正し、HTTP Upgradeを透過してLiveReload WebSocketを通します。Eleventyの`/__hugo_cms_ready`、`/__hugo_cms_metadata`、`/__hugo_cms_invalidate`はCMSとwrapper間のloopback専用制御endpointであり、preview hostnameからは404として遮断します。LiveReload用のpathは引き続きproxyします。
+内部upstreamを指すabsolute `Location`だけを外部preview originへ補正し、HTTP Upgradeを透過してLiveReload WebSocketを通します。Eleventyの`/__homecms_ready`、`/__homecms_metadata`、`/__homecms_invalidate`はCMSとwrapper間のloopback専用制御endpointであり、preview hostnameからは404として遮断します。LiveReload用のpathは引き続きproxyします。
 
 ## 未保存editor内容
 
@@ -165,7 +165,7 @@ static配下は元repositoryをHugoが直接参照するためshadow同期しま
 
 ## site runtime activity / cleanup
 
-Local Previewはbrowser tabを所有者として扱いません。update、記事URL解決、preview ingress、content resource同期をsite runtimeの`lastActivity`として記録します。idle timeoutは`HUGO_CMS_LOCAL_PREVIEW_IDLE_TIMEOUT`で設定でき、初期値は30分、`0`で無効化できます。
+Local Previewはbrowser tabを所有者として扱いません。update、記事URL解決、preview ingress、content resource同期をsite runtimeの`lastActivity`として記録します。idle timeoutは`HOMECMS_LOCAL_PREVIEW_IDLE_TIMEOUT`で設定でき、初期値は30分、`0`で無効化できます。
 
 idle timeoutまたは明示Stopでは、site gateで新しいupdate/ingressを止めてからgenerator processを停止し、workspace rootを一意なcleanup領域へrenameして物理削除を非同期で行います。`always_on: true`のsiteはidle cleanup対象から除外されます。長寿命のHTTP/WebSocket配信前にgateを解放するため、cleanupの遅延が配信完了をブロックしません。CMS shutdownでも同じcleanup pathを利用します。
 

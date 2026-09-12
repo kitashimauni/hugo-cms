@@ -21,6 +21,34 @@ import (
 	"time"
 )
 
+func TestLocalPreviewTimeoutEnvironmentNames(t *testing.T) {
+	t.Run("new names are used", func(t *testing.T) {
+		t.Setenv(localPreviewStartupTimeoutEnv, "7s")
+		t.Setenv(legacyLocalPreviewStartupTimeoutEnv, "9s")
+		t.Setenv(localPreviewIdleTimeoutEnv, "11s")
+		t.Setenv(legacyLocalPreviewIdleTimeoutEnv, "13s")
+		if got := configuredLocalPreviewStartupTimeout(); got != 7*time.Second {
+			t.Fatalf("startup timeout = %s, want 7s", got)
+		}
+		if got := configuredLocalPreviewIdleTimeout(); got != 11*time.Second {
+			t.Fatalf("idle timeout = %s, want 11s", got)
+		}
+	})
+
+	t.Run("legacy names remain supported", func(t *testing.T) {
+		t.Setenv(localPreviewStartupTimeoutEnv, "")
+		t.Setenv(localPreviewIdleTimeoutEnv, "")
+		t.Setenv(legacyLocalPreviewStartupTimeoutEnv, "7s")
+		t.Setenv(legacyLocalPreviewIdleTimeoutEnv, "11s")
+		if got := configuredLocalPreviewStartupTimeout(); got != 7*time.Second {
+			t.Fatalf("legacy startup timeout = %s, want 7s", got)
+		}
+		if got := configuredLocalPreviewIdleTimeout(); got != 11*time.Second {
+			t.Fatalf("legacy idle timeout = %s, want 11s", got)
+		}
+	})
+}
+
 func TestHugoLocalPreviewArgs(t *testing.T) {
 	runtime := config.SiteRuntime{ContentDir: "content"}
 	got, err := hugoLocalPreviewArgs(runtime, 14123, "https://tech.preview.example.com/")
@@ -73,7 +101,7 @@ func TestEleventyLocalPreviewArgs(t *testing.T) {
 		ContentDir:           filepath.Join(t.TempDir(), "shadow", "content"),
 		ProductionContentDir: "content",
 	}
-	outputDir := filepath.Join(t.TempDir(), "hugo-cms-local-preview", "output")
+	outputDir := filepath.Join(t.TempDir(), "homecms-local-preview", "output")
 	got, err := eleventyLocalPreviewArgs(runtime, 14123, outputDir)
 	if err != nil {
 		t.Fatalf("eleventyLocalPreviewArgs() error = %v", err)
@@ -154,7 +182,7 @@ func TestEleventyLocalPreviewCommandUsesDetectedPackageManagerAndLoopbackServer(
 			t.Fatalf("command args = %q, missing %q", joined, want)
 		}
 	}
-	if cmd.Dir == repo || !strings.Contains(cmd.Dir, "hugo-cms-local-preview") {
+	if cmd.Dir == repo || !strings.Contains(cmd.Dir, "homecms-local-preview") {
 		t.Fatalf("command dir = %q, want an isolated Eleventy project root", cmd.Dir)
 	}
 }
@@ -627,22 +655,22 @@ func shutdownTestLocalPreviewManager(t *testing.T, manager *LocalPreviewManager)
 func testLocalPreviewCommand(ctx context.Context, runtime config.SiteRuntime, port int, _ string) (*exec.Cmd, error) {
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestLocalPreviewHelperProcess$")
 	cmd.Env = append(os.Environ(),
-		"HUGO_CMS_LOCAL_PREVIEW_HELPER=1",
-		"HUGO_CMS_LOCAL_PREVIEW_PORT="+strconv.Itoa(port),
-		"HUGO_CMS_LOCAL_PREVIEW_GENERATOR="+runtime.Generator,
+		"HOMECMS_LOCAL_PREVIEW_HELPER=1",
+		"HOMECMS_LOCAL_PREVIEW_PORT="+strconv.Itoa(port),
+		"HOMECMS_LOCAL_PREVIEW_GENERATOR="+runtime.Generator,
 	)
 	return cmd, nil
 }
 
 func TestLocalPreviewHelperProcess(t *testing.T) {
-	if os.Getenv("HUGO_CMS_LOCAL_PREVIEW_HELPER") != "1" {
+	if os.Getenv("HOMECMS_LOCAL_PREVIEW_HELPER") != "1" {
 		return
 	}
-	port, err := strconv.Atoi(os.Getenv("HUGO_CMS_LOCAL_PREVIEW_PORT"))
+	port, err := strconv.Atoi(os.Getenv("HOMECMS_LOCAL_PREVIEW_PORT"))
 	if err != nil {
 		os.Exit(2)
 	}
-	generator := strings.ToLower(strings.TrimSpace(os.Getenv("HUGO_CMS_LOCAL_PREVIEW_GENERATOR")))
+	generator := strings.ToLower(strings.TrimSpace(os.Getenv("HOMECMS_LOCAL_PREVIEW_GENERATOR")))
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		os.Exit(3)

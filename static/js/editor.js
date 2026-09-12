@@ -69,6 +69,10 @@ export function getCurrentLocalPreviewFrontMatterKey() {
 }
 
 function draftStorageKey(siteID, path) {
+    return `homecms:draft:${siteID}:${path}`;
+}
+
+function legacyDraftStorageKey(siteID, path) {
     return `hugo-cms:draft:${siteID}:${path}`;
 }
 
@@ -92,11 +96,13 @@ export function createDraftUUID(cryptoProvider = window.crypto) {
 export function getOrCreateDraftID(siteID, path, storage = window.sessionStorage, createUUID = createDraftUUID) {
     if (!siteID || !path) return "";
     const key = draftStorageKey(siteID, path);
-    let draftID = storage.getItem(key);
+    const legacyKey = legacyDraftStorageKey(siteID, path);
+    let draftID = storage.getItem(key) || storage.getItem(legacyKey);
     if (!draftID) {
         draftID = createUUID();
-        storage.setItem(key, draftID);
     }
+    storage.setItem(key, draftID);
+    storage.removeItem(legacyKey);
     return draftID;
 }
 
@@ -105,7 +111,11 @@ export function getDraftID() {
 }
 
 export function resetDraftID() {
-    if (currentPath) window.sessionStorage.removeItem(draftStorageKey(API.getCurrentSite(), currentPath));
+    if (currentPath) {
+        const siteID = API.getCurrentSite();
+        window.sessionStorage.removeItem(draftStorageKey(siteID, currentPath));
+        window.sessionStorage.removeItem(legacyDraftStorageKey(siteID, currentPath));
+    }
 }
 
 export function setConfig(cfg) {
