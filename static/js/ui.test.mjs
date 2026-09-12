@@ -35,16 +35,19 @@ const {
 } = await import("./local_preview.js");
 const {
     createDraftUUID,
+    clearEditor,
     execAutoSave,
     finishForGitSync,
     flushLocalPreviewBeforeArticleSwitch,
     flushPendingSave,
     getOrCreateDraftID,
+    getCurrentPath,
     initAutoSave,
     isGitSyncInProgress,
     loadFile,
     prepareForGitSync,
     runGitMutation,
+    setConfig,
     waitForLocalPreviewUpdates,
 } = await import("./editor.js");
 const API = await import("./api.js");
@@ -367,6 +370,164 @@ describe("Local Preview destructive operations", () => {
         resolveOldUpdate();
         await switching;
         assert.deepEqual(events, ["latest payload sent", "latest payload applied"]);
+    });
+
+    it("does not block a switch when an in-flight preview update rejects", async () => {
+        let rejectUpdate;
+        const pending = new Set([new Promise((_, reject) => { rejectUpdate = reject; })]);
+        const switching = flushLocalPreviewBeforeArticleSwitch(async () => "latest payload sent", pending);
+
+        rejectUpdate(new Error("preview update failed"));
+        await switching;
+        assert.equal(getCurrentPath(), "");
+    });
+
+    function createArticleSwitchHarness({ generator = "hugo", previewFailure = null, saveFailure = false } = {}) {
+        const previousDocument = globalThis.document;
+        const previousFetch = globalThis.fetch;
+        const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+        const editor = { disabled: false, value: "", placeholder: "" };
+        const fmContainer = {
+            style: { display: "" },
+            innerHTML: "",
+            querySelectorAll() { return []; },
+        };
+        const markdownPreview = { replaceChildren() {}, innerHTML: "" };
+        const markdownStatus = {
+            textContent: "",
+            className: "",
+            removeAttribute() {},
+            setAttribute() {},
+        };
+        const filename = { textContent: "" };
+        const makeToastElement = () => ({
+            id: "",
+            className: "",
+            textContent: "",
+            innerHTML: "",
+            style: {},
+            parentElement: null,
+            appendChild(child) {
+                child.parentElement = this;
+            },
+            remove() {
+                this.parentElement = null;
+            },
+        });
+        const body = makeToastElement();
+        const elements = new Map([
+            ["editor", editor],
+            ["fm-container", fmContainer],
+            ["filename-display", filename],
+            ["markdown-preview", markdownPreview],
+            ["markdown-preview-status", markdownStatus],
+        ]);
+        const calls = [];
+
+        globalThis.document = {
+            getElementById(id) { return elements.get(id) || null; },
+            querySelectorAll() { return []; },
+            createElement: makeToastElement,
+            body,
+        };
+        globalThis.requestAnimationFrame = callback => {
+            callback();
+            return 1;
+        };
+        globalThis.fetch = async (url, options = {}) => {
+            const requestURL = String(url);
+            calls.push({ url: requestURL, options });
+            if (requestURL === "/admin/api/csrf-token") {
+                return { ok: true, status: 200, json: async () => ({ csrf_token: "csrf" }) };
+            }
+            if (requestURL.includes("/admin/api/article?") && !options.method) {
+                const path = new URL(requestURL, "http://localhost").searchParams.get("path");
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({ path, content: path === "posts/old.md" ? "before" : "after" }),
+                };
+            }
+            if (requestURL.includes("/admin/api/preview/markdown")) {
+                return { ok: true, status: 200, json: async () => ({ html: "<p>preview</p>" }) };
+            }
+            if (requestURL.includes("/admin/api/preview/local") && options.method === "POST") {
+                if (previewFailure === "network") {
+                    throw new Error("preview network failed");
+                }
+                if (previewFailure) {
+                    return {
+                        ok: false,
+                        status: previewFailure,
+                        json: async () => ({ message: `preview failed with ${previewFailure}` }),
+                    };
+                }
+                return { ok: true, status: 200, json: async () => ({ status: "ok" }) };
+            }
+            if (requestURL.endsWith("/admin/api/article") && options.method === "POST") {
+                if (saveFailure) {
+                    return { ok: false, status: 500, json: async () => ({}) };
+                }
+                return { ok: true, status: 200, json: async () => ({ status: "ok" }) };
+            }
+            throw new Error(`Unexpected request: ${requestURL}`);
+        };
+
+        clearEditor();
+        setConfig({ _cms: { local_preview: { enabled: true, generator } } });
+        return {
+            editor,
+            calls,
+            restore() {
+                clearEditor();
+                setConfig(null);
+                globalThis.document = previousDocument;
+                globalThis.fetch = previousFetch;
+                globalThis.requestAnimationFrame = previousRequestAnimationFrame;
+            },
+        };
+    }
+
+    for (const generator of ["hugo", "eleventy"]) {
+        for (const previewFailure of [503, 500, "network"]) {
+            it(`continues ${generator} article switching after Local Preview ${previewFailure} failure`, async () => {
+                const harness = createArticleSwitchHarness({ generator, previewFailure });
+                try {
+                    await loadFile("posts/old.md");
+                    harness.calls.length = 0;
+                    harness.editor.value = "changed before switch";
+
+                    await loadFile("posts/new.md");
+
+                    assert.equal(getCurrentPath(), "posts/new.md");
+                    const saveIndex = harness.calls.findIndex(call => call.url.endsWith("/admin/api/article") && call.options.method === "POST");
+                    const previewIndex = harness.calls.findIndex(call => call.url.includes("/admin/api/preview/local"));
+                    const newArticleIndex = harness.calls.findIndex(call => call.url.includes("/admin/api/article?") && call.url.includes("posts%2Fnew.md"));
+                    assert.ok(saveIndex >= 0, "production save should complete before switching");
+                    assert.ok(previewIndex > saveIndex, "Local Preview flush should follow the production save");
+                    assert.ok(newArticleIndex > previewIndex, "the new article should load after the failed flush");
+                } finally {
+                    harness.restore();
+                }
+            });
+        }
+    }
+
+    it("keeps the article unchanged when production save fails", async () => {
+        const harness = createArticleSwitchHarness({ saveFailure: true });
+        try {
+            await loadFile("posts/old.md");
+            harness.calls.length = 0;
+            harness.editor.value = "unsaved production change";
+
+            await loadFile("posts/new.md");
+
+            assert.equal(getCurrentPath(), "posts/old.md");
+            assert.equal(harness.calls.some(call => call.url.includes("/admin/api/preview/local")), false);
+            assert.equal(harness.calls.some(call => call.url.includes("posts%2Fnew.md")), false);
+        } finally {
+            harness.restore();
+        }
     });
 
 });
