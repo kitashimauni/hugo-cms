@@ -106,9 +106,9 @@ export async function fetchArticles() {
     return await res.json();
 }
 
-export async function fetchArticle(path) {
+export async function fetchArticle(path, signal) {
     const params = new URLSearchParams({ path });
-    const res = await fetch(withSite(`/admin/api/article?${params.toString()}`), { headers: siteHeaders() });
+    const res = await fetch(withSite(`/admin/api/article?${params.toString()}`), { headers: siteHeaders(), signal });
     if (!res.ok) throw new Error("Failed to load article");
     return await res.json();
 }
