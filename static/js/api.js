@@ -212,12 +212,12 @@ export async function runSync() {
     return await res.json();
 }
 
-export async function runPublish(path, draftID) {
-    const res = await fetchWithCSRF(withSite('/admin/api/publish'), {
+export async function runPublish(path, draftID, siteID = currentSite) {
+    const res = await fetchWithCSRF(withSite('/admin/api/publish', siteID), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            ...siteHeaders()
+            ...siteHeaders(siteID)
         },
         body: JSON.stringify({ path, draft_id: draftID })
     });
@@ -281,24 +281,24 @@ export async function fetchLocalPreviewStatus(signal, siteID = currentSite) {
     return await res.json();
 }
 
-export async function stopLocalPreviewContent() {
-    const res = await fetchWithCSRF(withSite('/admin/api/preview/local/stop'), {
+export async function stopLocalPreviewContent(siteID = currentSite) {
+    const res = await fetchWithCSRF(withSite('/admin/api/preview/local/stop', siteID), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            ...siteHeaders()
+            ...siteHeaders(siteID)
         },
     });
     if (!res.ok) throw await responseError(res, "Local Live Preview stop failed");
     return await res.json();
 }
 
-export async function triggerPreviewDeployment(path, draftID) {
-    const res = await fetchWithCSRF(withSite('/admin/api/preview/deployments'), {
+export async function triggerPreviewDeployment(path, draftID, siteID = currentSite) {
+    const res = await fetchWithCSRF(withSite('/admin/api/preview/deployments', siteID), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            ...siteHeaders()
+            ...siteHeaders(siteID)
         },
         body: JSON.stringify({ path, draft_id: draftID })
     });
@@ -317,24 +317,24 @@ export async function fetchPreviewDeployment(draftID, signal, siteID = currentSi
     return await res.json();
 }
 
-async function postPreviewDeploymentAction(draftID, action) {
+async function postPreviewDeploymentAction(draftID, action, siteID = currentSite) {
     const id = encodeURIComponent(draftID);
-    const res = await fetchWithCSRF(withSite(`/admin/api/preview/deployments/${id}/${action}`), {
+    const res = await fetchWithCSRF(withSite(`/admin/api/preview/deployments/${id}/${action}`, siteID), {
         method: 'POST',
         headers: {
-            ...siteHeaders()
+            ...siteHeaders(siteID)
         }
     });
     if (!res.ok) throw new Error(`Failed to ${action} deployment preview`);
     return await res.json();
 }
 
-export function retryPreviewDeployment(draftID) {
-    return postPreviewDeploymentAction(draftID, 'retry');
+export function retryPreviewDeployment(draftID, siteID = currentSite) {
+    return postPreviewDeploymentAction(draftID, 'retry', siteID);
 }
 
-export function discardPreviewDeployment(draftID) {
-    return postPreviewDeploymentAction(draftID, 'discard');
+export function discardPreviewDeployment(draftID, siteID = currentSite) {
+    return postPreviewDeploymentAction(draftID, 'discard', siteID);
 }
 
 export async function fetchMedia(mode, path) {
